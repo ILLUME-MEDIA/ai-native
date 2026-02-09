@@ -1,37 +1,23 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, useForm } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
 import { Button, Col, Row } from 'react-bootstrap';
+import { useRef, useState } from 'react';
 
-export default function Login({ status, canResetPassword }) {
-    const { data, setData, post, processing, errors, reset } = useForm({
-        email: '',
-        password: '',
-        remember: false,
-    });
+export default function Login({ status, canResetPassword, csrf_token: csrfToken = '' }) {
+    const formRef = useRef(null);
+    const [processing, setProcessing] = useState(false);
+    const [formData, setFormData] = useState({ email: '', password: '', remember: false });
+    const { props: pageProps } = usePage();
+    const errors = pageProps.errors || {};
 
     const submit = (e) => {
         e.preventDefault();
-        
-        // Cleanup any Bootstrap modals before login redirect
-        const backdrops = document.querySelectorAll('.modal-backdrop');
-        backdrops.forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        document.body.style.paddingRight = '';
-        document.body.style.overflow = '';
-
-        post(route('login'), {
-            onFinish: () => reset('password'),
-            onSuccess: () => {
-                // Ensure modals are cleaned up after successful login
-                setTimeout(() => {
-                    const backdrops = document.querySelectorAll('.modal-backdrop');
-                    backdrops.forEach(backdrop => backdrop.remove());
-                    document.body.classList.remove('modal-open');
-                    document.body.style.paddingRight = '';
-                    document.body.style.overflow = '';
-                }, 100);
-            },
-        });
+        setProcessing(true);
+        // Native form submit = full page POST → server 302 → full page redirect.
+        // Inertia will not intercept, so URL will update to /admin/dashboard/ecommerce.
+        const form = formRef.current;
+        if (form) form.submit();
+        else setProcessing(false);
     };
 
     const socialContent = (
@@ -83,7 +69,13 @@ export default function Login({ status, canResetPassword }) {
                 </div>
             )}
 
-            <form onSubmit={submit}>
+            <form
+                ref={formRef}
+                action={route('login')}
+                method="POST"
+                onSubmit={submit}
+            >
+                <input type="hidden" name="_token" value={csrfToken || (typeof document !== 'undefined' ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') : '') || ''} />
                 <div className="mb-3">
                     <label htmlFor="email" className="form-label">
                         Email address <span className="text-danger">*</span>
@@ -93,9 +85,9 @@ export default function Login({ status, canResetPassword }) {
                         type="email"
                         name="email"
                         className={`form-control ${errors.email ? 'is-invalid' : ''}`}
-                        value={data.email}
+                        value={formData.email}
                         autoComplete="username"
-                        onChange={(e) => setData('email', e.target.value)}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         required
                         autoFocus
                     />
@@ -111,9 +103,9 @@ export default function Login({ status, canResetPassword }) {
                         type="password"
                         name="password"
                         className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-                        value={data.password}
+                        value={formData.password}
                         autoComplete="current-password"
-                        onChange={(e) => setData('password', e.target.value)}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                         required
                     />
                     {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
@@ -124,9 +116,11 @@ export default function Login({ status, canResetPassword }) {
                         <input
                             className="form-check-input form-check-input-light fs-14"
                             type="checkbox"
+                            name="remember"
                             id="rememberMe"
-                            checked={data.remember}
-                            onChange={(e) => setData('remember', e.target.checked)}
+                            value="1"
+                            checked={formData.remember}
+                            onChange={(e) => setFormData({ ...formData, remember: e.target.checked })}
                         />
                         <label className="form-check-label" htmlFor="rememberMe">
                             Keep me signed in

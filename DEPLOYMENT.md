@@ -64,8 +64,15 @@ chown -R www-data:www-data storage bootstrap/cache
 - `mod_deflate` enabled (for gzip compression)
 - `mod_expires` enabled (for browser caching)
 
-#### Document Root
-Point your domain's document root to: `/path/to/your/project/public`
+#### Document Root (IMPORTANT – fixes "Index of /")
+Your domain **must** use the `public` folder as the document root, not the project root.
+
+- **Correct:** Document root = `/path/to/your/project/public`
+- **Wrong:** Document root = `/path/to/your/project` (this causes "Index of /" and lists app/, vendor/, etc.)
+
+**How to set (cPanel):** Domains → your domain → Document Root → set to `public` (e.g. `public_html/yourproject/public` or the folder that contains `index.php`).
+
+**If you cannot change document root:** The project root `.htaccess` will try to send requests to `public/`. Ensure `AllowOverride All` is set for your directory so `.htaccess` is read.
 
 #### PHP Requirements
 - PHP >= 8.1
@@ -86,6 +93,20 @@ Point your domain's document root to: `/path/to/your/project/public`
 - Monitor server resources
 
 ## Troubleshooting
+
+### "Index of /" or directory listing on domain
+**Cause:** The web server document root is the project root instead of the `public` folder, so the server lists files (app/, vendor/, .env risk, etc.) instead of running Laravel.
+
+**Fix (choose one):**
+
+1. **Best:** Change the domain’s document root to the `public` folder.
+   - cPanel: Domains → your domain → Document Root → set to `.../public`.
+   - So when someone visits `development.illumemedia.app`, the server uses `public/` (where `index.php` lives).
+
+2. **If you can’t change document root:** Ensure the root `.htaccess` is present and that the server allows it:
+   - Root `.htaccess` should send all requests to `public/` (already updated in this project).
+   - Apache: `AllowOverride All` for this directory so `.htaccess` is applied.
+   - If you still see "Index of /", the host may be ignoring `.htaccess`; then document root **must** be set to `public`.
 
 ### SQLSTATE[HY000] [1045] Access denied for user '...'@'localhost'
 **Cause:** Wrong database credentials on the server. Laravel uses the database for sessions, so the error appears before any page loads.

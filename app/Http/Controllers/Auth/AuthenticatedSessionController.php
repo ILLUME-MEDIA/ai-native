@@ -15,12 +15,21 @@ class AuthenticatedSessionController extends Controller
 {
     /**
      * Display the login view.
+     *
+     * If the user is already authenticated, redirect them straight to the
+     * admin dashboard instead of rendering the login page inside the
+     * auth layout (which looks like a modal/overlay).
      */
-    public function create(): Response
+    public function create(): Response|RedirectResponse
     {
+        if (Auth::check()) {
+            return redirect('/admin/dashboard/ecommerce');
+        }
+
         return Inertia::render('Auth/Login', [
             'canResetPassword' => Route::has('password.request'),
             'status' => session('status'),
+            'csrf_token' => csrf_token(),
         ]);
     }
 
@@ -33,7 +42,15 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->intended('/admin/dashboard/ecommerce');
+        // Always redirect to admin dashboard - frontend will handle full page reload
+        $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
+        
+        // For Inertia requests, return redirect header so frontend can do full page reload
+        if ($request->header('X-Inertia')) {
+            return redirect($redirectUrl);
+        }
+        
+        return redirect($redirectUrl);
     }
 
     /**

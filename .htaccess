@@ -1,8 +1,20 @@
+# Disable directory listing so "Index of /" never shows
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    
-    # Redirect all requests to public folder
-    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteBase /
+
+    # Send root (/) to public folder
+    RewriteRule ^$ public/ [L]
+
+    # Don't rewrite if already going to public/
+    RewriteCond %{REQUEST_URI} ^/public/ [NC]
+    RewriteRule ^ - [L]
+
+    # Send all other requests to public folder (Laravel entry point)
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^(.*)$ public/$1 [L]

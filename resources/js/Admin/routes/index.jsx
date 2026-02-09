@@ -1,10 +1,21 @@
 import { lazy } from 'react';
 import { Navigate } from 'react-router';
 import MainLayout from '@admin/layouts/MainLayout';
-export const routes = [{
-  path: '/',
-  element: <Navigate to="/dashboard/ecommerce" replace />
-}, {
+import AuthRedirect from '@admin/components/AuthRedirect';
+
+// Auth paths: when Admin SPA is loaded at /admin/login etc., redirect to real auth page (full load)
+const authPaths = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email', '/confirm-password'];
+const authRedirectRoutes = authPaths.map((path) => ({
+  path,
+  element: <AuthRedirect />,
+}));
+
+export const routes = [
+  ...authRedirectRoutes,
+  {
+    path: '/',
+    element: <Navigate to="/dashboard/ecommerce" replace />
+  }, {
   element: <MainLayout />,
   children: [{
     path: '/apps/api-keys',
