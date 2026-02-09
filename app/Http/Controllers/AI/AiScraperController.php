@@ -70,9 +70,25 @@ class AiScraperController extends Controller
     {
         try {
             $title = $playlist->title ?? $playlist->playlist_id;
+
+            // Delete related pushes and videos first, then the playlist itself.
+            $playlist->load('videos.pushes');
+
+            foreach ($playlist->videos as $video) {
+                // Remove platform push tracking rows for this video
+                if (method_exists($video, 'pushes')) {
+                    $video->pushes()->delete();
+                }
+            }
+
+            // Remove all videos belonging to this playlist
+            $playlist->videos()->delete();
+
+            // Finally remove the playlist row
             $playlist->delete();
+
             return response()->json([
-                'message' => "Playlist \"{$title}\" has been removed.",
+                'message' => "Playlist \"{$title}\" and all its videos have been removed.",
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);

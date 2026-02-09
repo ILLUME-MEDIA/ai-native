@@ -4,6 +4,7 @@ namespace App\Services\AI;
 
 use App\Models\YoutubePlaylist;
 use App\Models\YoutubeVideo;
+use App\Services\AI\WatchlistSyncHelper;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -463,16 +464,15 @@ class YouTubeScraperService
 
     protected function syncPlaylistToWatchlist($playlist, $platform): array
     {
-        Log::info("Syncing to Watchlist platform: {$platform->name}");
-
-        $baseUrl = $platform->base_url;
-        // Watchlist usually needs /api/v1
-        if (!str_contains($baseUrl, '/api/v1')) {
-            $baseUrl = rtrim($baseUrl, '/') . '/api/v1';
-        }
-        $token = $platform->api_token;
-
         try {
+            Log::info("Syncing to Watchlist platform via helper: {$platform->name}");
+
+            // Instantiate helper with same behavior as legacy plugin
+            $helper = new WatchlistSyncHelper([
+                'api_url' => $platform->base_url,
+                'token'   => $platform->api_token,
+            ]);
+
             // 1. Create or Get Title
             $titlePayload = [
                 'name' => $playlist->title,
@@ -481,60 +481,35 @@ class YouTubeScraperService
                 'poster' => $playlist->videos[0]->thumbnail_url ?? null
             ];
 
-            $titleResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'titles', $titlePayload);
-            $titleId = $titleResponse->json()['id'] ?? $titleResponse->json()['data']['id'] ?? $titleResponse->json()['title']['id'] ?? null;
+            $titleId = $helper->createOrGetTitle($titlePayload);
 
-            if (!$titleId) {
-                $searchRes = $this->makePlatformRequest($baseUrl, $token, 'GET', 'titles/search', ['query' => $playlist->title]);
-                $titleId = $searchRes->json()['data'][0]['id'] ?? $searchRes->json()['pagination']['data'][0]['id'] ?? null;
+            if (! $titleId) {
+                throw new \Exception("Failed to create/get title on Watchlist platform.");
             }
 
-            if (!$titleId)
-                throw new \Exception("Failed to create/get title on Watchlist platform.");
-
-            // 2. Create Episodes
-            $successCount = 0;
+            // 2. Prepare episodes payloads (one per video)
+            $episodesPayload = [];
             foreach ($playlist->videos as $index => $video) {
-                $epPayload = [
+                $episodesPayload[] = [
                     'name' => $video->title,
                     'episode_number' => $index + 1,
                     'description' => $video->description,
-                    'poster' => $video->thumbnail_url
+                    'poster' => $video->thumbnail_url,
                 ];
-                $epRes = $this->makePlatformRequest($baseUrl, $token, 'POST', "titles/{$titleId}/seasons/1/episodes", $epPayload);
-                if ($epRes->successful())
-                    $successCount++;
             }
 
-            // 3. Add to Watchlist (user list)
-            // Try to find "Watchlist" list ID
-            $listRes = $this->makePlatformRequest($baseUrl, $token, 'GET', 'user-profile/me/lists');
-            $lists = $listRes->json()['data'] ?? $listRes->json()['pagination']['data'] ?? [];
-            $listId = null;
-            foreach ($lists as $l) {
-                if (strtolower($l['name'] ?? '') === 'watchlist') {
-                    $listId = $l['id'];
-                    break;
-                }
-            }
+            $episodeIds = $helper->createEpisodes($titleId, $episodesPayload);
 
-            if (!$listId) {
-                // Create Watchlist list if missing
-                $newListRes = $this->makePlatformRequest($baseUrl, $token, 'POST', 'lists', ['name' => 'Watchlist', 'type' => 'list']);
-                $listId = $newListRes->json()['id'] ?? $newListRes->json()['channel']['id'] ?? null;
-            }
-
-            if ($listId) {
-                $this->makePlatformRequest($baseUrl, $token, 'POST', "lists/{$listId}/add", [
-                    'itemId' => $titleId,
-                    'itemType' => 'title'
-                ]);
-            }
+            // 3. Add to Watchlist
+            $added = $helper->addToWatchlist($titleId, $episodeIds);
 
             return [
                 'status' => 'success',
                 'message' => 'Playlist metadata synced to Watchlist successfully.',
-                'details' => ['episodes_created' => $successCount]
+                'details' => [
+                    'episodes_created' => count($episodeIds),
+                    'added_to_watchlist' => $added,
+                ],
             ];
         } catch (\Exception $e) {
             Log::error("Watchlist Push Error: " . $e->getMessage());
