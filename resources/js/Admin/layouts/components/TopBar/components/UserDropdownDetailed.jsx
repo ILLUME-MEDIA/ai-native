@@ -2,7 +2,7 @@ import User1 from "@admin/assets/images/users/user-1.jpg";
 import Icon from "@admin/components/wrappers/Icon";
 import { META_DATA } from "@admin/config/constants";
 import { Dropdown, DropdownDivider, DropdownHeader, DropdownItem, DropdownMenu, DropdownToggle } from "react-bootstrap";
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 const menuItems = [{
   id: "profile",
   label: "Profile",
@@ -37,7 +37,22 @@ const menuItems = [{
   isSemibold: true
 }];
 const UserDropdown = () => {
+  const logoutFormRef = useRef(null);
+  
+  const handleLogout = (e) => {
+    e.preventDefault();
+    // Submit logout form
+    if (logoutFormRef.current) {
+      logoutFormRef.current.submit();
+    }
+  };
+
   return <div id="user-dropdown-detailed" className="topbar-item nav-user">
+    {/* Hidden logout form */}
+    <form ref={logoutFormRef} method="POST" action="/logout" style={{ display: 'none' }}>
+      <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''} />
+    </form>
+    
     <Dropdown>
       <DropdownToggle className="topbar-link drop-arrow-none px-2">
         <img src={User1} width={32} className="rounded-circle  me-lg-2 d-flex" alt="user-image" />
@@ -55,10 +70,17 @@ const UserDropdown = () => {
         </DropdownHeader>
 
         {menuItems.map(item => <Fragment key={item.id}>
-          <DropdownItem href={item.link} className={item.isSemibold ? "fw-semibold" : ""}>
-            <Icon icon={item.icon} className="me-1 fs-lg align-middle" />
-            <span className="align-middle">{item.label}</span>
-          </DropdownItem>
+          {item.id === 'logout' ? (
+            <DropdownItem onClick={handleLogout} className={item.isSemibold ? "fw-semibold" : ""}>
+              <Icon icon={item.icon} className="me-1 fs-lg align-middle" />
+              <span className="align-middle">{item.label}</span>
+            </DropdownItem>
+          ) : (
+            <DropdownItem href={item.link} className={item.isSemibold ? "fw-semibold" : ""}>
+              <Icon icon={item.icon} className="me-1 fs-lg align-middle" />
+              <span className="align-middle">{item.label}</span>
+            </DropdownItem>
+          )}
           {item.divider && <DropdownDivider />}
         </Fragment>)}
       </DropdownMenu>
