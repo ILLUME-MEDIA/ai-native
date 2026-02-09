@@ -1,0 +1,90 @@
+//
+// _root.scss
+//
+
+// Google fonts
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&family=Nunito:ital,wght@0,200..1000;1,200..1000&display=swap');
+
+:root {
+    // Font Family Secondary
+    --#{$prefix}font-family-secondary: "Google Sans", sans-serif;
+
+    // Logo
+    --#{$prefix}logo-lg-height: 22px;
+    --#{$prefix}logo-sm-height: 26px;
+
+    // Sidebar
+    --#{$prefix}sidenav-width: 245px;
+    --#{$prefix}sidenav-width-md: 200px;
+    --#{$prefix}sidenav-width-sm: 75px;
+
+    // Topbar
+    --#{$prefix}topbar-height: 65px;
+
+    // Menu items
+    --#{$prefix}sidenav-item-icon-size: 1.125rem;
+    --#{$prefix}sidenav-item-gap: 12px;
+    --#{$prefix}sidenav-item-padding-x: 10px;
+    --#{$prefix}sidenav-item-padding-y: 10px;
+    --#{$prefix}sidenav-item-font-size: 0.875rem;
+    --#{$prefix}sidenav-item-font-weight: 500;
+
+    // Sub Menu Items
+    --#{$prefix}sidenav-sub-item-font-size: 0.8125rem;
+    --#{$prefix}sidenav-sub-item-font-weight: 400;
+    --#{$prefix}sidenav-sub-item-gap: 4px;
+    --#{$prefix}sidenav-sub-item-padding-x: 10px;
+    --#{$prefix}sidenav-sub-item-padding-y: 7px;
+
+    --#{$prefix}theme-card-border-width: 0;
+    --#{$prefix}theme-card-box-shadow: var(--#{$prefix}box-shadow);
+    --#{$prefix}theme-card-border-color: var(--#{$prefix}border-color);
+
+    --#{$prefix}font-weight-medium: 500;
+    --#{$prefix}font-weight-semibold: 600;
+    --#{$prefix}font-weight-bold: 700;
+
+    --#{$prefix}font-size-xxs: 11px;
+    --#{$prefix}font-size-xs: 12px;
+    --#{$prefix}font-size-base: 14px;
+    --#{$prefix}font-size-sm: 13px;
+    --#{$prefix}font-size-md: 15px;
+    --#{$prefix}font-size-lg: 16px;
+    --#{$prefix}font-size-xl: 18px;
+    --#{$prefix}font-size-xxl: 20px;
+
+     --#{$prefix}link-color: var(--#{$prefix}primary);
+    --#{$prefix}link-hover-color: var(--#{$prefix}primary-text-emphasis);
+
+    // Chart Colors
+    --#{$prefix}chart-primary: #236dc9; // Main Color
+    --#{$prefix}chart-primary-rgb: #{to-rgb(#236dc9)};
+    --#{$prefix}chart-secondary: #7b70ef; // Secondary Color
+    --#{$prefix}chart-secondary-rgb: #{to-rgb(#7b70ef)};
+    --#{$prefix}chart-alpha: #02bc9c; // Success Color
+    --#{$prefix}chart-alpha-rgb: #{to-rgb(#02bc9c)};
+    --#{$prefix}chart-beta: #f7577e; // Danger Color
+    --#{$prefix}chart-beta-rgb: #{to-rgb(#f7577e)};
+    --#{$prefix}chart-gamma: #f9bf59; // Warning Color
+    --#{$prefix}chart-gamma-rgb: #{to-rgb(#f9bf59)};
+    --#{$prefix}chart-delta: #5bc3e1; // Info Color
+    --#{$prefix}chart-delta-rgb: #{to-rgb(#5bc3e1)};
+    --#{$prefix}chart-zeta: #db9052; // custom Color
+    --#{$prefix}chart-zeta-rgb: #{to-rgb(#db9052)};
+    --#{$prefix}chart-gray: #edeff3; // Gray Color
+    --#{$prefix}chart-gray-rgb: #{to-rgb(#edeff3)};
+    --#{$prefix}chart-dark: #1A57A1; // Primary Dark Color
+    --#{$prefix}chart-dark-rgb: #{to-rgb(#1A57A1)};
+    --#{$prefix}chart-border-color: #ecf4fc; // Border Color
+    --#{$prefix}chart-title-color: #bbcae1; // Title Color
+}
+
+[data-bs-theme='dark'] {
+    --#{$prefix}chart-border-color: #242c31;
+    --#{$prefix}chart-gray: #40424f;
+    --#{$prefix}chart-gray-rgb: #{to-rgb(#40424f)};
+
+    .text-dark {
+        color: #dce0fb !important;
+    }
+}

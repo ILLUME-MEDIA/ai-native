@@ -1,0 +1,18 @@
+//
+// _gallery.scss
+//
+
+.gall-overlay {
+    position: absolute;
+    top: 0;
+    inset-inline-start: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.gallery-item:hover .gall-overlay {
+    opacity: 1;
+}

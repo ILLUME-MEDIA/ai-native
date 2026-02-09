@@ -1,0 +1,44 @@
+# OS / System
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files (SECURITY)
+.env
+.env.*
+!.env.example
+
+# IDE / Editor
+/.idea
+/.vscode
+/.fleet
+/.zed
+.phpactor.json
+
+# Testing / Cache
+.phpunit.result.cache
+/.phpunit.cache
+
+# Auth
+/auth.json
+
+# Node
+/node_modules
+/public/hot
+/public/build
+
+# Laravel
+/Paces_v1.1.0
+/React-JS
+/vendor
+/storage/*.key
+/storage/pail
+
+# Public uploads (IMPORTANT)
+!/public/storage
+
+# Homestead
+Homestead.json
+Homestead.yaml

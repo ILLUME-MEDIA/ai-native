@@ -1,0 +1,328 @@
+//
+// Material Theme Mode
+//
+
+$theme-material-colors: (
+    'primary': #6750A4,
+    'secondary': #625B71,
+    'success': #6b9a7e,
+    'info': #76c2c3,
+    'warning': #f88c00,
+    'danger': #B3261E,
+    'light': #e2e0f9
+);
+
+@if $theme-material ==true {
+
+    html[data-skin='material'] {
+        --#{$prefix}font-sans-serif: "Google Sans", sans-serif;
+        --#{$prefix}font-family-secondary: "Google Sans", sans-serif;
+
+        --#{$prefix}body-font-size: 13px;
+        --#{$prefix}body-bg: #fefbff;
+        --#{$prefix}secondary-bg: #f8f2fa;
+
+        --#{$prefix}tertiary-bg: #efe8f1;
+
+        --#{$prefix}secondary-color: #7e7591;
+
+        --#{$prefix}theme-card-border-width: 1px;
+        --#{$prefix}theme-card-border-color: transparent;
+        --#{$prefix}theme-card-box-shadow: 1px 0.1rem 0.5rem 0 rgba(48, 45, 59, 0.05);
+        --#{$prefix}box-shadow: 1px 0.1rem 0.5rem 0 rgba(48, 45, 59, 0.15);
+        --#{$prefix}border-radius: 8px;
+        --#{$prefix}border-radius-sm: 6px;
+
+        --#{$prefix}border-color: #dbd5dd;
+
+        --#{$prefix}font-weight-medium: 500;
+        --#{$prefix}font-weight-semibold: 500;
+        --#{$prefix}font-weight-bold: 600;
+
+        --#{$prefix}font-size-xxs: 11px;
+        --#{$prefix}font-size-xs: 12px;
+        --#{$prefix}font-size-base: 13px;
+        --#{$prefix}font-size-md: 14px;
+        --#{$prefix}font-size-lg: 16px;
+        --#{$prefix}font-size-xl: 18px;
+        --#{$prefix}font-size-xxl: 20px;
+
+        // Menu items
+        --#{$prefix}sidenav-item-icon-size: 1.125rem;
+        --#{$prefix}sidenav-item-gap: 12px;
+        --#{$prefix}sidenav-item-padding-x: 10px;
+        --#{$prefix}sidenav-item-padding-y: 10px;
+        --#{$prefix}sidenav-item-font-size: 0.84375rem;
+        --#{$prefix}sidenav-item-font-weight: 500;
+
+        // Sub Menu Items
+        --#{$prefix}sidenav-sub-item-font-size: 0.84375rem;
+        --#{$prefix}sidenav-sub-item-font-weight: 400;
+        --#{$prefix}sidenav-sub-item-gap: 4px;
+        --#{$prefix}sidenav-sub-item-padding-x: 10px;
+        --#{$prefix}sidenav-sub-item-padding-y: 7px;
+
+        // Background Light left-sidebar
+        &[data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: #{$white};
+            --#{$prefix}sidenav-border-color: #f8f2fa;
+            --#{$prefix}sidenav-item-color: #{$gray-700};
+            --#{$prefix}sidenav-item-hover-color: #6750A4;
+            --#{$prefix}sidenav-item-hover-bg: #f7f7ff;
+            --#{$prefix}sidenav-item-active-color: #6750A4;
+            --#{$prefix}sidenav-item-active-bg: #f7f7ff;
+        }
+
+        // Background Gray left-sidebar
+        &[data-menu-color='gray'] {
+            --#{$prefix}sidenav-bg: #eee6f1;
+            --#{$prefix}sidenav-border-color: #e7e9eb;
+            --#{$prefix}sidenav-item-color: #{$gray-700};
+            --#{$prefix}sidenav-item-hover-color: #6750A4;
+            --#{$prefix}sidenav-item-hover-bg: #ded4e1;
+            --#{$prefix}sidenav-item-active-color: #212b29;
+            --#{$prefix}sidenav-item-active-bg: #ded4e1;
+        }
+
+        // Dark Left Sidebar
+        &[data-menu-color='dark'] {
+            --#{$prefix}sidenav-bg: #383131;
+            --#{$prefix}sidenav-border-color: #383131;
+            --#{$prefix}sidenav-item-color: #9f9f9f;
+            --#{$prefix}sidenav-item-hover-color: #d5d5d5;
+            --#{$prefix}sidenav-item-hover-bg: #312a2a;
+            --#{$prefix}sidenav-item-active-color: #d5d5d5;
+            --#{$prefix}sidenav-item-active-bg: #312a2a;
+        }
+
+        // Gradient Menu
+        &[data-menu-color='gradient'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(135deg, #1a455f, #262549)};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #799cb7;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: #294461;
+        }
+
+        // Image Menu
+        &[data-menu-color='image'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(to bottom right, rgba(16, 16, 30, 0.85), #183c52), url('../../images/sidenav-bg.jpg') center/cover no-repeat};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #799cb7;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: #1e3447;
+        }
+
+        // Dark Mode
+        &[data-bs-theme='dark'][data-menu-color='dark'],
+        &[data-bs-theme='dark'][data-menu-color='gray'],
+        &[data-bs-theme='dark'][data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: #1e1f27;
+            --#{$prefix}sidenav-border-color: #2c2d38;
+            --#{$prefix}sidenav-item-color: #8495ab;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #ced6df;
+            --#{$prefix}sidenav-item-active-bg: #22232c;
+        }
+
+        // Light Topbar
+        &[data-topbar-color='light'] {
+            --#{$prefix}topbar-bg: #fefbff;
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #6750A4;
+            --#{$prefix}topbar-search-bg: transparent;
+            --#{$prefix}topbar-search-border: #e7e9eb;
+        }
+
+        // Gray Topbar
+        &[data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: #f8f2fa;
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #6750A4;
+            --#{$prefix}topbar-search-bg: #eee6f1;
+            --#{$prefix}topbar-search-border: #eee6f1;
+        }
+
+        // Dark Topbar
+        &[data-topbar-color='dark'] {
+            --#{$prefix}topbar-bg: #6750A4;
+            --#{$prefix}topbar-item-color: #e9ecf1;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: #7662ad;
+            --#{$prefix}topbar-search-border: #7662ad;
+        }
+
+        // Gradient Topbar
+        &[data-topbar-color='gradient'] {
+            --#{$prefix}topbar-bg: #{linear-gradient(to bottom, #6750a4, #3a3052)};
+            --#{$prefix}topbar-item-color: rgba(255, 255, 255, 0.7);
+            --#{$prefix}topbar-item-hover-color: #ffffff;
+            --#{$prefix}topbar-search-bg: rgba(255, 255, 255, 0.1);
+            --#{$prefix}topbar-search-border: rgba(255, 255, 255, 0.1);
+        }
+
+        // Topbar (Dark Mode)
+        &[data-bs-theme='dark'][data-topbar-color='dark'],
+        &[data-bs-theme='dark'][data-topbar-color='light'],
+        &[data-bs-theme='dark'][data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: #252630;
+            --#{$prefix}topbar-item-color: #adb5bf;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: #2d2e3c;
+            --#{$prefix}topbar-search-border: #2d2e3c;
+        }
+
+        @each $name, $value in $theme-material-colors {
+            --#{$prefix}#{$name}: #{$value};
+        }
+
+        @each $name, $value in $theme-material-colors {
+            --#{$prefix}#{$name}-rgb: #{to-rgb($value)};
+        }
+
+        @each $name, $value in $theme-material-colors {
+            --#{$prefix}#{$name}-bg-subtle: #{rgba($value, 0.15)};
+        }
+
+        @each $name, $value in $theme-material-colors {
+            --#{$prefix}#{$name}-border-subtle: #{rgba($value, 0.3)};
+        }
+
+        @each $name, $value in $theme-material-colors {
+            --#{$prefix}#{$name}-text-emphasis: #{shade-color($value, 25%)};
+        }
+
+        // Chart Colors
+        --#{$prefix}chart-primary: #6750A4; // Main Color
+        --#{$prefix}chart-primary-rgb: #{to-rgb(#6750A4)};
+        --#{$prefix}chart-secondary: #625B71; // Secondary Color
+        --#{$prefix}chart-secondary-rgb: #{to-rgb(#625B71)};
+        --#{$prefix}chart-alpha: #6b9a7e; // Success Color
+        --#{$prefix}chart-alpha-rgb: #{to-rgb(#6b9a7e)};
+        --#{$prefix}chart-beta: #B3261E; // Danger Color
+        --#{$prefix}chart-beta-rgb: #{to-rgb(#B3261E)};
+        --#{$prefix}chart-gamma: #f88c00; // Warning Color
+        --#{$prefix}chart-gamma-rgb: #{to-rgb(#f88c00)};
+        --#{$prefix}chart-delta: #76c2c3; // Info Color
+        --#{$prefix}chart-delta-rgb: #{to-rgb(#76c2c3)};
+        --#{$prefix}chart-zeta: #6B3F69; // Purple or custom Color
+        --#{$prefix}chart-zeta-rgb: #{to-rgb(#6B3F69)};
+        --#{$prefix}chart-gray: #e2daed; // Gray Color
+        --#{$prefix}chart-gray-rgb: #{to-rgb(#e2daed)};
+        --#{$prefix}chart-dark: #396699; // Primary Dark Color
+        --#{$prefix}chart-dark-rgb: #{to-rgb(#396699)};
+        --#{$prefix}chart-border-color: #ecf4fc; // Border Color
+        --#{$prefix}chart-title-color: #bbcae1; // Title Color
+    }
+
+    @if $enable-dark-mode {
+        @include color-mode(dark, true) {
+            &[data-skin='material'] {
+                --#{$prefix}body-bg: #{#17181e};
+                --#{$prefix}body-bg-rgb: #{to-rgb(#17181e)};
+
+                --#{$prefix}light: #252630;
+                --#{$prefix}light-rgb: #{to-rgb(#252630)};
+
+                --#{$prefix}secondary-bg: #{#1b1c22};
+                --#{$prefix}secondary-bg-rgb: #{to-rgb(#1b1c22)};
+
+                --#{$prefix}box-shadow: #{0px 0px 30px rgba(0, 0, 0, 0.3)};
+
+                --#{$prefix}theme-card-border-color: #293036;
+
+                --#{$prefix}tertiary-bg: #252630;
+
+                --#{$prefix}secondary-color: #8391a2;
+
+                --#{$prefix}border-color: #293036;
+
+                --#{$prefix}chart-gray: #40424f;
+                --#{$prefix}chart-gray-rgb: #{to-rgb(#40424f)};
+
+                .dropdown-menu,
+                .offcanvas {
+                    background-color: #1b1c22;
+                }
+            }
+        }
+    }
+}
+
+//
+//  Material Theme
+//
+html[data-skin='material'] {
+    .container-fluid {
+        max-width: 1460px;
+    }
+
+    .row:not([class*="g-"]) {
+        --#{$prefix}gutter-x: 0.75rem;
+    }
+
+    .container,
+    .container-fluid,
+    .container-lg,
+    .container-md,
+    .container-sm,
+    .container-xl,
+    .container-xxl {
+        --#{$prefix}gutter-x: 0.75rem;
+    }
+
+    .card {
+        border-radius: 12px;
+        margin-bottom: 0.75rem;
+    }
+
+    .card-h-100 {
+        height: calc(100% - 0.75rem);
+    }
+
+    .sidenav-menu,
+    .app-topbar,
+    .card {
+        box-shadow: none;
+    }
+
+    .app-topbar {
+        .topbar-menu {
+            padding-inline-start: 0.75rem * .5;
+            padding-inline-end: 0.75rem * .5;
+        }
+    }
+
+    .footer {
+        background-color: transparent;
+        border: none;
+    }
+
+    .dropdown-menu,
+    .offcanvas {
+        background-color: $white;
+    }
+
+    .btn {
+        --#{$prefix}btn-padding-y: 0.4532rem;
+        --#{$prefix}btn-padding-x: 1rem;
+    }
+
+    .btn-sm {
+        --#{$prefix}btn-padding-y: 0.3125rem;
+        --#{$prefix}btn-padding-x: 0.625rem;
+    }
+
+    .side-nav>.side-nav-item.active>a {
+        border-radius: 50px;
+    }
+
+    .bg-body-secondary {
+        background-color: var(--#{$prefix}secondary-bg) !important;
+    }
+}

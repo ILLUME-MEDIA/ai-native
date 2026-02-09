@@ -1,0 +1,373 @@
+//
+// Orbit Theme Mode
+//
+
+$theme-orbit-colors: (
+    'primary': #39379e,
+    'secondary': #888fdf,
+    'success': #57b78a,
+    'info': #7fd1cd,
+    'warning': #e6a66f,
+    'danger': #fb764a
+);
+
+@if $theme-orbit ==true {
+
+    @import url('https://api.fontshare.com/v2/css?f[]=supreme@300,400,500,700&display=swap');
+
+    html[data-skin='orbit'] {
+        --#{$prefix}font-sans-serif: 'Supreme', sans-serif;
+        --#{$prefix}font-family-secondary: 'Supreme', sans-serif;
+        --#{$prefix}body-font-size: 14px;
+        --#{$prefix}body-bg: #f3f6f9;
+        --#{$prefix}secondary-bg: #ffffff;
+
+        --#{$prefix}theme-card-border-width: 0;
+        --#{$prefix}theme-card-border-color: #e1e7ef;
+        --#{$prefix}theme-card-box-shadow: 0px 3px 4px 0px rgba(0, 0, 0, 0.03);
+        --#{$prefix}box-shadow: 0 2px 4px rgba(56, 65, 74, 0.2);
+        --#{$prefix}border-radius: 6px;
+
+        --#{$prefix}font-weight-medium: 500;
+        --#{$prefix}font-weight-semibold: 500;
+        --#{$prefix}font-weight-bold: 600;
+
+        --#{$prefix}font-size-xxs: 12px;
+        --#{$prefix}font-size-xs: 13px;
+        --#{$prefix}font-size-base: 14px;
+        --#{$prefix}font-size-md: 15px;
+        --#{$prefix}font-size-lg: 16px;
+        --#{$prefix}font-size-xl: 18px;
+        --#{$prefix}font-size-xxl: 20px;
+
+        // Menu items
+        --#{$prefix}sidenav-item-icon-size: 1rem;
+        --#{$prefix}sidenav-item-gap: 10px;
+        --#{$prefix}sidenav-item-padding-x: 12px;
+        --#{$prefix}sidenav-item-padding-y: 9px;
+        --#{$prefix}sidenav-item-font-size: 14px;
+        --#{$prefix}sidenav-item-font-weight: 500;
+
+        // Sub Menu Items
+        --#{$prefix}sidenav-sub-item-font-size: 14px;
+        --#{$prefix}sidenav-sub-item-font-weight: 400;
+        --#{$prefix}sidenav-sub-item-gap: 4px;
+        --#{$prefix}sidenav-sub-item-padding-x: 10px;
+        --#{$prefix}sidenav-sub-item-padding-y: 7px;
+
+        // Light left-sidebar
+        &[data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: #{$white};
+            --#{$prefix}sidenav-border-color: #ffffff;
+            --#{$prefix}sidenav-item-color: #{$gray-700};
+            --#{$prefix}sidenav-item-hover-color: #39379e;
+            --#{$prefix}sidenav-item-hover-bg: #eff1fc;
+            --#{$prefix}sidenav-item-active-color: #39379e;
+            --#{$prefix}sidenav-item-active-bg: #eff1fc;
+        }
+
+        // Gray left-sidebar
+        &[data-menu-color='gray'] {
+            --#{$prefix}sidenav-bg: #f6f7fb;
+            --#{$prefix}sidenav-border-color: #f6f7fb;
+            --#{$prefix}sidenav-item-color: #{$gray-700};
+            --#{$prefix}sidenav-item-hover-color: #39379e;
+            --#{$prefix}sidenav-item-hover-bg: #eaecf3;
+            --#{$prefix}sidenav-item-active-color: #212b29;
+            --#{$prefix}sidenav-item-active-bg: #eaecf3;
+        }
+
+        // Dark Left Sidebar
+        &[data-menu-color='dark'] {
+            --#{$prefix}sidenav-bg: #2b3845;
+            --#{$prefix}sidenav-border-color: #2b3845;
+            --#{$prefix}sidenav-item-color: #8495ab;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #34404d;
+            --#{$prefix}sidenav-item-active-color: #ced6df;
+            --#{$prefix}sidenav-item-active-bg: #34404d;
+        }
+
+        // Gradient Menu
+        &[data-menu-color='gradient'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(to right, #2d2c70, #5f7191)};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #9ba0c9;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: rgba(219, 236, 255, 0.05);
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: rgba(219, 236, 255, 0.05);
+        }
+
+        // Image Menu
+        &[data-menu-color='image'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(to bottom right, rgba(16, 16, 30, 0.85), #183c52), url('../../images/sidenav-bg.jpg') center/cover no-repeat};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #799cb7;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: rgba(219, 236, 255, 0.05);
+        }
+
+        // Dark Mode
+        &[data-bs-theme='dark'][data-menu-color='dark'],
+        &[data-bs-theme='dark'][data-menu-color='gray'],
+        &[data-bs-theme='dark'][data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: #1e1f27;
+            --#{$prefix}sidenav-border-color: #2c2d38;
+            --#{$prefix}sidenav-item-color: #8495ab;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #ced6df;
+            --#{$prefix}sidenav-item-active-bg: #22232c;
+        }
+
+        // Light Topbar
+        &[data-topbar-color='light'] {
+            --#{$prefix}topbar-bg: #ffffff;
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #39379e;
+            --#{$prefix}topbar-search-bg: #f3f6f9;
+            --#{$prefix}topbar-search-border: #f3f6f9;
+        }
+
+        // Gray Topbar
+        &[data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: #f6f7fb;
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #39379e;
+            --#{$prefix}topbar-search-bg: #eceef5;
+            --#{$prefix}topbar-search-border: #eceef5;
+        }
+
+        // Dark Topbar
+        &[data-topbar-color='dark'] {
+            --#{$prefix}topbar-bg: #25313d;
+            --#{$prefix}topbar-item-color: #adb5bf;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: #313f4c;
+            --#{$prefix}topbar-search-border: #313f4c;
+        }
+
+        // Gradient Topbar
+        &[data-topbar-color='gradient'] {
+            --#{$prefix}topbar-bg: #{linear-gradient(to bottom, #3d4888, #52588e)};
+            --#{$prefix}topbar-item-color: rgba(255, 255, 255, 0.7);
+            --#{$prefix}topbar-item-hover-color: #ffffff;
+            --#{$prefix}topbar-search-bg: rgba(255, 255, 255, 0.1);
+            --#{$prefix}topbar-search-border: rgba(255, 255, 255, 0.1);
+        }
+
+        // Topbar (Dark Mode)
+        &[data-bs-theme='dark'][data-topbar-color='dark'],
+        &[data-bs-theme='dark'][data-topbar-color='light'],
+        &[data-bs-theme='dark'][data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: #252630;
+            --#{$prefix}topbar-item-color: #adb5bf;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: #2d2e3c;
+            --#{$prefix}topbar-search-border: #2d2e3c;
+        }
+
+        @each $name, $value in $theme-orbit-colors {
+            --#{$prefix}#{$name}: #{$value};
+        }
+
+        @each $name, $value in $theme-orbit-colors {
+            --#{$prefix}#{$name}-rgb: #{to-rgb($value)};
+        }
+
+        @each $name, $value in $theme-orbit-colors {
+            --#{$prefix}#{$name}-bg-subtle: #{rgba($value, 0.15)};
+        }
+
+        @each $name, $value in $theme-orbit-colors {
+            --#{$prefix}#{$name}-border-subtle: #{rgba($value, 0.3)};
+        }
+
+        @each $name, $value in $theme-orbit-colors {
+            --#{$prefix}#{$name}-text-emphasis: #{shade-color($value, 25%)};
+        }
+
+        // Chart Colors
+        --#{$prefix}chart-primary: #57b78a; // Main Color
+        --#{$prefix}chart-primary-rgb: #{to-rgb(#57b78a)};
+        --#{$prefix}chart-secondary: #7fd1cd; // Secondary Color
+        --#{$prefix}chart-secondary-rgb: #{to-rgb(#7fd1cd)};
+        --#{$prefix}chart-alpha: #39379e; // Success Color
+        --#{$prefix}chart-alpha-rgb: #{to-rgb(#39379e)};
+        --#{$prefix}chart-beta: #fb764a; // Danger Color
+        --#{$prefix}chart-beta-rgb: #{to-rgb(#fb764a)};
+        --#{$prefix}chart-gamma: #e6a66f; // Warning Color
+        --#{$prefix}chart-gamma-rgb: #{to-rgb(#e6a66f)};
+        --#{$prefix}chart-delta: #888fdf; // Info Color
+        --#{$prefix}chart-delta-rgb: #{to-rgb(#888fdf)};
+        --#{$prefix}chart-zeta: #6070cc; // Purple or custom Color
+        --#{$prefix}chart-zeta-rgb: #{to-rgb(#6070cc)};
+        --#{$prefix}chart-gray: #edeff3; // Gray Color
+        --#{$prefix}chart-gray-rgb: #{to-rgb(#edeff3)};
+        --#{$prefix}chart-dark: #396699; // Primary Dark Color
+        --#{$prefix}chart-dark-rgb: #{to-rgb(#396699)};
+        --#{$prefix}chart-border-color: #ecf4fc; // Border Color
+        --#{$prefix}chart-title-color: #bbcae1; // Title Color
+    }
+
+    @if $enable-dark-mode {
+        @include color-mode(dark, true) {
+            &[data-skin='orbit'] {
+                --#{$prefix}body-bg: #{#17181e};
+                --#{$prefix}body-bg-rgb: #{to-rgb(#17181e)};
+
+                --#{$prefix}secondary-bg: #{#1b1c22};
+                --#{$prefix}secondary-bg-rgb: #{to-rgb(#1b1c22)};
+
+                --#{$prefix}box-shadow: #{0px 0px 30px rgba(0, 0, 0, 0.3)};
+
+                --#{$prefix}theme-card-border-color: #293036;
+
+                --#{$prefix}chart-gray: #40424f;
+                --#{$prefix}chart-gray-rgb: #{to-rgb(#40424f)};
+
+                --#{$prefix}primary: #{#726fd3};
+                --#{$prefix}primary-rgb: #{to-rgb(#726fd3)};
+                --#{$prefix}primary-text-emphasis: #{shade-color(#726fd3, 25%)};
+                --#{$prefix}primary-bg-subtle: #{rgba(#726fd3, 0.15)};
+
+                // Extra CSS
+                .card,
+                .dropdown-menu {
+                    border-width: 1px !important;
+                }
+            }
+        }
+    }
+}
+
+//
+//  Orbit Theme
+//
+html[data-skin='orbit'] {
+
+    .pro-username,
+    th {
+        font-weight: 600;
+    }
+
+    .card {
+
+        .card-title {
+            font-size: 14px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+    }
+
+    .btn, .side-nav>.side-nav-item.active>a {
+        position: relative;
+        overflow: hidden;
+
+        &::before {
+            border-radius: 100%;
+            display: block;
+            content: "";
+            animation: ripple 1s linear infinite;
+        }
+
+        .menu-icon {
+            margin-inline-start: calc(var(--#{$prefix}sidenav-item-gap) * -1);
+        }
+    }
+
+    @keyframes ripple {
+        0% {
+            box-shadow: 0 0 0 0 rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 20px rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 40px rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 60px rgba(var(--#{$prefix}body-bg-rgb), 0.1);
+        }
+
+        100% {
+            box-shadow: 0 0 0 20px rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 40px rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 60px rgba(var(--#{$prefix}body-bg-rgb), 0.1), 0 0 0 80px rgba(255, 255, 255, 0);
+        }
+    }
+
+    .app-topbar {
+        .topbar-menu {
+
+            .topbar-item {
+                .topbar-link {
+                    &.btn {
+                        &::before {
+                            display: none;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    .dropdown-menu {
+        border: none;
+
+        .dropdown-item:focus,
+        .dropdown-item:hover,
+        .dropdown-item.active,
+        .dropdown-item:active {
+            background-color: rgba(var(--#{$prefix}primary-rgb), 0.05);
+            color: var(--#{$prefix}primary-text-emphasis);
+        }
+    }
+
+    .topbar-search {
+        border-radius: 6px !important;
+    }
+
+    .nav-user {
+        background-color: var(--#{$prefix}topbar-search-bg);
+        outline-style: solid;
+        outline-color: var(--#{$prefix}topbar-bg);
+        outline-offset: -4px;
+        border-radius: 6px;
+
+        &::before {
+            display: none;
+        }
+    }
+
+    @each $state in map-keys($theme-colors) {
+        .btn-#{$state} {
+            box-shadow: var(--#{$prefix}btn-box-shadow) rgba(var(--#{$prefix}#{$state}-rgb), 0.5);
+        }
+
+        .btn-outline-#{$state},
+        .btn-orbit-#{$state},
+        .btn-ghost-#{$state} {
+            &:hover {
+                box-shadow: var(--#{$prefix}btn-box-shadow) rgba(var(--#{$prefix}#{$state}-rgb), 0.5);
+            }
+        }
+    }
+
+    &[data-topbar-color="gradient"] {
+        .nav-user {
+            outline-color: rgba(255, 255, 255, 0.05);
+        }
+    }
+
+    &[data-menu-color="light"]:not([data-bs-theme="dark"]),
+    &[data-menu-color="gray"]:not([data-bs-theme="dark"]) {
+        .side-nav>.side-nav-item.active>a {
+            &::before {
+                animation: rippleDark 1s linear infinite;
+            }
+        }
+
+        @keyframes rippleDark {
+            0% {
+                box-shadow: 0 0 0 0 rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 20px rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 40px rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 60px rgba(var(--#{$prefix}dark-rgb), 0.05);
+            }
+
+            100% {
+                box-shadow: 0 0 0 20px rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 40px rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 60px rgba(var(--#{$prefix}dark-rgb), 0.05), 0 0 0 80px rgba(255, 255, 255, 0);
+            }
+        }
+    }
+}

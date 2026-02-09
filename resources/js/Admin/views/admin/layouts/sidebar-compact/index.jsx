@@ -1,0 +1,11 @@
+import PageBreadcrumb from '@admin/components/PageBreadcrumb';
+import LayoutInfo from '../LayoutInfo';
+import LayoutSwitcher from '../LayoutSwitcher';
+const Page = () => {
+  return <>
+      <PageBreadcrumb title="Compact Menu" subtitle="Layouts" />
+      <LayoutSwitcher attribute="sidenavSize" value="compact" />
+      <LayoutInfo option="sidenavSize" value="compact" />
+    </>;
+};
+export default Page;

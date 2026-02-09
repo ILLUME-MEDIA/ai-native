@@ -1,0 +1,433 @@
+//
+// Prism Theme Mode
+//
+
+$theme-prism-colors: (
+    'primary': #376aed,
+    'secondary': #9b48c6,
+    'success': #22b07d,
+    'info': #32a7e2,
+    'warning': #ff8700,
+    'danger': #e76c5d
+);
+
+@if $theme-prism ==true {
+
+    @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&family=Momo+Trust+Sans:wght@200..800&display=swap');
+
+    html[data-skin='prism'] {
+        --#{$prefix}font-sans-serif: "Momo Trust Sans", sans-serif;
+        --#{$prefix}font-family-secondary: "Hanken Grotesk", sans-serif;
+
+        --#{$prefix}body-font-size: 13px;
+        --#{$prefix}body-bg: #f2f2f2;
+        --#{$prefix}secondary-bg: #ffffff;
+
+        --#{$prefix}theme-card-border-width: 1px;
+        --#{$prefix}theme-card-border-color: #edf2f9;
+        --#{$prefix}theme-card-box-shadow: 0 1px 20px rgba(57, 62, 80, 0.08);
+        --#{$prefix}box-shadow: 0 1px 20px rgba(57, 62, 80, 0.08);
+        --#{$prefix}border-radius: 8px;
+
+        -#{$prefix}tertiary-bg: #f7f0f4;
+
+        --#{$prefix}font-weight-medium: 500;
+        --#{$prefix}font-weight-semibold: 600;
+        --#{$prefix}font-weight-bold: 700;
+
+        --#{$prefix}font-size-xxs: 11px;
+        --#{$prefix}font-size-xs: 12px;
+        --#{$prefix}font-size-base: 13px;
+        --#{$prefix}font-size-md: 14px;
+        --#{$prefix}font-size-lg: 15px;
+        --#{$prefix}font-size-xl: 18px;
+        --#{$prefix}font-size-xxl: 20px;
+
+        // Menu items
+        --#{$prefix}sidenav-item-icon-size: 1rem;
+        --#{$prefix}sidenav-item-gap: 10px;
+        --#{$prefix}sidenav-item-padding-x: 12px;
+        --#{$prefix}sidenav-item-padding-y: 8px;
+        --#{$prefix}sidenav-item-font-size: 0.8725rem;
+        --#{$prefix}sidenav-item-font-weight: 400;
+
+        // Sub Menu Items
+        --#{$prefix}sidenav-sub-item-font-size: 0.8725rem;
+        --#{$prefix}sidenav-sub-item-font-weight: 400;
+        --#{$prefix}sidenav-sub-item-gap: 4px;
+        --#{$prefix}sidenav-sub-item-padding-x: 10px;
+        --#{$prefix}sidenav-sub-item-padding-y: 7px;
+
+        // Light left-sidebar
+        &[data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: rgba(255, 255, 255, 0.1);
+            --#{$prefix}sidenav-border-color: transparent;
+            --#{$prefix}sidenav-item-color: #687179;
+            --#{$prefix}sidenav-item-hover-color: #18191c;
+            --#{$prefix}sidenav-item-hover-bg: #2b313b;
+            --#{$prefix}sidenav-item-active-color: #ffffff;
+            --#{$prefix}sidenav-item-active-bg: #2b313b;
+        }
+
+        // Gray left-sidebar
+        &[data-menu-color='gray'] {
+            --#{$prefix}sidenav-bg: #f6f7fb;
+            --#{$prefix}sidenav-border-color: #e7e9eb;
+            --#{$prefix}sidenav-item-color: #{$gray-700};
+            --#{$prefix}sidenav-item-hover-color: #376aed;
+            --#{$prefix}sidenav-item-hover-bg: #eaecf3;
+            --#{$prefix}sidenav-item-active-color: #212b29;
+            --#{$prefix}sidenav-item-active-bg: #eaecf3;
+        }
+
+        // Dark Left Sidebar
+        &[data-menu-color='dark'] {
+            --#{$prefix}sidenav-bg: #354152;
+            --#{$prefix}sidenav-border-color: #354152;
+            --#{$prefix}sidenav-item-color: #8495ab;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2c3849;
+            --#{$prefix}sidenav-item-active-color: #ced6df;
+            --#{$prefix}sidenav-item-active-bg: #2c3849;
+        }
+
+        // Gradient Menu
+        &[data-menu-color='gradient'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(to right, #1e162e, #3a222e)};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #726f87;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: rgba(219, 236, 255, 0.05);
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: rgba(219, 236, 255, 0.05);
+        }
+
+        // Image Menu
+        &[data-menu-color='image'] {
+            --#{$prefix}sidenav-bg: #{linear-gradient(to bottom right, rgba(16, 16, 30, 0.85), #421852), url('../../images/sidenav-bg.jpg') center/cover no-repeat};
+            --#{$prefix}sidenav-border-color: null;
+            --#{$prefix}sidenav-item-color: #827195;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: #2f3742;
+            --#{$prefix}sidenav-item-active-color: #cfdff1;
+            --#{$prefix}sidenav-item-active-bg: rgba(219, 236, 255, 0.05);
+        }
+
+        // Dark Mode
+        &[data-bs-theme='dark'][data-menu-color='dark'],
+        &[data-bs-theme='dark'][data-menu-color='gray'],
+        &[data-bs-theme='dark'][data-menu-color='light'] {
+            --#{$prefix}sidenav-bg: rgba(27, 40, 110, 0.1);
+            --#{$prefix}sidenav-border-color: rgba(255, 255, 255, 0.05);
+            --#{$prefix}sidenav-item-color: #8495ab;
+            --#{$prefix}sidenav-item-hover-color: #bccee4;
+            --#{$prefix}sidenav-item-hover-bg: rgba(255, 255, 255, 0.03);
+            --#{$prefix}sidenav-item-active-color: #ced6df;
+            --#{$prefix}sidenav-item-active-bg: rgba(255, 255, 255, 0.03);
+        }
+
+        // Light Topbar
+        &[data-topbar-color='light'] {
+            --#{$prefix}topbar-bg: rgba(255, 255, 255, 0.5);
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #376aed;
+            --#{$prefix}topbar-search-bg: transparent;
+            --#{$prefix}topbar-search-border: #dfe5eb;
+        }
+
+        // Gray Topbar
+        &[data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: #fbf6ff;
+            --#{$prefix}topbar-item-color: #{$gray-700};
+            --#{$prefix}topbar-item-hover-color: #376aed;
+            --#{$prefix}topbar-search-bg: #f2ecf7;
+            --#{$prefix}topbar-search-border: #f2ecf7;
+        }
+
+        // Dark Topbar
+        &[data-topbar-color='dark'] {
+            --#{$prefix}topbar-bg: #354152;
+            --#{$prefix}topbar-item-color: #adb5bf;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: #2c3849;
+            --#{$prefix}topbar-search-border: #2c3849;
+        }
+
+        // Gradient Topbar
+        &[data-topbar-color='gradient'] {
+            --#{$prefix}topbar-bg: #{linear-gradient(to bottom, #593d6e, #543a27)};
+            --#{$prefix}topbar-item-color: rgba(255, 255, 255, 0.7);
+            --#{$prefix}topbar-item-hover-color: #ffffff;
+            --#{$prefix}topbar-search-bg: rgba(255, 255, 255, 0.1);
+            --#{$prefix}topbar-search-border: rgba(255, 255, 255, 0.1);
+        }
+
+        // Topbar (Dark Mode)
+        &[data-bs-theme='dark'][data-topbar-color='dark'],
+        &[data-bs-theme='dark'][data-topbar-color='light'],
+        &[data-bs-theme='dark'][data-topbar-color='gray'] {
+            --#{$prefix}topbar-bg: rgba(27, 40, 110, 0.1);
+            --#{$prefix}topbar-item-color: #adb5bf;
+            --#{$prefix}topbar-item-hover-color: #e0eeff;
+            --#{$prefix}topbar-search-bg: rgba(255, 255, 255, 0.05);
+            --#{$prefix}topbar-search-border: rgba(255, 255, 255, 0.1);
+        }
+
+        @each $name, $value in $theme-prism-colors {
+            --#{$prefix}#{$name}: #{$value};
+        }
+
+        @each $name, $value in $theme-prism-colors {
+            --#{$prefix}#{$name}-rgb: #{to-rgb($value)};
+        }
+
+        @each $name, $value in $theme-prism-colors {
+            --#{$prefix}#{$name}-bg-subtle: #{rgba($value, 0.15)};
+        }
+
+        @each $name, $value in $theme-prism-colors {
+            --#{$prefix}#{$name}-border-subtle: #{rgba($value, 0.3)};
+        }
+
+        @each $name, $value in $theme-prism-colors {
+            --#{$prefix}#{$name}-text-emphasis: #{shade-color($value, 25%)};
+        }
+
+        // Chart Colors
+        --#{$prefix}chart-primary: #376aed; // Main Color
+        --#{$prefix}chart-primary-rgb: #{to-rgb(#376aed)};
+        --#{$prefix}chart-secondary: #32a7e2; // Secondary Color
+        --#{$prefix}chart-secondary-rgb: #{to-rgb(#32a7e2)};
+        --#{$prefix}chart-alpha: #ff8700; // Success Color
+        --#{$prefix}chart-alpha-rgb: #{to-rgb(#ff8700)};
+        --#{$prefix}chart-beta: #e76c5d; // Danger Color
+        --#{$prefix}chart-beta-rgb: #{to-rgb(#e76c5d)};
+        --#{$prefix}chart-gamma: #9b48c6; // Warning Color
+        --#{$prefix}chart-gamma-rgb: #{to-rgb(#9b48c6)};
+        --#{$prefix}chart-delta: #22b07d; // Info Color
+        --#{$prefix}chart-delta-rgb: #{to-rgb(#22b07d)};
+        --#{$prefix}chart-zeta: #6070cc; // Purple or custom Color
+        --#{$prefix}chart-zeta-rgb: #{to-rgb(#6070cc)};
+        --#{$prefix}chart-gray: #edeff3; // Gray Color
+        --#{$prefix}chart-gray-rgb: #{to-rgb(#edeff3)};
+        --#{$prefix}chart-dark: #396699; // Primary Dark Color
+        --#{$prefix}chart-dark-rgb: #{to-rgb(#396699)};
+        --#{$prefix}chart-border-color: #ecf4fc; // Border Color
+        --#{$prefix}chart-title-color: #bbcae1; // Title Color
+    }
+
+    @if $enable-dark-mode {
+        @include color-mode(dark, true) {
+            &[data-skin='prism'] {
+                --#{$prefix}body-bg: #{#17181e};
+                --#{$prefix}body-bg-rgb: #{to-rgb(#17181e)};
+
+                --#{$prefix}secondary-bg: #{#1b1c22};
+                --#{$prefix}secondary-bg-rgb: #{to-rgb(#1b1c22)};
+
+                --#{$prefix}box-shadow: #{0px 0px 30px rgba(0, 0, 0, 0.3)};
+
+                --#{$prefix}tertiary-bg: rgba(255, 255, 255, 0.05);
+
+                --#{$prefix}theme-card-border-color: rgba(229, 243, 255, 0.09);
+                --#{$prefix}border-color: rgba(229, 243, 255, 0.09);
+
+                --#{$prefix}chart-gray: #40424f;
+                --#{$prefix}chart-gray-rgb: #{to-rgb(#40424f)};
+
+                // Extra CSS
+                .card,
+                .dropdown-menu {
+                    border-width: 1px !important;
+                }
+            }
+        }
+    }
+}
+
+//
+//  Prism Theme
+//
+html[data-skin='prism'] {
+
+    body {
+        background-image: linear-gradient(30deg, #f3f5ff 0, #f7edff 35%, #f3faff 55%, #f6dfe8 75%, #fbf7ff 100%);
+        background-attachment: fixed;
+    }
+
+    .container,
+    .container-fluid,
+    .container-lg,
+    .container-md,
+    .container-sm,
+    .container-xl,
+    .container-xxl {
+        --#{$prefix}gutter-x: 1.5rem;
+    }
+
+    .row:not([class*="g-"]) {
+        --#{$prefix}gutter-x: 1.5rem;
+    }
+
+    .app-topbar,
+    .sidenav-menu {
+        box-shadow: none;
+        backdrop-filter: blur(10px) saturate(140%);
+    }
+
+    .app-topbar {
+        margin-inline-start: calc(20px + #{$sidenav-width});
+        border-radius: 10px;
+        margin-inline-end: 20px;
+        top: 5px;
+        border: 1px solid #ffffff;
+
+        .topbar-menu {
+            border-bottom: 0;
+            border-radius: 10px;
+        }
+    }
+
+    .pro-username {
+        font-size: 14px;
+    }
+
+    .card {
+        margin-bottom: 1.5rem;
+        border: 1px solid #ffffff;
+        box-shadow: none;
+        backdrop-filter: blur(10px) saturate(100%);
+
+        .card-title {
+            font-size: 16px;
+        }
+    }
+
+    .card,
+    .footer,
+    .form-control,
+    .form-select,
+    .card-bg,
+    .choices__inner,
+    .select2-container .select2-selection--single,
+    .select2-container .select2-selection--multiple,
+    .dropzone,
+    .filepond--panel-root {
+        background-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .card-h-100 {
+        height: calc(100% - 1.5rem);
+    }
+
+    .nav-link.active {
+        background-color: transparent !important;
+    }
+
+    .btn {
+        font-weight: var(--#{$prefix}font-weight-normal);
+    }
+
+    .footer {
+        background-color: transparent;
+        border: none;
+        padding: 0 0.75rem 1.5rem 0.75rem;
+    }
+
+    .btn,
+    .page-link,
+    .nav-pills .nav-link.active,
+    .nav-pills .show>.nav-link,
+    .special-menu,
+    .noUi-connect,
+    .side-nav>.side-nav-item.active>a {
+        background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0));
+        box-shadow: var(--#{$prefix}box-shadow-sm);
+    }
+
+    .topbar-link,
+    .dropdown-item .btn {
+        box-shadow: none !important;
+        background-image: none !important;
+    }
+
+    &[data-bs-theme='dark'] {
+        body {
+            background-image: linear-gradient(30deg, #0f2027 0, #1d2e35 25%, #0d181c 45%, #261333 65%, #100923 85%, #0c1321 100%);
+        }
+
+        .app-topbar {
+            border-color: rgba(255, 255, 255, 0.05);
+        }
+
+        .card {
+            border-color: rgba(255, 255, 255, 0.05);
+        }
+
+        .card,
+        .footer,
+        .form-control,
+        .form-select,
+        .card-bg,
+        .choices__inner,
+        .select2-container .select2-selection--single,
+        .select2-container .select2-selection--multiple,
+        .dropzone,
+        .filepond--panel-root {
+            background-color: rgba(27, 40, 110, 0.1);
+        }
+
+        .btn,
+        .page-link,
+        .nav-pills .nav-link.active,
+        .nav-pills .show>.nav-link,
+        .special-menu,
+        .noUi-connect,
+        .side-nav>.side-nav-item.active>a {
+            background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+            box-shadow: none;
+        }
+    }
+}
+
+html[data-skin='prism'][data-sidenav-size='on-hover'] {
+    .app-topbar {
+        margin-inline-start: calc(20px + $sidenav-width-sm);
+    }
+}
+
+// Manage for light & dark logo
+html[data-skin="prism"][data-menu-color='light'][data-topbar-color='dark'],
+html[data-skin="prism"][data-menu-color='light'][data-topbar-color='gradient'] {
+    .sidenav-menu {
+        .logo {
+            background: transparent;
+            width: 100%;
+            border-radius: 10px 10px 0 0;
+        }
+
+        .sidenav-user {
+            margin-top: 0;
+        }
+
+        .button-on-hover {
+            color: $sidenav-item-color !important;
+
+            &:hover {
+                color: $sidenav-item-hover-color !important;
+            }
+        }
+    }
+
+    &:not([data-bs-theme='dark']) {
+        .logo {
+            &.logo-light {
+                display: none;
+            }
+
+            &.logo-dark {
+                display: block;
+            }
+        }
+    }
+}

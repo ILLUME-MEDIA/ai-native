@@ -1,0 +1,83 @@
+/**
+ * Paces Admin Dashboard
+ */
+
+/* =====================
+   CORE FUNCTIONS FIRST
+===================== */
+@import "bootstrap/scss/functions";
+
+/* =====================
+   VARIABLES
+===================== */
+@import "variables";
+@import "variables-dark";
+
+/* =====================
+   BOOTSTRAP REMAINDER
+===================== */
+@import "bootstrap/scss/variables";
+@import "bootstrap/scss/variables-dark";
+@import "bootstrap/scss/mixins";
+@import "bootstrap/scss/bootstrap";
+
+/* =====================
+   PLUGIN CSS
+===================== */
+@import "animate.css/animate.min.css";
+@import "cropperjs/dist/cropper.css";
+@import "datatables.net-bs5/css/dataTables.bootstrap5.min.css";
+@import "datatables.net-responsive-bs5/css/responsive.bootstrap5.min.css";
+@import "filepond/dist/filepond.min.css";
+@import "flatpickr/dist/flatpickr.min.css";
+@import "leaflet/dist/leaflet.css";
+@import "sweetalert2/dist/sweetalert2.min.css";
+
+/* =====================
+   TEMPLATE FILES
+===================== */
+@import "config/root";
+@import "config/theme-default";
+@import "config/theme-saas";
+@import "config/theme-modern";
+@import "config/theme-minimal";
+@import "config/theme-flat";
+@import "config/theme-material";
+@import "config/theme-galaxy";
+@import "config/theme-zen";
+@import "config/theme-luxe";
+@import "config/theme-pixel";
+@import "config/theme-retro";
+@import "config/theme-neon";
+@import "config/theme-soft";
+@import "config/theme-mono";
+@import "config/theme-silver";
+@import "config/theme-prism";
+@import "config/theme-nova";
+@import "config/theme-elegant";
+@import "config/theme-vivid";
+@import "config/theme-crystal";
+@import "config/theme-matrix";
+@import "config/theme-neo";
+@import "config/theme-xenon";
+@import "config/theme-aurora";
+@import "config/theme-orbit";
+
+@import "structure/topbar";
+@import "structure/sidenav";
+@import "structure/layout";
+@import "structure/footer";
+
+@import "components/buttons";
+@import "components/card";
+@import "components/forms";
+@import "components/tables";
+@import "components/widgets";
+
+@import "pages/authentication";
+@import "pages/timeline";
+
+@import "plugins/simplebar";
+@import "plugins/datatables";
+
+@import "framework-custom";
