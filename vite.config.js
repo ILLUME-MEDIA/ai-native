@@ -5,9 +5,6 @@ import path from 'path';
 
 export default defineConfig({
     server: {
-        host: '127.0.0.1',   // local dev host
-        port: 5173,          // Vite dev port
-        strictPort: true,
         cors: true,
     },
     css: {
