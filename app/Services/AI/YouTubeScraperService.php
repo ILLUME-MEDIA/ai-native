@@ -330,20 +330,53 @@ class YouTubeScraperService
                     ->withHeaders(['Accept' => 'application/json'])
                     ->get($byNameUrl);
                 if ($byNameRes->successful()) {
-                    $artistId = $byNameRes->json()['artist']['id'] ?? $byNameRes->json()['id'] ?? $byNameRes->json()['data']['artist']['id'] ?? $byNameRes->json()['data']['id'] ?? null;
+                    $body = $byNameRes->json();
+                    $artistId = $body['artist']['id']
+                        ?? $body['id']
+                        ?? $body['data']['artist']['id']
+                        ?? $body['data']['id']
+                        ?? null;
+                    if (! $artistId) {
+                        Log::warning('Streaming: /artists/by-name returned success but no artist id', [
+                            'url' => $byNameUrl,
+                            'response' => $body,
+                        ]);
+                    }
+                } else {
+                    Log::warning('Streaming: /artists/by-name request failed', [
+                        'url' => $byNameUrl,
+                        'status' => $byNameRes->status(),
+                        'body' => substr((string) $byNameRes->body(), 0, 500),
+                    ]);
                 }
             } catch (\Exception $e) {
-                // Ignore
+                Log::warning('Streaming: /artists/by-name exception', ['error' => $e->getMessage()]);
             }
 
             if (!$artistId) {
                 try {
                     $searchResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', 'artists/search', ['query' => $artistName]);
                     if ($searchResponse->successful()) {
-                        $artistId = $searchResponse->json()['data'][0]['id'] ?? $searchResponse->json()['data'][0]['artist']['id'] ?? null;
+                        $body = $searchResponse->json();
+                        $first = $body['data'][0] ?? $body['pagination']['data'][0] ?? null;
+                        if ($first) {
+                            $artistId = $first['id'] ?? $first['artist']['id'] ?? null;
+                        }
+                        if (! $artistId) {
+                            Log::warning('Streaming: /artists/search returned success but no artist id', [
+                                'query' => $artistName,
+                                'response' => $body,
+                            ]);
+                        }
+                    } else {
+                        Log::warning('Streaming: /artists/search request failed', [
+                            'query' => $artistName,
+                            'status' => $searchResponse->status(),
+                            'body' => substr((string) $searchResponse->body(), 0, 500),
+                        ]);
                     }
                 } catch (\Exception $e) {
-                    // Ignore
+                    Log::warning('Streaming: /artists/search exception', ['error' => $e->getMessage()]);
                 }
             }
 
@@ -355,7 +388,26 @@ class YouTubeScraperService
                     $artistPayload['image_small'] = $img;
                 }
                 $artistResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'artists', $artistPayload);
-                $artistId = $artistResponse->json()['artist']['id'] ?? $artistResponse->json()['id'] ?? $artistResponse->json()['data']['id'] ?? $artistResponse->json()['data']['artist']['id'] ?? null;
+                if ($artistResponse->successful()) {
+                    $body = $artistResponse->json();
+                    $artistId = $body['artist']['id']
+                        ?? $body['data']['artist']['id']
+                        ?? $body['data']['id']
+                        ?? $body['id']
+                        ?? null;
+                    if (! $artistId) {
+                        Log::warning('Streaming: POST /artists succeeded but no artist id found', [
+                            'payload' => $artistPayload,
+                            'response' => $body,
+                        ]);
+                    }
+                } else {
+                    Log::warning('Streaming: POST /artists failed', [
+                        'payload' => $artistPayload,
+                        'status' => $artistResponse->status(),
+                        'body' => substr((string) $artistResponse->body(), 0, 500),
+                    ]);
+                }
             }
 
             if (!$artistId) {

@@ -4,20 +4,65 @@ namespace App\Http\Controllers\SectionBuilder;
 
 use App\Http\Controllers\Controller;
 use App\Models\SectionEntity;
+use App\Services\DynamicEntityService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class EntityController extends Controller
 {
+    public function __construct(protected DynamicEntityService $entityService)
+    {
+    }
+    
     public function index()
     {
+        // Auto-sync: Check for missing tables and create entities
+        $this->autoSyncMissingTables();
+        
         return response()->json(
             SectionEntity::query()
                 ->select(['id', 'name', 'table_name', 'slug'])
                 ->orderBy('name')
                 ->get()
         );
+    }
+    
+    /**
+     * Auto-sync missing database tables to Section Editor.
+     */
+    protected function autoSyncMissingTables(): void
+    {
+        try {
+            $connection = \Illuminate\Support\Facades\DB::connection();
+            $database = $connection->getDatabaseName();
+            
+            $tables = \Illuminate\Support\Facades\DB::select(
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
+                [$database]
+            );
+            
+            $systemTables = ['migrations', 'failed_jobs', 'password_reset_tokens', 'personal_access_tokens', 'sessions'];
+            
+            foreach ($tables as $table) {
+                $tableName = $table->TABLE_NAME;
+                
+                // Skip system tables
+                if (in_array($tableName, $systemTables)) {
+                    continue;
+                }
+                
+                // Check if entity already exists
+                if (!SectionEntity::where('table_name', $tableName)->exists()) {
+                    // Auto-create entity using service method
+                    $this->entityService->resolveEntity($tableName);
+                }
+            }
+        } catch (\Exception $e) {
+            // Silently fail - don't break the index if sync fails
+            \Log::warning("Auto-sync failed: " . $e->getMessage());
+        }
     }
 
     public function store(Request $request)
@@ -37,14 +82,45 @@ class EntityController extends Controller
         return response()->json($entity, 201);
     }
 
-    public function show(SectionEntity $entity)
+    public function show($entity)
     {
-        $entity->load(['fields' => fn ($q) => $q->with('relatedEntity:id,name,table_name,slug')]);
-        return response()->json($entity);
+        $resolved = $this->resolveEntity($entity);
+        $resolved->load(['fields' => fn ($q) => $q->with('relatedEntity:id,name,table_name,slug')]);
+        return response()->json($resolved);
     }
 
-    public function update(Request $request, SectionEntity $entity)
+    /**
+     * Resolve entity by ID, slug, or table name - auto-creates if table exists.
+     */
+    protected function resolveEntity($entity): SectionEntity
     {
+        $resolved = null;
+        
+        if (is_numeric($entity)) {
+            $resolved = SectionEntity::find($entity);
+        } else {
+            // Try slug or table name
+            $resolved = SectionEntity::where('slug', $entity)
+                ->orWhere('table_name', $entity)
+                ->first();
+        }
+        
+        // If not found but table exists in database, auto-create it
+        if (!$resolved && Schema::hasTable($entity)) {
+            $resolved = $this->entityService->resolveEntity($entity);
+        }
+        
+        if (!$resolved) {
+            abort(404, "Entity not found: {$entity}");
+        }
+        
+        return $resolved;
+    }
+    
+    public function update(Request $request, $entity)
+    {
+        $resolved = $this->resolveEntity($entity);
+        
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'table_name' => [
@@ -52,14 +128,14 @@ class EntityController extends Controller
                 'string',
                 'max:255',
                 'alpha_dash',
-                Rule::unique('section_entities', 'table_name')->ignore($entity->id),
+                Rule::unique('section_entities', 'table_name')->ignore($resolved->id),
             ],
             'slug' => [
                 'sometimes',
                 'string',
                 'max:255',
                 'alpha_dash',
-                Rule::unique('section_entities', 'slug')->ignore($entity->id),
+                Rule::unique('section_entities', 'slug')->ignore($resolved->id),
             ],
             'mcp_enabled' => ['sometimes', 'boolean'],
             'mcp_can_read' => ['sometimes', 'boolean'],
@@ -80,17 +156,17 @@ class EntityController extends Controller
             'fields.*.relation_display_column' => ['nullable', 'string', 'max:64'],
         ]);
 
-        $entity->fill($data);
-        $entity->save();
+        $resolved->fill($data);
+        $resolved->save();
 
         // Sync fields if provided
         if (isset($data['fields'])) {
             // Delete existing fields
-            $entity->fields()->delete();
+            $resolved->fields()->delete();
 
             // Create new fields with sort order
             foreach ($data['fields'] as $index => $fieldData) {
-                $entity->fields()->create([
+                $resolved->fields()->create([
                     'column_name' => $fieldData['slug'],
                     'label' => $fieldData['name'],
                     'type' => $fieldData['type'],
@@ -108,19 +184,21 @@ class EntityController extends Controller
         }
 
         // Reload with fields
-        $entity->load('fields');
+        $resolved->load('fields');
 
-        return response()->json($entity);
+        return response()->json($resolved);
     }
 
-    public function getMcpConfig(SectionEntity $entity)
+    public function getMcpConfig($entity)
     {
+        $resolved = $this->resolveEntity($entity);
+        
         return response()->json([
-            'enabled' => $entity->mcp_enabled,
-            'read' => $entity->mcp_can_read,
-            'create' => $entity->mcp_can_create,
-            'update' => $entity->mcp_can_update,
-            'delete' => $entity->mcp_can_delete,
+            'enabled' => $resolved->mcp_enabled,
+            'read' => $resolved->mcp_can_read,
+            'create' => $resolved->mcp_can_create,
+            'update' => $resolved->mcp_can_update,
+            'delete' => $resolved->mcp_can_delete,
         ]);
     }
 }

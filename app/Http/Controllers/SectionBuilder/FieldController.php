@@ -5,19 +5,56 @@ namespace App\Http\Controllers\SectionBuilder;
 use App\Http\Controllers\Controller;
 use App\Models\SectionEntity;
 use App\Models\SectionField;
+use App\Services\DynamicEntityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class FieldController extends Controller
 {
-    public function index(SectionEntity $entity)
+    public function __construct(protected DynamicEntityService $entityService)
     {
-        $entity->load('fields');
+    }
+    
+    /**
+     * Resolve entity by ID, slug, or table name - auto-creates if table exists.
+     */
+    protected function resolveEntity($entity): SectionEntity
+    {
+        $resolved = null;
+        
+        if (is_numeric($entity)) {
+            $resolved = SectionEntity::find($entity);
+        } else {
+            // Try slug or table name
+            $resolved = SectionEntity::where('slug', $entity)
+                ->orWhere('table_name', $entity)
+                ->first();
+        }
+        
+        // If not found but table exists in database, auto-create it
+        if (!$resolved && Schema::hasTable($entity)) {
+            $resolved = $this->entityService->resolveEntity($entity);
+        }
+        
+        if (!$resolved) {
+            abort(404, "Entity not found: {$entity}");
+        }
+        
+        return $resolved;
+    }
+    
+    public function index($entity)
+    {
+        $resolved = $this->resolveEntity($entity);
+        $resolved->load('fields');
 
-        return response()->json($entity->fields);
+        return response()->json($resolved->fields);
     }
 
-    public function store(Request $request, SectionEntity $entity)
+    public function store(Request $request, $entity)
+    {
+        $resolved = $this->resolveEntity($entity);
     {
         $data = $request->validate([
             'column_name' => [
@@ -41,16 +78,17 @@ class FieldController extends Controller
             'mcp_writable' => ['boolean'],
         ]);
 
-        $data['entity_id'] = $entity->id;
+        $data['entity_id'] = $resolved->id;
 
         $field = SectionField::create($data);
 
         return response()->json($field, 201);
     }
 
-    public function update(Request $request, SectionEntity $entity, SectionField $field)
+    public function update(Request $request, $entity, SectionField $field)
     {
-        abort_unless($field->entity_id === $entity->id, 404);
+        $resolved = $this->resolveEntity($entity);
+        abort_unless($field->entity_id === $resolved->id, 404);
 
         $data = $request->validate([
             'column_name' => [
@@ -59,7 +97,7 @@ class FieldController extends Controller
                 'max:255',
                 'alpha_dash',
                 Rule::unique('section_fields', 'column_name')
-                    ->where('entity_id', $entity->id)
+                    ->where('entity_id', $resolved->id)
                     ->ignore($field->id),
             ],
             'label' => ['sometimes', 'string', 'max:255'],
@@ -82,8 +120,10 @@ class FieldController extends Controller
         return response()->json($field);
     }
 
-    public function reorder(Request $request, SectionEntity $entity)
+    public function reorder(Request $request, $entity)
     {
+        $resolved = $this->resolveEntity($entity);
+        
         $data = $request->validate([
             'order' => ['required', 'array'],
             'order.*.id' => ['required', 'integer', 'exists:section_fields,id'],
@@ -91,7 +131,7 @@ class FieldController extends Controller
         ]);
 
         foreach ($data['order'] as $item) {
-            SectionField::where('entity_id', $entity->id)
+            SectionField::where('entity_id', $resolved->id)
                 ->where('id', $item['id'])
                 ->update(['sort_order' => $item['sort_order']]);
         }

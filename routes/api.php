@@ -23,20 +23,29 @@ Route::middleware('auth:sanctum')->group(function () {
         ->name('api.section-builder.entities.index');
     Route::post('/section-builder/entities', [EntityController::class, 'store'])
         ->name('api.section-builder.entities.store');
+    // Custom route binding: {entity} can be ID, slug, or table name - auto-creates if table exists
     Route::get('/section-builder/entities/{entity}', [EntityController::class, 'show'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.show');
     Route::patch('/section-builder/entities/{entity}', [EntityController::class, 'update'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.update');
     Route::get('/section-builder/entities/{entity}/mcp', [EntityController::class, 'getMcpConfig'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.mcp');
 
+    // Custom route binding: {entity} can be ID, slug, or table name - auto-creates if table exists
     Route::get('/section-builder/entities/{entity}/fields', [FieldController::class, 'index'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.index');
     Route::post('/section-builder/entities/{entity}/fields', [FieldController::class, 'store'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.store');
     Route::patch('/section-builder/entities/{entity}/fields/{field}', [FieldController::class, 'update'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.update');
     Route::post('/section-builder/entities/{entity}/fields/reorder', [FieldController::class, 'reorder'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.reorder');
 
     // Generic dynamic CRUD APIs (with MCP middleware)

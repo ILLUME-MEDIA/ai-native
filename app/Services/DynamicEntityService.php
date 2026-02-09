@@ -3,20 +3,219 @@
 namespace App\Services;
 
 use App\Models\SectionEntity;
+use App\Models\SectionField;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class DynamicEntityService
 {
     public function resolveEntity(string $slugOrTable): ?SectionEntity
     {
-        return SectionEntity::with('fields')
+        $entity = SectionEntity::with('fields')
             ->where('slug', $slugOrTable)
             ->orWhere('table_name', $slugOrTable)
             ->first();
+        
+        // Auto-sync: If entity not found but table exists in database, create it automatically
+        if (!$entity && Schema::hasTable($slugOrTable)) {
+            $entity = $this->autoCreateEntityFromTable($slugOrTable);
+        }
+        
+        return $entity;
+    }
+    
+    /**
+     * Automatically create SectionEntity and fields from an existing database table.
+     */
+    protected function autoCreateEntityFromTable(string $tableName): ?SectionEntity
+    {
+        try {
+            // Generate entity name and slug
+            $name = $this->generateEntityName($tableName);
+            $slug = Str::slug($name);
+            
+            // Ensure slug is unique
+            $originalSlug = $slug;
+            $counter = 1;
+            while (SectionEntity::where('slug', $slug)->exists()) {
+                $slug = $originalSlug . '-' . $counter;
+                $counter++;
+            }
+            
+            // Create SectionEntity
+            $entity = SectionEntity::create([
+                'name' => $name,
+                'table_name' => $tableName,
+                'slug' => $slug,
+                'source_type' => 'database',
+                'is_system' => false,
+                'default_sort_field' => 'id',
+                'default_sort_direction' => 'desc',
+                'mcp_enabled' => false,
+                'mcp_can_read' => false,
+                'mcp_can_create' => false,
+                'mcp_can_update' => false,
+                'mcp_can_delete' => false,
+            ]);
+            
+            // Auto-sync fields from table columns
+            $this->autoSyncFieldsForEntity($entity, $tableName);
+            
+            // Reload with fields
+            $entity->load('fields');
+            
+            return $entity;
+        } catch (\Exception $e) {
+            \Log::error("Failed to auto-create entity for table {$tableName}: " . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Auto-sync table columns as SectionField records.
+     */
+    protected function autoSyncFieldsForEntity(SectionEntity $entity, string $tableName): void
+    {
+        if (!Schema::hasTable($tableName)) {
+            return;
+        }
+        
+        $columns = Schema::getColumnListing($tableName);
+        $sortOrder = 0;
+        
+        foreach ($columns as $columnName) {
+            // Skip if field already exists
+            if ($entity->fields()->where('column_name', $columnName)->exists()) {
+                continue;
+            }
+            
+            // Get column details
+            $columnDetails = $this->getColumnDetails($tableName, $columnName);
+            
+            // Determine field type based on column type
+            $fieldType = $this->mapColumnTypeToFieldType($columnDetails['type']);
+            
+            // Create SectionField
+            try {
+                SectionField::create([
+                    'entity_id' => $entity->id,
+                    'column_name' => $columnName,
+                    'label' => $this->generateFieldLabel($columnName),
+                    'type' => $fieldType,
+                    'nullable' => $columnDetails['nullable'],
+                    'required' => !$columnDetails['nullable'] && $columnName !== 'id',
+                    'default_value' => $columnDetails['default'],
+                    'list_visible' => in_array($columnName, ['id', 'name', 'title', 'email', 'created_at']),
+                    'detail_visible' => true,
+                    'is_searchable' => in_array($fieldType, ['text', 'string', 'email', 'number']),
+                    'is_sortable' => !in_array($fieldType, ['text', 'textarea', 'longtext', 'json']),
+                    'sort_order' => $sortOrder++,
+                    'mcp_readable' => true,
+                    'mcp_writable' => !in_array($columnName, ['id', 'created_at', 'updated_at']),
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning("Failed to create field {$columnName} for {$tableName}: " . $e->getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Get column details from database.
+     */
+    protected function getColumnDetails(string $tableName, string $columnName): array
+    {
+        $connection = DB::connection();
+        $database = $connection->getDatabaseName();
+        
+        $column = DB::selectOne(
+            "SELECT COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
+             FROM information_schema.COLUMNS 
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+            [$database, $tableName, $columnName]
+        );
+        
+        return [
+            'type' => $column->COLUMN_TYPE ?? 'varchar(255)',
+            'nullable' => ($column->IS_NULLABLE ?? 'NO') === 'YES',
+            'default' => $column->COLUMN_DEFAULT,
+        ];
+    }
+    
+    /**
+     * Map database column type to SectionField type.
+     */
+    protected function mapColumnTypeToFieldType(string $columnType): string
+    {
+        $columnType = strtolower($columnType);
+        
+        if (str_contains($columnType, 'int')) {
+            return 'number';
+        }
+        
+        if (str_contains($columnType, 'decimal') || str_contains($columnType, 'float') || str_contains($columnType, 'double')) {
+            return 'number';
+        }
+        
+        if (str_contains($columnType, 'text')) {
+            if (str_contains($columnType, 'longtext') || str_contains($columnType, 'mediumtext')) {
+                return 'textarea';
+            }
+            return 'text';
+        }
+        
+        if (str_contains($columnType, 'json')) {
+            return 'json';
+        }
+        
+        if (str_contains($columnType, 'date') || str_contains($columnType, 'time')) {
+            return 'date';
+        }
+        
+        if (str_contains($columnType, 'bool') || str_contains($columnType, 'tinyint(1)')) {
+            return 'boolean';
+        }
+        
+        if (str_contains($columnType, 'email')) {
+            return 'email';
+        }
+        
+        // Default to string
+        return 'string';
+    }
+    
+    /**
+     * Generate a human-readable entity name from table name.
+     */
+    protected function generateEntityName(string $tableName): string
+    {
+        // Remove common prefixes/suffixes
+        $name = $tableName;
+        $name = preg_replace('/^youtube_/', '', $name);
+        $name = preg_replace('/^ai_/', '', $name);
+        $name = preg_replace('/_table$/', '', $name);
+        
+        // Convert snake_case to Title Case
+        $name = str_replace('_', ' ', $name);
+        $name = ucwords($name);
+        
+        return $name;
+    }
+    
+    /**
+     * Generate a human-readable field label from column name.
+     */
+    protected function generateFieldLabel(string $columnName): string
+    {
+        // Convert snake_case to Title Case
+        $label = str_replace('_', ' ', $columnName);
+        $label = ucwords($label);
+        
+        return $label;
     }
 
     public function index(SectionEntity $entity, Request $request, array $context = []): LengthAwarePaginator
