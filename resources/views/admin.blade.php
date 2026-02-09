@@ -34,6 +34,31 @@
     <script>
         // Provide initial server-side props for hydration
         window.__INITIAL_PROPS__ = @json($initialProps ?? []);
+        
+        // Cleanup Bootstrap modals and backdrops on page load (fixes login modal issue)
+        (function() {
+            // Remove all Bootstrap modal backdrops
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(function(backdrop) {
+                backdrop.remove();
+            });
+            
+            // Remove modal-open class from body
+            document.body.classList.remove('modal-open');
+            
+            // Reset body padding and overflow
+            document.body.style.paddingRight = '';
+            document.body.style.overflow = '';
+            
+            // Close any open Bootstrap modals
+            const openModals = document.querySelectorAll('.modal.show');
+            openModals.forEach(function(modal) {
+                modal.classList.remove('show');
+                modal.style.display = 'none';
+                modal.setAttribute('aria-hidden', 'true');
+                modal.removeAttribute('aria-modal');
+            });
+        })();
     </script>
 </body>
 </html>

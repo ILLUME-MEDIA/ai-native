@@ -55,14 +55,13 @@ class FieldController extends Controller
     public function store(Request $request, $entity)
     {
         $resolved = $this->resolveEntity($entity);
-    {
         $data = $request->validate([
             'column_name' => [
                 'required',
                 'string',
                 'max:255',
                 'alpha_dash',
-                Rule::unique('section_fields', 'column_name')->where('entity_id', $entity->id),
+                Rule::unique('section_fields', 'column_name')->where('entity_id', $resolved->id),
             ],
             'label' => ['required', 'string', 'max:255'],
             'type' => ['required', 'string', 'max:50'],
