@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner } from 'react-bootstrap';
+import { Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
 import { Link, useParams } from 'react-router';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
@@ -9,6 +9,16 @@ const EntityDataList = () => {
   const { entityId } = useParams();
   const [entity, setEntity] = useState(null);
   const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    perPage: 15,
+    total: 0,
+    lastPage: 1,
+  });
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState(null); // column name
+  const [direction, setDirection] = useState('asc');
+  const [columnFilters, setColumnFilters] = useState({});
   const [dataError, setDataError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [slug, setSlug] = useState('');
@@ -42,21 +52,53 @@ const EntityDataList = () => {
   useEffect(() => {
     if (!slug) return;
     setDataError(null);
-    const loadData = async () => {
-      try {
-        const { data } = await axios.get(`/api/entities/${slug}`, {
-          params: { per_page: 100 },
-        });
-        setRows(data.data ?? []);
-      } catch (e) {
-        console.error('Failed to load data', e);
-        setRows([]);
-        const msg = e.response?.data?.message || e.message || 'Failed to load data';
-        setDataError(msg);
-      }
-    };
-    loadData();
   }, [slug]);
+
+  const fetchData = async (page = 1, extra = {}) => {
+    if (!slug) return;
+    try {
+      setDataError(null);
+      const params = {
+        page,
+        per_page: pagination.perPage,
+        search: search || undefined,
+        sort: sort || undefined,
+        direction: direction || undefined,
+        ...extra,
+      };
+
+      // Attach column filters as ?filters[column]=value
+      if (Object.keys(columnFilters).length) {
+        Object.entries(columnFilters).forEach(([key, value]) => {
+          if (value !== '' && value != null) {
+            params[`filters[${key}]`] = value;
+          }
+        });
+      }
+
+      const { data } = await axios.get(`/api/entities/${slug}`, { params });
+
+      setRows(data.data ?? []);
+      setPagination({
+        page: data.current_page ?? page,
+        perPage: data.per_page ?? pagination.perPage,
+        total: data.total ?? (data.data ? data.data.length : 0),
+        lastPage: data.last_page ?? 1,
+      });
+    } catch (e) {
+      console.error('Failed to load data', e);
+      setRows([]);
+      const msg = e.response?.data?.message || e.message || 'Failed to load data';
+      setDataError(msg);
+    }
+  };
+
+  // Initial data load and whenever slug / search / sort / filters change
+  useEffect(() => {
+    if (!slug) return;
+    fetchData(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, search, sort, direction, JSON.stringify(columnFilters)]);
 
   // Load relation options for fields with type=relationship (related_entity from API)
   useEffect(() => {
@@ -136,7 +178,8 @@ const EntityDataList = () => {
     if (!confirm('Delete this record?')) return;
     try {
       await axios.delete(`/api/entities/${slug}/${record.id}`);
-      setRows((prev) => prev.filter((r) => r.id !== record.id));
+      // Reload current page after delete to keep pagination accurate
+      fetchData(pagination.page);
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to delete');
     }
@@ -170,8 +213,8 @@ const EntityDataList = () => {
       <Row>
         <Col>
           <Card>
-            <CardHeader className="d-flex justify-content-between align-items-center">
-              <div>
+            <CardHeader className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div className="d-flex align-items-center flex-wrap gap-2">
                 <Link to="/apps/sections" className="btn btn-soft-secondary btn-sm me-2">
                   <Icon icon="arrow-left" className="me-1" />
                   Back to Sections
@@ -180,20 +223,76 @@ const EntityDataList = () => {
                   <Icon icon="edit" className="me-1" />
                   Edit structure
                 </Link>
+                <span className="badge bg-secondary-subtle text-secondary">
+                  Total records: {pagination.total.toLocaleString()}
+                </span>
               </div>
-              <Button variant="primary" size="sm" onClick={openAdd}>
-                <Icon icon="plus" className="me-1" />
-                Add record
-              </Button>
+              <div className="d-flex align-items-center gap-2">
+                <div className="app-search">
+                  <FormControl
+                    type="search"
+                    placeholder="Search..."
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                    }}
+                  />
+                  <Icon icon="search" className="app-search-icon text-muted" />
+                </div>
+                <Button variant="primary" size="sm" onClick={openAdd}>
+                  <Icon icon="plus" className="me-1" />
+                  Add record
+                </Button>
+              </div>
             </CardHeader>
             <div className="table-responsive">
               <Table hover className="mb-0">
                 <thead className="table-light">
                   <tr>
-                    {listVisibleFields.map((f) => (
-                      <th key={f.id}>{f.label || f.column_name}</th>
-                    ))}
+                    {listVisibleFields.map((f) => {
+                      const isSorted = sort === f.column_name;
+                      const icon =
+                        !isSorted ? 'arrows-sort' : direction === 'asc' ? 'sort-ascending' : 'sort-descending';
+                      return (
+                        <th
+                          key={f.id}
+                          role="button"
+                          onClick={() => {
+                            if (!isSorted) {
+                              setSort(f.column_name);
+                              setDirection('asc');
+                            } else {
+                              setDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+                            }
+                          }}
+                        >
+                          <span className="d-inline-flex align-items-center gap-1">
+                            {f.label || f.column_name}
+                            <Icon icon={icon} className="fs-xs" />
+                          </span>
+                        </th>
+                      );
+                    })}
                     <th style={{ width: '120px' }}>Actions</th>
+                  </tr>
+                  {/* Column filter inputs */}
+                  <tr>
+                    {listVisibleFields.map((f) => (
+                      <th key={f.id}>
+                        <FormControl
+                          size="sm"
+                          placeholder="Filter..."
+                          value={columnFilters[f.column_name] ?? ''}
+                          onChange={(e) =>
+                            setColumnFilters((prev) => ({
+                              ...prev,
+                              [f.column_name]: e.target.value,
+                            }))
+                          }
+                        />
+                      </th>
+                    ))}
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -245,6 +344,54 @@ const EntityDataList = () => {
                   ))}
                 </tbody>
               </Table>
+            </div>
+            {/* Simple pagination controls */}
+            <div className="d-flex justify-content-between align-items-center px-3 py-2 border-top text-muted small">
+              <div>
+                Showing{' '}
+                {rows.length === 0
+                  ? 0
+                  : (pagination.page - 1) * pagination.perPage + 1}{' '}
+                –
+                {Math.min(pagination.page * pagination.perPage, pagination.total)} of{' '}
+                {pagination.total.toLocaleString()}
+              </div>
+              <div className="d-flex align-items-center gap-2">
+                <Form.Select
+                  size="sm"
+                  value={pagination.perPage}
+                  onChange={(e) => {
+                    const perPage = Number(e.target.value) || 15;
+                    setPagination((prev) => ({ ...prev, perPage, page: 1 }));
+                    fetchData(1, { per_page: perPage });
+                  }}
+                >
+                  {[10, 15, 25, 50, 100].map((n) => (
+                    <option key={n} value={n}>
+                      {n} / page
+                    </option>
+                  ))}
+                </Form.Select>
+                <Button
+                  variant="light"
+                  size="sm"
+                  disabled={pagination.page <= 1}
+                  onClick={() => fetchData(pagination.page - 1)}
+                >
+                  <Icon icon="chevron-left" />
+                </Button>
+                <span>
+                  Page {pagination.page} / {pagination.lastPage}
+                </span>
+                <Button
+                  variant="light"
+                  size="sm"
+                  disabled={pagination.page >= pagination.lastPage}
+                  onClick={() => fetchData(pagination.page + 1)}
+                >
+                  <Icon icon="chevron-right" />
+                </Button>
+              </div>
             </div>
           </Card>
         </Col>

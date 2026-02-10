@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware('auth:sanctum')->group(function () {
-    // Section Builder meta configuration
+    // Section Builder meta configuration (admin SPA only)
     Route::get('/section-builder/entities', [EntityController::class, 'index'])
         ->name('api.section-builder.entities.index');
     Route::post('/section-builder/entities', [EntityController::class, 'store'])
@@ -48,19 +48,9 @@ Route::middleware('auth:sanctum')->group(function () {
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.reorder');
 
-    // Generic dynamic CRUD APIs (with MCP middleware)
-    Route::middleware('mcp.check')->group(function () {
-        Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
-        Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
-        Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
-        Route::put('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
-        Route::patch('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
-        Route::delete('/entities/{entity}/{id}', [DynamicEntityController::class, 'destroy']);
-    });
-
     //
 
-    // AI Agent Management System
+    // AI Agent Management System (admin-only)
     Route::prefix('ai')->group(function () {
         Route::apiResource('endpoints', \App\Http\Controllers\AI\AIEndpointController::class);
         Route::post('endpoints/{endpoint}/fetch-models', [\App\Http\Controllers\AI\AIEndpointController::class, 'fetchModels']);
@@ -111,5 +101,18 @@ Route::middleware('mcp.auth')->prefix('mcp')->group(function () {
     Route::post('/entities/{entity}', [McpEntityController::class, 'store']);
     Route::patch('/entities/{entity}/{id}', [McpEntityController::class, 'update']);
     Route::delete('/entities/{entity}/{id}', [McpEntityController::class, 'destroy']);
+});
+
+// Generic dynamic CRUD APIs (dynamic entities) – require either:
+// - Logged-in admin (Sanctum cookie), OR
+// - Valid MCP_API_KEY as Bearer token.
+// AND must pass MCP permissions via mcp.check.
+Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
+    Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
+    Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
+    Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
+    Route::put('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
+    Route::patch('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
+    Route::delete('/entities/{entity}/{id}', [DynamicEntityController::class, 'destroy']);
 });
 

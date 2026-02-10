@@ -16,10 +16,18 @@ class McpOrSanctumAuth
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $apiKey = config('mcp.api_key');
+        $mcpKey = config('mcp.mcp_api_key');
+        $siteKey = config('mcp.site_api_key');
         $bearer = $request->bearerToken();
 
-        if (! empty($apiKey) && $bearer && hash_equals($apiKey, $bearer)) {
+        // 1) Global MCP key (AI / OpenAI / system-level clients)
+        if (! empty($mcpKey) && $bearer && hash_equals($mcpKey, $bearer)) {
+            // Optionally, we could tag the request as 'mcp' actor here.
+            return $next($request);
+        }
+
+        // 2) Site API key (generic site/app-level integrations)
+        if (! empty($siteKey) && $bearer && hash_equals($siteKey, $bearer)) {
             return $next($request);
         }
 
@@ -32,7 +40,7 @@ class McpOrSanctumAuth
         }
 
         return response()->json([
-            'message' => 'Unauthenticated. Use Sanctum login or provide a valid MCP API key in Authorization: Bearer <key>.',
+            'message' => 'Unauthenticated. Use Sanctum login, a user token, or provide a valid API key in Authorization: Bearer <MCP_API_KEY|SITE_API_KEY>.',
         ], 401);
     }
 }

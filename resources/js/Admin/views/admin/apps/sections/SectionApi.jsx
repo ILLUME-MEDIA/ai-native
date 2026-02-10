@@ -1,7 +1,7 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, CardBody, CardHeader, Col, Row, Table, Tab, Nav } from 'react-bootstrap';
+import { Badge, Button, Card, CardBody, CardHeader, Col, Row, Table, Tab, Nav, Form, FormControl, InputGroup } from 'react-bootstrap';
 import { useNavigate, useParams } from 'react-router';
 import axios from 'axios';
 
@@ -10,6 +10,19 @@ const SectionApi = () => {
     const [section, setSection] = useState(null);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+
+    // Live \"Try it\" state for GET list endpoint
+    const [listQuery, setListQuery] = useState({
+        search: '',
+        page: 1,
+        per_page: 15,
+        sort: '',
+        direction: 'asc',
+    });
+    const [listFilters, setListFilters] = useState({});
+    const [listResponse, setListResponse] = useState(null);
+    const [listLoading, setListLoading] = useState(false);
+    const [listError, setListError] = useState('');
 
     useEffect(() => {
         const load = async () => {
@@ -104,7 +117,70 @@ const SectionApi = () => {
         }
     };
 
-    const baseUrl = `${window.location.origin}/api/entities/${section.slug || section.table_name}`;
+    const slugOrTable = section.slug || section.table_name;
+    const baseUrl = `${window.location.origin}/api/entities/${slugOrTable}`;
+
+    const handleCopy = async (text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {
+            // ignore clipboard errors
+            console.error('Failed to copy', e);
+        }
+    };
+
+    const buildListUrl = () => {
+        const params = new URLSearchParams();
+
+        // Global search
+        if (listQuery.search) params.append('search', String(listQuery.search));
+
+        // Always include pagination so URL clearly shows paging
+        params.append('page', String(listQuery.page || 1));
+        params.append('per_page', String(listQuery.per_page || 15));
+
+        // Sorting
+        if (listQuery.sort) params.append('sort', listQuery.sort);
+        if (listQuery.direction) params.append('direction', listQuery.direction);
+
+        // filters[column]=value
+        Object.entries(listFilters).forEach(([column, value]) => {
+            if (value != null && value !== '') {
+                params.append(`filters[${column}]`, value);
+            }
+        });
+
+        const qs = params.toString();
+        return qs ? `${baseUrl}?${qs}` : baseUrl;
+    };
+
+    const handleTryList = async (e) => {
+        e.preventDefault();
+        setListLoading(true);
+        setListError('');
+        setListResponse(null);
+        try {
+            const params = {
+                search: listQuery.search || undefined,
+                page: listQuery.page || undefined,
+                per_page: listQuery.per_page || undefined,
+                sort: listQuery.sort || undefined,
+                direction: listQuery.direction || undefined,
+            };
+            Object.entries(listFilters).forEach(([column, value]) => {
+                if (value != null && value !== '') {
+                    params[`filters[${column}]`] = value;
+                }
+            });
+            const res = await axios.get(`/api/entities/${slugOrTable}`, { params });
+            setListResponse(res.data);
+        } catch (err) {
+            console.error(err);
+            setListError(err.response?.data?.message || err.message || 'Request failed');
+        } finally {
+            setListLoading(false);
+        }
+    };
 
     return (
         <>
@@ -120,12 +196,45 @@ const SectionApi = () => {
 
                     <Card className="mb-4">
                         <CardHeader>
-                            <h5 className="mb-0">Base Endpoint</h5>
+                            <h5 className="mb-0">Base Endpoint &amp; Authentication</h5>
                         </CardHeader>
                         <CardBody>
-                            <div className="p-2 bg-light rounded font-monospace text-primary">
-                                {baseUrl}
+                            <div className="d-flex flex-column flex-md-row align-items-md-center gap-2 mb-3">
+                                <div className="flex-grow-1 p-2 bg-light rounded font-monospace text-primary text-break">
+                                    {baseUrl}
+                                </div>
+                                <Button
+                                    variant="outline-secondary"
+                                    size="sm"
+                                    onClick={() => handleCopy(baseUrl)}
+                                >
+                                    <Icon icon="copy" className="me-1" /> Copy URL
+                                </Button>
                             </div>
+                            <p className="text-muted small mb-1">
+                                <strong>Authentication (required for ALL requests):</strong>
+                            </p>
+                            <ul className="text-muted small mb-0">
+                                <li>
+                                    <strong>Admin UI (browser):</strong> Laravel Sanctum cookie – handled automatically when you are logged in.
+                                </li>
+                                <li>
+                                    <strong>Per-user API token (normal user via Sanctum):</strong>{' '}
+                                    create a Sanctum personal access token for that user and call:
+                                    {' '}
+                                    <code>Authorization: Bearer &lt;USER_TOKEN&gt;</code>.
+                                </li>
+                                <li>
+                                    <strong>Site API key (env SITE_API_KEY):</strong>{' '}
+                                    for generic site/app integrations:
+                                    {' '}
+                                    <code>Authorization: Bearer &lt;SITE_API_KEY&gt;</code>.
+                                </li>
+                                <li>
+                                    <strong>Global MCP key (env MCP_API_KEY – AI / system clients):</strong>{' '}
+                                    <code>Authorization: Bearer &lt;MCP_API_KEY&gt;</code>.
+                                </li>
+                            </ul>
                         </CardBody>
                     </Card>
 
@@ -190,12 +299,160 @@ const SectionApi = () => {
                                         <h6 className="mb-3">List All Records</h6>
                                         <div className="mb-3">
                                             <Badge bg="success" className="me-2">GET</Badge>
-                                            <code>{baseUrl}</code>
+                                            <code className="d-block text-break">{buildListUrl()}</code>
+                                            <div className="mt-2 d-flex flex-wrap gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline-secondary"
+                                                    onClick={() => handleCopy(buildListUrl())}
+                                                >
+                                                    <Icon icon="copy" className="me-1" /> Copy URL
+                                                </Button>
+                                            </div>
                                         </div>
-                                        <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded">
-                                            {JSON.stringify(listResponseExample, null, 2)}
+
+                                        <h6 className="mt-4">Query Parameters (Datatable style)</h6>
+                                        <ul className="text-muted small mb-3">
+                                            <li><code>search</code>: Global search across searchable columns.</li>
+                                            <li><code>page</code>, <code>per_page</code>: Pagination.</li>
+                                            <li><code>sort</code>, <code>direction</code>: Column sort (e.g. <code>sort=created_at&direction=desc</code>).</li>
+                                            <li><code>filters[column]</code>: Per-column filter (e.g. <code>filters[name]=John</code>).</li>
+                                        </ul>
+
+                                        <Form onSubmit={handleTryList} className="border rounded p-3 mb-3 bg-light-subtle">
+                                            <Row className="g-2">
+                                                <Col md={4}>
+                                                    <Form.Label className="small mb-1">Search</Form.Label>
+                                                    <FormControl
+                                                        size="sm"
+                                                        placeholder="Global search..."
+                                                        value={listQuery.search}
+                                                        onChange={(e) =>
+                                                            setListQuery((prev) => ({ ...prev, search: e.target.value }))
+                                                        }
+                                                    />
+                                                </Col>
+                                                <Col md={2}>
+                                                    <Form.Label className="small mb-1">Page</Form.Label>
+                                                    <FormControl
+                                                        size="sm"
+                                                        type="number"
+                                                        min={1}
+                                                        value={listQuery.page}
+                                                        onChange={(e) =>
+                                                            setListQuery((prev) => ({
+                                                                ...prev,
+                                                                page: Number(e.target.value) || 1,
+                                                            }))
+                                                        }
+                                                    />
+                                                </Col>
+                                                <Col md={2}>
+                                                    <Form.Label className="small mb-1">Per Page</Form.Label>
+                                                    <Form.Select
+                                                        size="sm"
+                                                        value={listQuery.per_page}
+                                                        onChange={(e) =>
+                                                            setListQuery((prev) => ({
+                                                                ...prev,
+                                                                per_page: Number(e.target.value) || 15,
+                                                            }))
+                                                        }
+                                                    >
+                                                        {[10, 15, 25, 50, 100].map((n) => (
+                                                            <option key={n} value={n}>
+                                                                {n}
+                                                            </option>
+                                                        ))}
+                                                    </Form.Select>
+                                                </Col>
+                                                <Col md={2}>
+                                                    <Form.Label className="small mb-1">Sort Column</Form.Label>
+                                                    <FormControl
+                                                        size="sm"
+                                                        placeholder="column name"
+                                                        value={listQuery.sort}
+                                                        onChange={(e) =>
+                                                            setListQuery((prev) => ({ ...prev, sort: e.target.value }))
+                                                        }
+                                                    />
+                                                </Col>
+                                                <Col md={2}>
+                                                    <Form.Label className="small mb-1">Direction</Form.Label>
+                                                    <Form.Select
+                                                        size="sm"
+                                                        value={listQuery.direction}
+                                                        onChange={(e) =>
+                                                            setListQuery((prev) => ({
+                                                                ...prev,
+                                                                direction: e.target.value,
+                                                            }))
+                                                        }
+                                                    >
+                                                        <option value="asc">asc</option>
+                                                        <option value="desc">desc</option>
+                                                    </Form.Select>
+                                                </Col>
+                                            </Row>
+
+                                            {fields.length > 0 && (
+                                                <>
+                                                    <hr className="my-3" />
+                                                    <Form.Label className="small mb-2">
+                                                        Column Filters (<code>filters[column]</code>)
+                                                    </Form.Label>
+                                                    <Row className="g-2">
+                                                        {fields.map((f) => (
+                                                            <Col md={4} key={f.slug}>
+                                                                <InputGroup size="sm">
+                                                                    <InputGroup.Text className="text-truncate" style={{ maxWidth: 120 }}>
+                                                                        {f.slug}
+                                                                    </InputGroup.Text>
+                                                                    <FormControl
+                                                                        placeholder="value"
+                                                                        value={listFilters[f.slug] ?? ''}
+                                                                        onChange={(e) =>
+                                                                            setListFilters((prev) => ({
+                                                                                ...prev,
+                                                                                [f.slug]: e.target.value,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                </InputGroup>
+                                                            </Col>
+                                                        ))}
+                                                    </Row>
+                                                </>
+                                            )}
+
+                                            <div className="mt-3 d-flex justify-content-between align-items-center">
+                                                <Button type="submit" size="sm" variant="primary" disabled={listLoading}>
+                                                    {listLoading ? 'Sending...' : 'Try request'}
+                                                </Button>
+                                                {listError && (
+                                                    <span className="text-danger small">
+                                                        <Icon icon="alert-triangle" className="me-1" />
+                                                        {listError}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </Form>
+
+                                        <h6 className="mt-4">Sample / Live Response (200 OK)</h6>
+                                        <pre className="bg-light p-3 rounded small">
+                                            {JSON.stringify(listResponse ?? listResponseExample, null, 2)}
                                         </pre>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            onClick={() =>
+                                                handleCopy(
+                                                    JSON.stringify(listResponse ?? listResponseExample, null, 2),
+                                                )
+                                            }
+                                        >
+                                            <Icon icon="copy" className="me-1" /> Copy Response JSON
+                                        </Button>
                                     </Tab.Pane>
 
                                     <Tab.Pane eventKey="show">
@@ -217,11 +474,19 @@ const SectionApi = () => {
                                             <code>{baseUrl}</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded">
+                                        <pre className="bg-light p-3 rounded small">
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            className="mb-3"
+                                            onClick={() => handleCopy(JSON.stringify(requestBodyExample, null, 2))}
+                                        >
+                                            <Icon icon="copy" className="me-1" /> Copy Request Body
+                                        </Button>
                                         <h6 className="mt-4">Response (201 Created)</h6>
-                                        <pre className="bg-light p-3 rounded">
+                                        <pre className="bg-light p-3 rounded small">
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>
@@ -233,11 +498,19 @@ const SectionApi = () => {
                                             <code>{baseUrl}/1</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded">
+                                        <pre className="bg-light p-3 rounded small">
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            className="mb-3"
+                                            onClick={() => handleCopy(JSON.stringify(requestBodyExample, null, 2))}
+                                        >
+                                            <Icon icon="copy" className="me-1" /> Copy Request Body
+                                        </Button>
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded">
+                                        <pre className="bg-light p-3 rounded small">
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>

@@ -33,6 +33,15 @@ const SectionList = () => {
     columnHelper.accessor('slug', {
       header: 'Slug',
     }),
+    columnHelper.accessor('total_rows', {
+      header: 'Total Records',
+      cell: ({ row }) => {
+        const value = row.original.total_rows;
+        if (value === null || value === undefined) return '—';
+        return value.toLocaleString();
+      },
+      enableSorting: false,
+    }),
     columnHelper.accessor('mcp_enabled', {
       header: 'MCP',
       cell: ({ row }) => (

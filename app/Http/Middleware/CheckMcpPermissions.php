@@ -25,6 +25,19 @@ class CheckMcpPermissions
             return $next($request);
         }
 
+        // If request uses either API key (SITE_API_KEY or MCP_API_KEY), treat it as trusted
+        // integration access for dynamic entities.
+        // This bypasses per-entity MCP flags, so external clients can access dynamic entities
+        // without enabling MCP for each table.
+        $bearer = $request->bearerToken();
+        $siteKey = config('mcp.site_api_key');
+        $mcpKey = config('mcp.mcp_api_key');
+        $isSiteKey = (! empty($siteKey) && $bearer && hash_equals($siteKey, $bearer));
+        $isMcpKey = (! empty($mcpKey) && $bearer && hash_equals($mcpKey, $bearer));
+        if ($isSiteKey || $isMcpKey) {
+            return $next($request);
+        }
+
         // Extract entity slug/table from route parameter
         $entitySlug = $request->route('entity');
 

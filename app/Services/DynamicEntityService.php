@@ -226,7 +226,14 @@ class DynamicEntityService
 
         $model = $this->makeBaseQuery($entity, $context);
 
+        // Global search across searchable columns
         $this->applySearch($model, $entity, $request->string('search')->toString());
+
+        // Column-level filters: ?filters[column]=value
+        $filters = (array) $request->input('filters', []);
+        $this->applyFilters($model, $entity, $filters);
+
+        // Sorting
         $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
 
         $perPage = (int) $request->input('per_page', 15);
@@ -310,6 +317,35 @@ class DynamicEntityService
         }
 
         return $query;
+    }
+
+    /**
+     * Apply per-column filters (Datatables-style).
+     *
+     * Expected query format:
+     *   GET /api/entities/{slug}?filters[name]=John&filters[status]=active
+     */
+    protected function applyFilters(Builder $query, SectionEntity $entity, array $filters): void
+    {
+        if (empty($filters)) {
+            return;
+        }
+
+        $fieldColumns = $entity->fields->pluck('column_name')->all();
+
+        foreach ($filters as $column => $value) {
+            if ($value === '' || $value === null) {
+                continue;
+            }
+
+            // Only allow known columns
+            if (! in_array($column, $fieldColumns, true) && ! Schema::hasColumn($entity->table_name, $column)) {
+                continue;
+            }
+
+            // Simple "LIKE" filter (works for most datatable use-cases)
+            $query->where($column, 'like', '%'.$value.'%');
+        }
     }
 
     protected function applySearch(Builder $query, SectionEntity $entity, ?string $term): void
