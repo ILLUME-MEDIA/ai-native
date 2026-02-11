@@ -68,6 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('scrapers', [\App\Http\Controllers\AI\AiScraperController::class, 'store']);
         Route::get('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'show']);
         Route::post('scrapers/{playlist}/sync', [\App\Http\Controllers\AI\AiScraperController::class, 'sync']);
+        Route::post('scrapers/{playlist}/enrich', [\App\Http\Controllers\AI\AiScraperController::class, 'enrich']);
         Route::post('scrapers/{playlist}/push', [\App\Http\Controllers\AI\AiScraperController::class, 'push']);
         Route::delete('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'destroy']);
         Route::get('scrapers/videos/list', [\App\Http\Controllers\AI\AiScraperController::class, 'videos']);
@@ -81,8 +82,53 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('jira-config', [\App\Http\Controllers\AI\JiraConfigController::class, 'update']);
 
         Route::post('chat', [\App\Http\Controllers\AI\AIChatController::class, 'chat']);
+        Route::post('chat/editor', [\App\Http\Controllers\AI\AIChatController::class, 'editorChat']);
         Route::get('chat/audit-logs', [\App\Http\Controllers\AI\AIChatController::class, 'auditLogs']);
     });
+
+    // Code Editor Routes (Admin only)
+    Route::prefix('code-editor')->group(function () {
+        Route::get('/files', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'list']);
+        Route::get('/files/read', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'read']);
+        Route::get('/files/tree', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'tree']);
+        Route::get('/files/search', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'search']);
+        Route::post('/files/create', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'create']);
+        Route::put('/files/update', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'update']);
+        Route::delete('/files/delete', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'delete']);
+        Route::put('/files/rename', [\App\Http\Controllers\CodeEditor\CodeEditorController::class, 'rename']);
+    });
+
+    // Workspaces (Isolated development environments)
+    Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
+    Route::prefix('workspaces/{workspace}')->group(function () {
+        // Files
+        Route::get('files', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'files']);
+        Route::get('files/read', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'readFile']);
+        Route::post('files/write', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'writeFile']);
+        Route::post('files/create', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'createFile']);
+        Route::delete('files/delete', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'deleteFile']);
+
+        // Terminal
+        Route::post('terminal/execute', [\App\Http\Controllers\Workspace\TerminalController::class, 'execute']);
+
+        // Git
+        Route::post('git/init', [\App\Http\Controllers\Workspace\GitController::class, 'init']);
+        Route::get('git/status', [\App\Http\Controllers\Workspace\GitController::class, 'status']);
+        Route::post('git/add', [\App\Http\Controllers\Workspace\GitController::class, 'add']);
+        Route::post('git/commit', [\App\Http\Controllers\Workspace\GitController::class, 'commit']);
+        Route::post('git/push', [\App\Http\Controllers\Workspace\GitController::class, 'push']);
+        Route::post('git/pull', [\App\Http\Controllers\Workspace\GitController::class, 'pull']);
+        Route::get('git/log', [\App\Http\Controllers\Workspace\GitController::class, 'log']);
+        Route::get('git/diff', [\App\Http\Controllers\Workspace\GitController::class, 'diff']);
+
+        // AI Commands
+        Route::post('ai/chat', [\App\Http\Controllers\Workspace\AICommandController::class, 'chat']);
+        Route::get('ai/approvals', [\App\Http\Controllers\Workspace\AICommandController::class, 'pendingApprovals']);
+    });
+
+    // AI Command Approvals
+    Route::post('approvals/{approval}/approve', [\App\Http\Controllers\Workspace\AICommandController::class, 'approve']);
+    Route::post('approvals/{approval}/reject', [\App\Http\Controllers\Workspace\AICommandController::class, 'reject']);
 
     // Legacy Aliases for YouTube Scraper (AI Duty support)
     Route::prefix('youtube-scraper')->group(function () {

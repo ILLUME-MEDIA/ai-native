@@ -29,7 +29,8 @@ class MistralAdapter implements AIProviderAdapterInterface
 
     public function generateText(string $prompt, array $options = []): array
     {
-        $response = Http::withToken($this->apiKey)
+        $response = Http::timeout(60)
+            ->withToken($this->apiKey)
             ->withHeaders([
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
@@ -55,7 +56,8 @@ class MistralAdapter implements AIProviderAdapterInterface
 
     public function listModels(): array
     {
-        $response = Http::withToken($this->apiKey)
+        $response = Http::timeout(30)
+            ->withToken($this->apiKey)
             ->withHeaders([
                 'Accept' => 'application/json',
             ])

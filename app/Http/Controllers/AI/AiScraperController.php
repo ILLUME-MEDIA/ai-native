@@ -7,6 +7,7 @@ use App\Models\AiDuty;
 use App\Models\AiPlatform;
 use App\Models\YoutubePlaylist;
 use App\Models\YoutubeVideo;
+use App\Models\YoutubePlatformPush;
 use App\Services\AI\YouTubeScraperService;
 use Illuminate\Http\Request;
 
@@ -30,7 +31,10 @@ class AiScraperController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate(['playlist_url' => 'required|url']);
+        $request->validate([
+            'playlist_url' => 'required|url',
+            'max_results' => 'nullable|integer|min:1|max:10000',
+        ]);
         $playlistId = $this->scraperService->extractPlaylistId($request->playlist_url);
 
         if (!$playlistId) {
@@ -38,7 +42,11 @@ class AiScraperController extends Controller
         }
 
         try {
-            $playlistData = $this->scraperService->fetchPlaylist($playlistId);
+            // Large playlists can take time – allow up to 5 minutes
+            set_time_limit(300);
+
+            $maxResults = (int) ($request->input('max_results', 5000));
+            $playlistData = $this->scraperService->fetchPlaylist($playlistId, $maxResults);
             $playlist = $this->scraperService->syncToDatabase($playlistData);
             $this->ensurePlaylistSyncDutyExists($playlist);
             return response()->json(['message' => 'Playlist added and synced.']);
@@ -55,9 +63,39 @@ class AiScraperController extends Controller
     public function sync(YoutubePlaylist $playlist)
     {
         try {
-            $playlistData = $this->scraperService->fetchPlaylist($playlist->playlist_id);
+            // Large re-syncs for big playlists – allow more execution time
+            set_time_limit(300);
+            // Allow large re-syncs via API while keeping a sensible upper bound
+            $playlistData = $this->scraperService->fetchPlaylist($playlist->playlist_id, 10000);
             $this->scraperService->syncToDatabase($playlistData);
-            return response()->json(['message' => 'Playlist synced successfully.']);
+
+            // Auto-enrich after sync to fill any missing stats
+            $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
+
+            return response()->json([
+                'message' => 'Playlist synced successfully.',
+                'enriched' => $enrichResult['enriched'] ?? 0,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function enrich(YoutubePlaylist $playlist)
+    {
+        set_time_limit(120);
+
+        try {
+            $result = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
+
+            if (!empty($result['error']) && $result['enriched'] === 0) {
+                return response()->json(['error' => $result['error']], 422);
+            }
+
+            return response()->json([
+                'message' => "Enriched {$result['enriched']}/{$result['total']} videos with YouTube metadata.",
+                'details' => $result,
+            ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -97,25 +135,124 @@ class AiScraperController extends Controller
 
     public function push(Request $request, YoutubePlaylist $playlist)
     {
-        set_time_limit(300); // Increase execution time to 5 minutes for large pushes
+        set_time_limit(300);
 
         $request->validate([
-            'platform_id' => 'required|exists:ai_platforms,id'
+            'platform_id' => 'nullable|exists:ai_platforms,id',
+            'platform_ids' => 'array',
+            'platform_ids.*' => 'integer|exists:ai_platforms,id',
+            'video_ids' => 'array',
+            'video_ids.*' => 'string',
+            'limit' => 'integer|min:1',
+            'create_duties' => 'boolean',
+            'album_mode' => 'nullable|in:single,per_video',
         ]);
 
         try {
-            $platform = AiPlatform::findOrFail($request->platform_id);
+            // Determine which platforms to push to:
+            // - If multiple selected (platform_ids), use those
+            // - Otherwise fall back to single platform_id (legacy behaviour)
+            $platformIds = collect($request->input('platform_ids', []))
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
 
-            // Trigger manual push first
-            $result = $this->scraperService->pushToPlatform(
-                $playlist->playlist_id,
-                $request->platform_id
-            );
+            if ($platformIds->isEmpty() && $request->filled('platform_id')) {
+                $platformIds = collect([(int) $request->platform_id]);
+            }
 
-            // After successful first push, ensure an automated duty exists for this specific playlist -> platform combo
-            $this->ensurePushDutyExists($playlist, $platform);
+            if ($platformIds->isEmpty()) {
+                return response()->json([
+                    'error' => 'At least one platform must be selected.',
+                ], 422);
+            }
 
-            return response()->json($result);
+            $createDuties = $request->boolean('create_duties', true);
+            $albumMode = $request->input('album_mode', 'single');
+
+            $overallDetails = [
+                'success' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+            ];
+            $platformResults = [];
+
+            foreach ($platformIds as $platformId) {
+                /** @var AiPlatform $platform */
+                $platform = AiPlatform::findOrFail($platformId);
+
+                // Determine which video IDs to push for THIS platform
+                $options = ['album_mode' => $albumMode];
+                $skippedForPlatform = 0;
+
+                if ($request->filled('video_ids')) {
+                    // Admin explicitly selected specific videos
+                    $videoIds = $request->video_ids;
+                } else {
+                    // Default: only push videos not already successfully pushed to this platform
+                    $pushedVideoIds = \App\Models\YoutubePlatformPush::where('playlist_id', $playlist->playlist_id)
+                        ->where('platform_name', $platform->name)
+                        ->where('status', 'success')
+                        ->pluck('video_id')
+                        ->toArray();
+
+                    $videoIds = $playlist->videos()->pluck('video_id')->diff($pushedVideoIds)->values()->toArray();
+                }
+
+                // Apply explicit limit from request (admin-selected batch size)
+                if ($request->filled('limit') && count($videoIds) > $request->limit) {
+                    $skippedForPlatform += count($videoIds) - (int) $request->limit;
+                    $videoIds = array_slice($videoIds, 0, (int) $request->limit);
+                }
+
+                if (empty($videoIds)) {
+                    $platformResults[$platform->name] = [
+                        'status' => 'success',
+                        'message' => 'All videos have already been pushed to this platform.',
+                        'details' => ['success' => 0, 'failed' => 0, 'skipped' => 0],
+                    ];
+                    continue;
+                }
+
+                $options['only_video_ids'] = $videoIds;
+
+                $result = $this->scraperService->pushToPlatform(
+                    $playlist->playlist_id,
+                    $platformId,
+                    $options
+                );
+
+                // Ensure an automated duty exists for remaining videos (optional)
+                if ($createDuties) {
+                    $this->ensurePushDutyExists($playlist, $platform);
+                }
+
+                $details = $result['details'] ?? [];
+                $detailsSuccess = $details['success'] ?? 0;
+                $detailsFailed = $details['failed'] ?? 0;
+                $detailsSkipped = $details['skipped'] ?? 0;
+
+                $overallDetails['success'] += $detailsSuccess;
+                $overallDetails['failed'] += $detailsFailed;
+                $overallDetails['skipped'] += $detailsSkipped + $skippedForPlatform;
+
+                // Merge back per-platform extra skipped count so UI can show it
+                $result['details'] = array_merge($details, [
+                    'success' => $detailsSuccess,
+                    'failed' => $detailsFailed,
+                    'skipped' => $detailsSkipped + $skippedForPlatform,
+                ]);
+
+                $platformResults[$platform->name] = $result;
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Push complete.',
+                'details' => $overallDetails,
+                'platform_results' => $platformResults,
+            ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -169,6 +306,15 @@ class AiScraperController extends Controller
         if (!$exists) {
             $baseUrl = config('app.url');
 
+            // Try to reuse the last known album ID for this playlist + platform so that
+            // future automated pushes keep adding tracks into the same album.
+            $lastAlbumId = YoutubePlatformPush::where('playlist_id', $playlist->playlist_id)
+                ->where('platform_name', $platform->name)
+                ->whereNotNull('platform_album_id')
+                ->where('status', 'success')
+                ->orderByDesc('pushed_at')
+                ->value('platform_album_id');
+
             $instructions = "Execute the following steps COMPLETELY:
 
 1. **Read execution data**: Extract from execution_data:
@@ -206,13 +352,9 @@ class AiScraperController extends Controller
    - For each playlist group:
      - Call: POST {base_url}/api/ai/scrapers/{id}/push
      - Body: {
-         \"playlist_data\": {
-           \"title\": \"{playlist_title}\",
-           \"description\": \"{playlist_description}\",
-           \"videos\": [array of missing videos with tags/genres],
-           \"playlistUrl\": \"{playlist_url}\"
-         },
-         \"site_name\": \"{platform_name}\"
+         \"platform_id\": {platform_id},
+         \"album_mode\": \"single\",
+         \"limit\": 50
        }
    - Verify response indicates success
 
@@ -244,7 +386,8 @@ IMPORTANT:
                     'playlist_id' => $playlist->playlist_id,
                     'playlist_title' => $playlist->title,
                     'platform_id' => $platform->id,
-                    'tracking_table' => 'youtube_platform_pushes'
+                    'tracking_table' => 'youtube_platform_pushes',
+                    'platform_album_id' => $lastAlbumId,
                 ],
                 'is_active' => true,
                 'metadata' => [
@@ -258,7 +401,10 @@ IMPORTANT:
 
     public function playlistByUrl(Request $request)
     {
-        $request->validate(['playlist_url' => 'required|url']);
+        $request->validate([
+            'playlist_url' => 'required|url',
+            'max_results' => 'nullable|integer|min:1|max:10000',
+        ]);
         $playlistId = $this->scraperService->extractPlaylistId($request->playlist_url);
 
         if (!$playlistId) {
@@ -266,7 +412,8 @@ IMPORTANT:
         }
 
         try {
-            $data = $this->scraperService->fetchPlaylist($playlistId);
+            $maxResults = (int) ($request->input('max_results', 5000));
+            $data = $this->scraperService->fetchPlaylist($playlistId, $maxResults);
             return response()->json(['status' => 'success', 'playlist' => $data, 'videos' => $data['videos'] ?? []]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -319,9 +466,9 @@ IMPORTANT:
         }
     }
 
-    public function bulkUpdate(Request $request, string $playlistId)
+    public function bulkUpdate(Request $request, YoutubePlaylist $playlist)
     {
-        set_time_limit(300); // Increase execution time for large bulk updates
+        set_time_limit(300);
 
         $request->validate([
             'tags' => 'array',
@@ -330,7 +477,7 @@ IMPORTANT:
 
         try {
             $count = $this->scraperService->bulkUpdateMetadata(
-                $playlistId,
+                $playlist->playlist_id,
                 $request->tags ?? [],
                 $request->genres ?? []
             );
@@ -340,17 +487,80 @@ IMPORTANT:
         }
     }
 
-    public function videos()
+    public function videos(Request $request)
     {
-        return response()->json(
-            YoutubeVideo::query()
-                ->select([
-                    'id', 'video_id', 'playlist_id', 'title', 'channel_name', 'duration',
-                    'published_at', 'thumbnail_url', 'thumbnail_animated_url', 'tags', 'genres',
-                ])
-                ->orderBy('updated_at', 'desc')
-                ->limit(50)
-                ->get()
-        );
+        // Allow custom page size up to 1000 rows for power users
+        $perPage = (int) ($request->per_page ?? 25);
+        if ($perPage < 1) {
+            $perPage = 1;
+        } elseif ($perPage > 1000) {
+            $perPage = 1000;
+        }
+        $sortBy = in_array($request->sort_by, [
+            'title', 'duration', 'published_at', 'channel_name', 'created_at',
+            'view_count', 'like_count', 'comment_count',
+        ]) ? $request->sort_by : 'created_at';
+        $sortDir = $request->sort_dir === 'asc' ? 'asc' : 'desc';
+
+        $query = YoutubeVideo::query()
+            ->select([
+                'youtube_videos.id', 'youtube_videos.video_id', 'youtube_videos.playlist_id',
+                'youtube_videos.title', 'youtube_videos.description', 'youtube_videos.channel_name',
+                'youtube_videos.duration', 'youtube_videos.published_at', 'youtube_videos.thumbnail_url',
+                'youtube_videos.thumbnail_animated_url', 'youtube_videos.tags', 'youtube_videos.genres',
+                'youtube_videos.view_count', 'youtube_videos.like_count', 'youtube_videos.comment_count',
+                'youtube_videos.metadata', 'youtube_videos.created_at',
+            ]);
+
+        // Filter by playlist
+        if ($request->filled('playlist_id')) {
+            $query->where('youtube_videos.playlist_id', $request->playlist_id);
+        }
+
+        // Search
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('youtube_videos.title', 'like', "%{$search}%")
+                  ->orWhere('youtube_videos.channel_name', 'like', "%{$search}%")
+                  ->orWhere('youtube_videos.video_id', 'like', "%{$search}%");
+            });
+        }
+
+        // Filter by push status
+        if ($request->filled('status')) {
+            $status = $request->status;
+            if ($status === 'new') {
+                $query->whereDoesntHave('pushes');
+            } elseif ($status === 'pushed') {
+                $query->whereHas('pushes', fn ($q) => $q->where('status', 'success'));
+            } elseif ($status === 'failed') {
+                $query->whereHas('pushes', fn ($q) => $q->where('status', 'failed'))
+                      ->whereDoesntHave('pushes', fn ($q) => $q->where('status', 'success'));
+            }
+        }
+
+        $query->orderBy("youtube_videos.{$sortBy}", $sortDir);
+
+        $paginated = $query->paginate($perPage);
+
+        // Attach push status to each video
+        $videoIds = $paginated->getCollection()->pluck('video_id')->toArray();
+        $pushStatuses = \App\Models\YoutubePlatformPush::whereIn('video_id', $videoIds)
+            ->select('video_id', 'platform_name', 'status', 'pushed_at')
+            ->get()
+            ->groupBy('video_id');
+
+        $paginated->getCollection()->transform(function ($video) use ($pushStatuses) {
+            $pushes = $pushStatuses->get($video->video_id, collect());
+            $hasSuccess = $pushes->where('status', 'success')->isNotEmpty();
+            $hasFailed = $pushes->where('status', 'failed')->isNotEmpty();
+
+            $video->push_status = $pushes->isEmpty() ? 'new' : ($hasSuccess ? 'pushed' : ($hasFailed ? 'failed' : 'pending'));
+            $video->push_platforms = $pushes->where('status', 'success')->pluck('platform_name')->unique()->values();
+            return $video;
+        });
+
+        return response()->json($paginated);
     }
 }

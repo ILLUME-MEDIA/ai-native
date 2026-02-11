@@ -33,18 +33,19 @@ class GeminiAdapter implements AIProviderAdapterInterface
         // Ensure model name doesn't have double prefix
         $modelId = str_replace('models/', '', $this->model);
 
-        $response = Http::post("{$this->baseUrl}/models/{$modelId}:generateContent?key={$this->apiKey}", [
-            'contents' => [
-                [
-                    'parts' => [
-                        ['text' => $prompt]
+        $response = Http::timeout(60)
+            ->post("{$this->baseUrl}/models/{$modelId}:generateContent?key={$this->apiKey}", [
+                'contents' => [
+                    [
+                        'parts' => [
+                            ['text' => $prompt]
+                        ]
                     ]
+                ],
+                'generationConfig' => [
+                    'temperature' => $options['temperature'] ?? 0.7,
                 ]
-            ],
-            'generationConfig' => [
-                'temperature' => $options['temperature'] ?? 0.7,
-            ]
-        ]);
+            ]);
 
         if ($response->failed()) {
             $error = $response->json()['error'] ?? [];

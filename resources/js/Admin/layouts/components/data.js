@@ -507,7 +507,12 @@ export const menuItems = [{
   slug: "ai-agents-system",
   label: "AI Agents",
   isTitle: true,
-  children: [{
+  children: [ {
+    url: "/apps/code-editor",
+    icon: "code",
+    slug: "pages:apps-code-editor",
+    label: "Code Editor"
+  },{
     icon: "server",
     url: "/ai/endpoints",
     slug: "pages:ai-endpoints",

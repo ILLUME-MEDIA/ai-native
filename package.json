@@ -3,8 +3,8 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build",
-        "dev": "vite",
+        "build": "node --max-old-space-size=8192 node_modules/vite/bin/vite.js build",
+        "dev": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js",
         "format": "prettier --write './resources/js/Admin/**/*.{js,jsx,ts,tsx}'"
     },
     "devDependencies": {
@@ -22,6 +22,7 @@
         "react-dom": "^18.3.1",
         "sass": "^1.77.0",
         "tailwindcss": "^3.2.1",
+        "terser": "^5.36.0",
         "vite": "^7.0.7"
     },
     "dependencies": {
@@ -34,6 +35,7 @@
         "@hello-pangea/dnd": "^18.0.1",
         "@hookform/resolvers": "^5.2.2",
         "@iconify/react": "^6.0.2",
+        "@monaco-editor/react": "^4.7.0",
         "@rc-component/tour": "^2.2.0",
         "@tanstack/react-table": "^8.21.3",
         "@tanstack/table-core": "^8.21.3",
@@ -66,8 +68,10 @@
         "jszip": "^3.10.1",
         "leaflet": "^1.9.4",
         "lodash": "^4.17.21",
+        "lucide-react": "^0.563.0",
         "masonic": "^4.1.0",
         "moment": "^2.30.1",
+        "monaco-editor": "^0.55.1",
         "pdfmake": "^0.2.20",
         "quill": "^2.0.3",
         "react-apexcharts": "^1.8.0",
@@ -96,6 +100,7 @@
         "react-router": "^7.11.0",
         "react-select": "^5.10.2",
         "react-sortablejs": "^6.1.4",
+        "react-toastify": "^11.0.5",
         "react-use-wizard": "^2.3.0",
         "remark-gfm": "^4.0.1",
         "simplebar-react": "^3.3.2",

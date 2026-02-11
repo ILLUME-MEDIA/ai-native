@@ -36,6 +36,9 @@ export const routes = [
     path: '/api/:id',
     Component: lazy(() => import('@admin/views/admin/apps/sections/SectionApi'))
   }, {
+    path: '/apps/code-editor',
+    Component: lazy(() => import('@admin/views/admin/apps/code-editor/CodeEditor'))
+  }, {
     path: '/apps/blog/add',
     Component: lazy(() => import('@admin/views/admin/apps/blog/add'))
   }, {
