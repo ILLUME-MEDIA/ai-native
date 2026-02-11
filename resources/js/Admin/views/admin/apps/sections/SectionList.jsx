@@ -120,7 +120,8 @@ const SectionList = () => {
     const load = async () => {
       try {
         setLoading(true);
-        const res = await fetch('/api/entities/section_entities', {
+        // Use Section Builder meta endpoint so it can auto-sync missing DB tables.
+        const res = await fetch('/api/section-builder/entities', {
           headers: {
             Accept: 'application/json',
           },
@@ -132,8 +133,8 @@ const SectionList = () => {
         }
 
         const json = await res.json();
-        // Dynamic entity API returns Laravel paginator
-        setData(json.data ?? []);
+        // Section Builder entities endpoint returns a plain array of entities.
+        setData(Array.isArray(json) ? json : json.data ?? []);
       } catch (e) {
         // keep silent, minimal handling
         // console.error(e);

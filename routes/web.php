@@ -9,27 +9,27 @@ use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 // Run all migrations. GET /run-migrations (no key required).
-// Route::get('/run-migrations', function () {
-//     try {
-//         Artisan::call('migrate', ['--force' => true]);
-//         $output = Artisan::output();
-//         return response()->json([
-//             'message' => 'Migrations completed.',
-//             'output' => $output,
-//         ]);
-//     } catch (\Illuminate\Database\QueryException $e) {
-//         $code = $e->getCode() ?? 0;
-//         $msg = $e->getMessage();
-//         if ($code === 1045 || str_contains($msg, 'Access denied')) {
-//             return response()->json([
-//                 'message' => 'Database connection failed. Check .env: DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD.',
-//                 'hint' => 'Get correct credentials from your hosting panel (cPanel/Plesk). Use their MySQL host (often localhost or a host like mysql.yourdomain.com).',
-//                 'error_code' => 1045,
-//             ], 503);
-//         }
-//         throw $e;
-//     }
-// })->name('run-migrations');
+Route::get('/run-migrations', function () {
+    try {
+        Artisan::call('migrate', ['--force' => true]);
+        $output = Artisan::output();
+        return response()->json([
+            'message' => 'Migrations completed.',
+            'output' => $output,
+        ]);
+    } catch (\Illuminate\Database\QueryException $e) {
+        $code = $e->getCode() ?? 0;
+        $msg = $e->getMessage();
+        if ($code === 1045 || str_contains($msg, 'Access denied')) {
+            return response()->json([
+                'message' => 'Database connection failed. Check .env: DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD.',
+                'hint' => 'Get correct credentials from your hosting panel (cPanel/Plesk). Use their MySQL host (often localhost or a host like mysql.yourdomain.com).',
+                'error_code' => 1045,
+            ], 503);
+        }
+        throw $e;
+    }
+})->name('run-migrations');
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [

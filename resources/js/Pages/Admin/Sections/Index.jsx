@@ -96,7 +96,8 @@ export default function SectionsIndex() {
         const load = async () => {
             try {
                 setLoading(true);
-                const res = await fetch('/api/entities/section_entities', {
+                // Use Section Builder meta endpoint so it can auto-sync missing DB tables.
+                const res = await fetch('/api/section-builder/entities', {
                     headers: {
                         Accept: 'application/json',
                     },
@@ -108,7 +109,7 @@ export default function SectionsIndex() {
                 }
 
                 const json = await res.json();
-                setData(json.data ?? []);
+                setData(Array.isArray(json) ? json : json.data ?? []);
             } catch (e) {
                 // minimal handling
             } finally {

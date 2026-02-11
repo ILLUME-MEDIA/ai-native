@@ -17,8 +17,9 @@ class SectionBuilderController extends Controller
      */
     public function index(Request $request, SchemaSyncService $schemaSyncService)
     {
-        // Avoid heavy sync on every request; refresh periodically instead.
-        $schemaSyncService->syncIfStale();
+        // Ensure DB tables & Section Editor stay in sync whenever this page is opened.
+        // TTL set to 0 so new tables appear immediately when you visit the page.
+        $schemaSyncService->syncIfStale(0);
 
         $entities = SectionEntity::query()
             ->withCount('fields')
