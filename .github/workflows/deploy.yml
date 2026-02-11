@@ -15,11 +15,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node.js for React build
+      # 2️⃣ Setup Node.js for React build (Node 20 for Vite 7)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20.19.0'
+          cache: 'npm'
 
       - name: Install NPM dependencies & Build React
         run: |
@@ -30,7 +31,8 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: '8.2'
+          tools: composer
 
       - name: Install Composer dependencies
         run: composer install --no-dev --optimize-autoloader
@@ -42,7 +44,7 @@ jobs:
           server: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: 21                # <-- FTP port added
+          port: 21
           server-dir: ${{ secrets.FTP_PATH }}
           exclude: |
             **/.git*
