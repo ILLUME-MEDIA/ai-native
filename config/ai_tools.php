@@ -35,9 +35,14 @@ return [
                         'enum' => ['file', 'directory'],
                         'description' => 'Whether to create a file or directory',
                         'default' => 'file'
+                    ],
+                    'overwrite' => [
+                        'type' => 'boolean',
+                        'description' => 'If true and file exists, overwrite its content (directories are never overwritten)',
+                        'default' => false
                     ]
                 ],
-                'required' => ['path', 'content']
+                'required' => ['path', 'type']
             ],
             'permission' => 'write',
             'requires_approval' => false,
@@ -64,6 +69,11 @@ return [
                     'content' => [
                         'type' => 'string',
                         'description' => 'New file content'
+                    ],
+                    'create_if_missing' => [
+                        'type' => 'boolean',
+                        'description' => 'If true and the file does not exist, create it (parent directories will be created as needed)',
+                        'default' => false
                     ]
                 ],
                 'required' => ['path', 'content']

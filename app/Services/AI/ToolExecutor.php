@@ -125,17 +125,115 @@ class ToolExecutor
      */
     protected function createFile(Workspace $workspace, array $args): array
     {
-        $path = ltrim($args['path'], '/');
-        $content = $args['content'] ?? '';
-        $type = $args['type'] ?? 'file';
+        $path = ltrim((string) ($args['path'] ?? ''), '/');
+        $path = str_replace('\\', '/', $path);
+        $path = trim($path);
+        $content = (string) ($args['content'] ?? '');
+        $type = (string) ($args['type'] ?? 'file');
+        $overwrite = (bool) ($args['overwrite'] ?? false);
+
+        if ($path === '') {
+            return [
+                'success' => false,
+                'error' => 'Path is required'
+            ];
+        }
+
+        // If path ends with "/", treat as directory
+        if (str_ends_with($path, '/')) {
+            $type = 'directory';
+            $path = rtrim($path, '/');
+        }
 
         $fullPath = $workspace->full_path . '/' . $path;
 
-        // Check if already exists
+        // Idempotency: if already exists, do not error
         if (File::exists($fullPath)) {
+            $isDir = File::isDirectory($fullPath);
+
+            // Existing directory
+            if ($type === 'directory' && $isDir) {
+                return [
+                    'success' => true,
+                    'noop' => true,
+                    'already_exists' => true,
+                    'path' => $path,
+                    'type' => 'directory',
+                    'message' => "Directory already exists: {$path}",
+                    'fs_patch' => [
+                        'op' => 'create',
+                        'path' => $path,
+                        'type' => 'directory',
+                        'noop' => true,
+                        'node' => [
+                            'name' => basename($path),
+                            'path' => $path,
+                            'type' => 'directory',
+                            'size' => 0,
+                            'extension' => '',
+                        ],
+                    ],
+                ];
+            }
+
+            // Existing file
+            if ($type === 'file' && !$isDir) {
+                if ($overwrite) {
+                    // Ensure parent directory exists (should, but safe)
+                    $directory = dirname($fullPath);
+                    if (!File::isDirectory($directory)) {
+                        File::makeDirectory($directory, 0755, true);
+                    }
+
+                    File::put($fullPath, $content);
+
+                    return [
+                        'success' => true,
+                        'path' => $path,
+                        'type' => 'file',
+                        'size' => strlen($content),
+                        'message' => "File overwritten: {$path}",
+                        'fs_patch' => [
+                            'op' => 'update',
+                            'path' => $path,
+                            'type' => 'file',
+                            'node' => [
+                                'name' => basename($path),
+                                'path' => $path,
+                                'type' => 'file',
+                                'size' => strlen($content),
+                                'extension' => pathinfo($path, PATHINFO_EXTENSION),
+                            ],
+                        ],
+                    ];
+                }
+
+                return [
+                    'success' => true,
+                    'noop' => true,
+                    'already_exists' => true,
+                    'path' => $path,
+                    'type' => 'file',
+                    'message' => "File already exists: {$path}",
+                    'fs_patch' => [
+                        'op' => 'create',
+                        'path' => $path,
+                        'type' => 'file',
+                        'noop' => true,
+                        'node' => [
+                            'name' => basename($path),
+                            'path' => $path,
+                            'type' => 'file',
+                            'size' => File::size($fullPath),
+                            'extension' => pathinfo($path, PATHINFO_EXTENSION),
+                        ],
+                    ],
+                ];
+            }
+
             return [
                 'success' => false,
-                'error' => 'Path already exists: ' . $path
+                'error' => 'Path already exists with different type: ' . $path
             ];
         }
 
@@ -145,7 +243,19 @@ class ToolExecutor
                 'success' => true,
                 'path' => $path,
                 'type' => 'directory',
-                'message' => "Directory created: {$path}"
+                'message' => "Directory created: {$path}",
+                'fs_patch' => [
+                    'op' => 'create',
+                    'path' => $path,
+                    'type' => 'directory',
+                    'node' => [
+                        'name' => basename($path),
+                        'path' => $path,
+                        'type' => 'directory',
+                        'size' => 0,
+                        'extension' => '',
+                    ],
+                ],
             ];
         }
 
@@ -162,7 +272,19 @@ class ToolExecutor
             'path' => $path,
             'type' => 'file',
             'size' => strlen($content),
-            'message' => "File created: {$path}"
+            'message' => "File created: {$path}",
+            'fs_patch' => [
+                'op' => 'create',
+                'path' => $path,
+                'type' => 'file',
+                'node' => [
+                    'name' => basename($path),
+                    'path' => $path,
+                    'type' => 'file',
+                    'size' => strlen($content),
+                    'extension' => pathinfo($path, PATHINFO_EXTENSION),
+                ],
+            ],
         ];
     }
 
@@ -173,13 +295,43 @@ class ToolExecutor
     {
         $path = ltrim($args['path'], '/');
         $content = $args['content'];
+        $path = str_replace('\\', '/', $path);
+        $createIfMissing = (bool) ($args['create_if_missing'] ?? false);
 
         $fullPath = $workspace->full_path . '/' . $path;
 
         if (!File::exists($fullPath)) {
+            if (!$createIfMissing) {
+                return [
+                    'success' => false,
+                    'error' => 'File not found: ' . $path
+                ];
+            }
+
+            $directory = dirname($fullPath);
+            if (!File::isDirectory($directory)) {
+                File::makeDirectory($directory, 0755, true);
+            }
+
+            File::put($fullPath, $content);
+
             return [
-                'success' => false,
-                'error' => 'File not found: ' . $path
+                'success' => true,
+                'path' => $path,
+                'size' => strlen($content),
+                'message' => "File created: {$path}",
+                'fs_patch' => [
+                    'op' => 'create',
+                    'path' => $path,
+                    'type' => 'file',
+                    'node' => [
+                        'name' => basename($path),
+                        'path' => $path,
+                        'type' => 'file',
+                        'size' => strlen($content),
+                        'extension' => pathinfo($path, PATHINFO_EXTENSION),
+                    ],
+                ],
             ];
         }
 
@@ -202,7 +354,19 @@ class ToolExecutor
                 'success' => true,
                 'path' => $path,
                 'size' => strlen($content),
-                'message' => "File updated: {$path}"
+                'message' => "File updated: {$path}",
+                'fs_patch' => [
+                    'op' => 'update',
+                    'path' => $path,
+                    'type' => 'file',
+                    'node' => [
+                        'name' => basename($path),
+                        'path' => $path,
+                        'type' => 'file',
+                        'size' => strlen($content),
+                        'extension' => pathinfo($path, PATHINFO_EXTENSION),
+                    ],
+                ],
             ];
         } catch (\Exception $e) {
             // Restore backup on failure
@@ -261,6 +425,7 @@ class ToolExecutor
     protected function deleteFile(Workspace $workspace, array $args): array
     {
         $path = ltrim($args['path'], '/');
+        $path = str_replace('\\', '/', $path);
         $fullPath = $workspace->full_path . '/' . $path;
 
         if (!File::exists($fullPath)) {
@@ -282,7 +447,12 @@ class ToolExecutor
             'success' => true,
             'path' => $path,
             'type' => $type,
-            'message' => ucfirst($type) . " deleted: {$path}"
+            'message' => ucfirst($type) . " deleted: {$path}",
+            'fs_patch' => [
+                'op' => 'delete',
+                'path' => $path,
+                'type' => $type,
+            ],
         ];
     }
 

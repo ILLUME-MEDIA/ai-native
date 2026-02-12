@@ -24,6 +24,7 @@ return [
         'env', 'example', 'gitignore',
         'lock', 'log'
     ],
+    'allow_extensionless' => env('CODE_EDITOR_ALLOW_EXTENSIONLESS', true),
 
     // Excluded directories (won't show in file tree)
     'excluded_directories' => [
@@ -38,6 +39,14 @@ return [
         'dist',
         'build'
     ],
+
+    // Limits
+    'max_tree_depth' => env('CODE_EDITOR_MAX_TREE_DEPTH', 6),
+    'max_list_depth' => env('CODE_EDITOR_MAX_LIST_DEPTH', 4),
+    'max_search_depth' => env('CODE_EDITOR_MAX_SEARCH_DEPTH', 6),
+    'max_scan_items' => env('CODE_EDITOR_MAX_SCAN_ITEMS', 20000),
+    'max_search_results' => env('CODE_EDITOR_MAX_SEARCH_RESULTS', 200),
+    'max_search_results_per_file' => env('CODE_EDITOR_MAX_SEARCH_RESULTS_PER_FILE', 10),
 
     // Monaco editor theme
     'theme' => env('CODE_EDITOR_THEME', 'vs-dark'), // vs, vs-dark, hc-black

@@ -3,6 +3,7 @@
 namespace App\Services\AI\Adapters;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Client\ConnectionException;
 
 class MistralAdapter implements AIProviderAdapterInterface
 {
@@ -29,7 +30,15 @@ class MistralAdapter implements AIProviderAdapterInterface
 
     public function generateText(string $prompt, array $options = []): array
     {
-        $response = Http::timeout(60)
+        $timeout = (int) ($options['timeout'] ?? 180);
+        $connectTimeout = (int) ($options['connect_timeout'] ?? 15);
+
+        $response = Http::connectTimeout($connectTimeout)
+            ->timeout($timeout)
+            ->retry(2, 600, function ($exception) {
+                // Retry on network/timeouts (cURL error 28, DNS, etc.)
+                return $exception instanceof ConnectionException;
+            })
             ->withToken($this->apiKey)
             ->withHeaders([
                 'Accept' => 'application/json',

@@ -103,13 +103,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files
         Route::get('files', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'files']);
+        Route::get('files/list', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'listDirectory']);
         Route::get('files/read', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'readFile']);
         Route::post('files/write', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'writeFile']);
         Route::post('files/create', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'createFile']);
         Route::delete('files/delete', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'deleteFile']);
+        Route::put('files/rename', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'renameFile']);
 
         // Terminal
         Route::post('terminal/execute', [\App\Http\Controllers\Workspace\TerminalController::class, 'execute']);
+        Route::post('terminal/execute-stream', [\App\Http\Controllers\Workspace\TerminalController::class, 'executeStream']);
 
         // Git
         Route::post('git/init', [\App\Http\Controllers\Workspace\GitController::class, 'init']);
@@ -123,7 +126,22 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // AI Commands
         Route::post('ai/chat', [\App\Http\Controllers\Workspace\AICommandController::class, 'chat']);
+        Route::post('ai/chat-stream', [\App\Http\Controllers\Workspace\AICommandController::class, 'chatStream']); // SSE streaming
         Route::get('ai/approvals', [\App\Http\Controllers\Workspace\AICommandController::class, 'pendingApprovals']);
+        Route::get('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'index']);
+        Route::post('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'store']);
+        Route::get('ai/conversations/{conversation}', [\App\Http\Controllers\Workspace\AIConversationController::class, 'show']);
+        Route::post('ai/conversations/{conversation}/cancel', [\App\Http\Controllers\Workspace\AIConversationController::class, 'cancel']);
+
+        // Theme
+        Route::get('theme', [\App\Http\Controllers\Workspace\ThemeController::class, 'getTheme']);
+        Route::post('theme', [\App\Http\Controllers\Workspace\ThemeController::class, 'saveTheme']);
+        Route::delete('theme', [\App\Http\Controllers\Workspace\ThemeController::class, 'deleteTheme']);
+
+        // React Scaffolder
+        Route::get('react/templates', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'getTemplates']);
+        Route::post('react/create', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'createReactApp']);
+        Route::post('react/create-from-template', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'createFromTemplate']);
     });
 
     // AI Command Approvals

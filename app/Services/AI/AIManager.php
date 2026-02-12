@@ -13,6 +13,24 @@ use Illuminate\Support\Facades\Auth;
 
 class AIManager
 {
+    protected function buildUiTargetInstructions(string $uiTarget): string
+    {
+        $uiTarget = strtolower(trim($uiTarget ?: 'ask'));
+
+        $base = "### UI TARGET\n";
+        $base .= "Preferred UI implementation: **{$uiTarget}**.\n\n";
+        $base .= "Rules:\n";
+        $base .= "- If the user's request is about UI pages/screens/forms and UI target is **ask**, you MUST ask: \"Do you want this implemented in React components, static HTML, or Laravel Blade?\" and WAIT (do not create files yet).\n";
+        $base .= "- If UI target is **react**, DO NOT create Blade/PHP view files (e.g. `resources/views/*.blade.php`, `*.php`). Create React components/pages instead.\n";
+        $base .= "- If UI target is **html**, create static HTML/CSS/JS files and avoid Blade/PHP unless explicitly requested.\n";
+        $base .= "- If UI target is **blade**, create Laravel Blade views and related assets.\n\n";
+        $base .= "Suggested folder conventions inside the workspace:\n";
+        $base .= "- React: `src/pages/*`, `src/components/*`, `src/routes/*`, `src/styles/*`\n";
+        $base .= "- HTML: `public/*.html`, `public/assets/*`\n";
+        $base .= "- Blade: `resources/views/*`, `resources/views/auth/*`, `public/assets/*`\n";
+
+        return $base;
+    }
     /**
      * @param string $prompt
      * @param array $options
@@ -187,6 +205,7 @@ class AIManager
         $openFiles = $data['open_files'] ?? [];
         $modelId = $data['model_id'] ?? 'AUTO';
         $endpointId = $data['endpoint_id'] ?? null;
+        $uiTarget = (string) ($data['ui_target'] ?? 'ask');
         $workspace = $data['workspace'] ?? null;
         $user = $data['user'] ?? Auth::user();
 
@@ -210,6 +229,7 @@ class AIManager
         // Build system prompt with code editor context
         $systemPrompt = $this->buildSystemPrompt('code_editor', $message);
         $systemPrompt .= "\n\n" . $context;
+        $systemPrompt .= "\n\n" . $this->buildUiTargetInstructions($uiTarget);
 
         // Add tool definitions if workspace is provided
         $toolExecutor = null;
@@ -652,5 +672,305 @@ class AIManager
         $originalData['model_id'] = 'AUTO'; // Let it select best model
 
         return $this->chatWithCode($originalData);
+    }
+
+    /**
+     * Streaming version of chatWithCode - sends events via callback
+     *
+     * @param array $data
+     * @param callable $streamCallback Function(string $event, array $data)
+     * @return void
+     */
+    public function chatWithCodeStream(array $data, callable $streamCallback): void
+    {
+        $message = $data['message'];
+        $currentFile = $data['current_file'] ?? null;
+        $openFiles = $data['open_files'] ?? [];
+        $modelId = $data['model_id'] ?? 'AUTO';
+        $endpointId = $data['endpoint_id'] ?? null;
+        $uiTarget = (string) ($data['ui_target'] ?? 'ask');
+        $workspace = $data['workspace'] ?? null;
+        $user = $data['user'] ?? Auth::user();
+        $shouldStop = $data['should_stop'] ?? null;
+
+        try {
+            // Required UX protocol: show liveness immediately
+            $streamCallback('status', ['message' => '🤔 Thinking...']);
+            $streamCallback('status', ['message' => '🧠 Planning...']);
+            $streamCallback('status', ['message' => 'Connecting to AI...']);
+
+            // Get endpoints (support failover for streaming)
+            $endpoints = $endpointId
+                ? AIEndpoint::where('id', $endpointId)->where('is_active', true)->get()
+                : AIEndpoint::where('is_active', true)->get();
+
+            if ($endpoints->isEmpty()) {
+                throw new \Exception('No active AI endpoint available');
+            }
+
+            // Build context
+            $context = $this->buildCodeContext($currentFile, $openFiles);
+            $baseSystemPrompt = $this->buildSystemPrompt('code_editor', $message) . "\n\n" . $context;
+            $baseSystemPrompt .= "\n\n" . $this->buildUiTargetInstructions($uiTarget);
+
+            // Add tool definitions if workspace is provided
+            $toolExecutor = null;
+            $toolDefinitions = [];
+            if ($workspace && config('ai_tools.enabled', true)) {
+                $toolExecutor = new ToolExecutor();
+                $toolDefinitions = $toolExecutor->getToolDefinitions();
+                $baseSystemPrompt .= "\n\n" . $this->buildToolInstructions($toolDefinitions);
+            }
+
+            $streamCallback('status', ['message' => 'Generating response...']);
+
+            $lastError = null;
+            foreach ($endpoints as $idx => $endpoint) {
+                try {
+                    $streamCallback('status', ['message' => 'Endpoint selected', 'endpoint' => $endpoint->name]);
+
+                    $useModel = $modelId;
+                    if ($useModel === 'AUTO' || !$useModel) {
+                        $useModel = $this->selectBestModel($endpoint);
+                        $streamCallback('status', ['message' => 'Model selected', 'model' => $useModel]);
+                    }
+
+                    $this->attemptExecutionWithToolsStream(
+                        $endpoint,
+                        $message,
+                        $baseSystemPrompt,
+                        $useModel,
+                        $toolDefinitions,
+                        $toolExecutor,
+                        $workspace,
+                        $user,
+                        $streamCallback,
+                        is_callable($shouldStop) ? $shouldStop : null
+                    );
+                    return; // success (complete event emitted)
+                } catch (\Exception $e) {
+                    $lastError = $e->getMessage();
+                    $streamCallback('status', [
+                        'message' => '⚠️ Provider error, attempting failover...',
+                        'error' => $lastError,
+                        'attempt' => $idx + 1,
+                        'max' => $endpoints->count(),
+                    ]);
+
+                    // If user forced a specific endpoint, don't failover
+                    if ($endpointId) {
+                        throw $e;
+                    }
+                }
+            }
+
+            throw new \Exception('All AI endpoints failed. Last error: ' . ($lastError ?? 'unknown'));
+
+        } catch (\Exception $e) {
+            $streamCallback('error', [
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null
+            ]);
+        }
+    }
+
+    /**
+     * Execute AI call with tool support and streaming
+     */
+    protected function attemptExecutionWithToolsStream(
+        AIEndpoint $endpoint,
+        string $message,
+        string $systemPrompt,
+        string $modelId,
+        array $toolDefinitions,
+        ?ToolExecutor $toolExecutor,
+        $workspace,
+        $user,
+        callable $streamCallback,
+        ?callable $shouldStop = null
+    ): void {
+        $adapter = AIProviderFactory::make($endpoint);
+        $adapter->setModel($modelId);
+
+        $conversation = [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $message]
+        ];
+
+        $toolCalls = [];
+        $codeChanges = [];
+        $fullResponse = '';
+        $maxTurns = config('ai_tools.max_execution_turns', 10);
+
+        // Tool execution loop
+        for ($turn = 0; $turn < $maxTurns; $turn++) {
+            if ($shouldStop && $shouldStop()) {
+                $streamCallback('cancelled', [
+                    'status' => 'cancelled',
+                    'message' => 'Cancelled by user',
+                ]);
+                return;
+            }
+
+            $streamCallback('turn_start', ['turn' => $turn + 1, 'max' => $maxTurns]);
+
+            $startTime = microtime(true);
+
+            // Call AI - check if adapter supports streaming
+            if (method_exists($adapter, 'generateTextStream')) {
+                // Stream response token by token
+                $result = $adapter->generateTextStream($conversation, $toolDefinitions, function($chunk) use ($streamCallback, $shouldStop) {
+                    if ($shouldStop && $shouldStop()) {
+                        throw new \RuntimeException('Cancelled');
+                    }
+                    $streamCallback('chunk', ['text' => $chunk]);
+                });
+            } else {
+                // Fallback: non-streaming
+                $result = $this->callAdapterWithTools($adapter, $conversation, $toolDefinitions);
+
+                // Send the full response as one chunk
+                if (isset($result['text'])) {
+                    $streamCallback('chunk', ['text' => $result['text']]);
+                }
+            }
+
+            $duration = microtime(true) - $startTime;
+
+            // If no more tool calls, we're done
+            if (!isset($result['tool_calls']) || empty($result['tool_calls'])) {
+                $finalText = $result['text'] ?? $result['content'] ?? '';
+                $fullResponse .= $finalText;
+
+                // Parse any code changes
+                $parsedCodeChanges = $this->parseCodeChanges($finalText);
+                $codeChanges = array_merge($codeChanges, $parsedCodeChanges);
+
+                $this->logAction($endpoint, 'chat_stream', 'success', [
+                    'duration' => $duration,
+                    'model' => $modelId,
+                    'turns' => $turn + 1,
+                    'tool_calls' => count($toolCalls)
+                ]);
+
+                // UX: final phase before completion
+                $streamCallback('status', ['message' => '🔄 Updating preview...']);
+
+                // Send completion
+                $streamCallback('complete', [
+                    'message' => $fullResponse,
+                    'code_changes' => $codeChanges,
+                    'tool_calls' => $toolCalls,
+                    'model_used' => $modelId,
+                    'provider' => $endpoint->provider,
+                    'original_message' => $message
+                ]);
+
+                return;
+            }
+
+            // Execute tool calls
+            foreach ($result['tool_calls'] as $toolCall) {
+                if ($shouldStop && $shouldStop()) {
+                    $streamCallback('cancelled', [
+                        'status' => 'cancelled',
+                        'message' => 'Cancelled by user',
+                    ]);
+                    return;
+                }
+
+                $toolName = $toolCall['name'] ?? $toolCall['function']['name'] ?? 'unknown';
+                $toolArgs = $toolCall['arguments'] ?? $toolCall['function']['arguments'] ?? [];
+                if (is_string($toolArgs)) {
+                    $toolArgs = json_decode($toolArgs, true) ?? [];
+                }
+
+                // UX protocol: status messages for tool phases
+                if ($toolName === 'createFile') {
+                    $t = (string) ($toolArgs['type'] ?? 'file');
+                    if ($t === 'directory') {
+                        $streamCallback('status', ['message' => '📁 Creating directories...']);
+                    } else {
+                        $streamCallback('status', ['message' => '🛠 Creating files...']);
+                    }
+                } elseif ($toolName === 'writeFile') {
+                    $streamCallback('status', ['message' => '✏️ Editing code...']);
+                } elseif ($toolName === 'deleteFile') {
+                    $streamCallback('status', ['message' => '🗑️ Removing files...']);
+                } elseif ($toolName === 'runCommand') {
+                    $streamCallback('status', ['message' => '🖥 Running command...']);
+                } elseif (in_array($toolName, ['readFile', 'listFiles'], true)) {
+                    $streamCallback('status', ['message' => '🔎 Reading files...']);
+                }
+
+                $streamCallback('tool_call', [
+                    'tool' => $toolName,
+                    'status' => 'executing',
+                    'arguments' => $toolArgs,
+                ]);
+
+                if (!$toolExecutor || !$workspace) {
+                    $toolResult = [
+                        'success' => false,
+                        'error' => 'Tool execution not available'
+                    ];
+                } else {
+                    $toolResult = $toolExecutor->execute($toolCall, $workspace, $user);
+                }
+
+                // Track tool call
+                $toolCalls[] = [
+                    'name' => $toolName,
+                    'arguments' => $toolCall['arguments'] ?? $toolCall['function']['arguments'] ?? [],
+                    'result' => $toolResult
+                ];
+
+                $streamCallback('tool_result', [
+                    'tool' => $toolName,
+                    'result' => $toolResult,
+                ]);
+
+                // Add tool result to conversation
+                $conversation[] = [
+                    'role' => 'tool',
+                    'tool_call_id' => $toolCall['id'] ?? uniqid(),
+                    'name' => $toolName,
+                    'content' => json_encode($toolResult)
+                ];
+
+                // If tool created/modified a file, add to code changes
+                if (isset($toolResult['success']) && $toolResult['success'] && isset($toolResult['path'])) {
+                    $codeChanges[] = [
+                        'path' => $toolResult['path'],
+                        'action' => $toolResult['type'] ?? 'update',
+                        'content' => $toolResult['content'] ?? ''
+                    ];
+                }
+            }
+        }
+
+        // Max turns reached - send summary of what was done
+        $successfulFiles = array_filter($toolCalls, fn($tc) => isset($tc['result']['success']) && $tc['result']['success']);
+        $fileList = array_map(fn($tc) => $tc['result']['path'] ?? 'unknown', $successfulFiles);
+
+        $summary = "I've completed the requested task and executed " . count($toolCalls) . " operations:\n\n";
+
+        if (!empty($fileList)) {
+            $summary .= "📁 Files/folders created:\n";
+            foreach (array_unique($fileList) as $file) {
+                $summary .= "- `{$file}`\n";
+            }
+        }
+
+        $summary .= "\n⚠️ Maximum tool execution turns reached. The task may not be fully complete.";
+
+        $streamCallback('complete', [
+            'message' => $summary,
+            'code_changes' => $codeChanges,
+            'tool_calls' => $toolCalls,
+            'model_used' => $modelId,
+            'provider' => $endpoint->provider,
+            'original_message' => $message
+        ]);
     }
 }

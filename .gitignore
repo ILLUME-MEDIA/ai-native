@@ -35,6 +35,10 @@ Thumbs.db
 /vendor
 /storage/*.key
 /storage/pail
+/storage/workspaces
+
+# Local AI tooling
+/.claude
 
 # Public uploads (IMPORTANT)
 !/public/storage

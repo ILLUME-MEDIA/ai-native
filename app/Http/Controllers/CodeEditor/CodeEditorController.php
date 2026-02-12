@@ -7,17 +7,26 @@ use App\Models\CodeEditorPermission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class CodeEditorController extends Controller
 {
-    protected $basePath;
-    protected $maxFileSize;
-    protected $allowedExtensions;
+    protected string $basePath;
+    protected int $maxFileSize;
+    protected array $allowedExtensions;
+    protected array $excludedDirectories;
+    protected int $maxTreeDepth;
+    protected int $maxListDepth;
+    protected int $maxScanItems;
+    protected int $maxSearchResults;
+    protected int $maxSearchResultsPerFile;
+    protected int $maxSearchDepth;
+    protected bool $allowExtensionless;
 
     public function __construct()
     {
         // Restrict to project root
-        $this->basePath = base_path();
+        $this->basePath = rtrim(str_replace('\\', '/', base_path()), '/');
 
         // Configuration
         $this->maxFileSize = config('codeeditor.max_file_size', 10485760); // 10MB
@@ -26,6 +35,22 @@ class CodeEditorController extends Controller
             'html', 'htm', 'json', 'xml', 'md', 'txt', 'yml', 'yaml',
             'sql', 'sh', 'bash', 'env', 'example', 'lock'
         ]);
+
+        $this->excludedDirectories = config('codeeditor.excluded_directories', [
+            'node_modules',
+            'vendor',
+            '.git',
+            'storage/framework',
+            'storage/logs',
+            'bootstrap/cache'
+        ]);
+        $this->maxTreeDepth = (int) config('codeeditor.max_tree_depth', 6);
+        $this->maxListDepth = (int) config('codeeditor.max_list_depth', 4);
+        $this->maxScanItems = (int) config('codeeditor.max_scan_items', 20000);
+        $this->maxSearchResults = (int) config('codeeditor.max_search_results', 200);
+        $this->maxSearchResultsPerFile = (int) config('codeeditor.max_search_results_per_file', 10);
+        $this->maxSearchDepth = (int) config('codeeditor.max_search_depth', $this->maxTreeDepth);
+        $this->allowExtensionless = (bool) config('codeeditor.allow_extensionless', true);
     }
 
     /**
@@ -34,8 +59,7 @@ class CodeEditorController extends Controller
     public function list(Request $request)
     {
         try {
-            $path = $this->sanitizePath($request->input('path', '/'));
-            $fullPath = $this->basePath . $path;
+            [$fullPath, $path] = $this->resolvePath($request->input('path', '/'), true);
 
             // Check permission
             if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'read')) {
@@ -46,38 +70,12 @@ class CodeEditorController extends Controller
                 return response()->json(['error' => 'Invalid directory'], 400);
             }
 
+            $depth = (int) $request->input('depth', $this->maxListDepth);
+            $depth = max(1, min($depth, $this->maxListDepth));
+
             $items = [];
-
-            // Get all files and directories
-            foreach (File::allFiles($fullPath) as $file) {
-                $relativePath = $this->relativePath($file->getRealPath());
-
-                $items[] = [
-                    'name' => $file->getFilename(),
-                    'path' => $relativePath,
-                    'type' => 'file',
-                    'size' => $file->getSize(),
-                    'modified' => $file->getMTime(),
-                    'extension' => $file->getExtension(),
-                    'readable' => CodeEditorPermission::canPerform(auth()->id(), $relativePath, 'read'),
-                    'writable' => CodeEditorPermission::canPerform(auth()->id(), $relativePath, 'write'),
-                ];
-            }
-
-            foreach (File::directories($fullPath) as $dir) {
-                $relativePath = $this->relativePath($dir);
-
-                $items[] = [
-                    'name' => basename($dir),
-                    'path' => $relativePath,
-                    'type' => 'directory',
-                    'size' => 0,
-                    'modified' => filemtime($dir),
-                    'extension' => '',
-                    'readable' => CodeEditorPermission::canPerform(auth()->id(), $relativePath . '/*', 'read'),
-                    'writable' => CodeEditorPermission::canPerform(auth()->id(), $relativePath . '/*', 'write'),
-                ];
-            }
+            $count = 0;
+            $this->scanDirectory($fullPath, $path, 0, $depth, $items, $count);
 
             // Sort: directories first, then files alphabetically
             usort($items, function ($a, $b) {
@@ -92,6 +90,8 @@ class CodeEditorController extends Controller
                 'path' => $path
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor List Error', ['error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to list files'], 500);
@@ -108,8 +108,7 @@ class CodeEditorController extends Controller
                 'path' => 'required|string'
             ]);
 
-            $path = $this->sanitizePath($request->input('path'));
-            $fullPath = $this->basePath . $path;
+            [$fullPath, $path] = $this->resolvePath($request->input('path'));
 
             // Check permission
             if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'read')) {
@@ -133,6 +132,8 @@ class CodeEditorController extends Controller
                 ], 400);
             }
 
+            $this->assertExtensionAllowed($fullPath);
+
             $content = File::get($fullPath);
 
             // Log action
@@ -147,6 +148,8 @@ class CodeEditorController extends Controller
                 'extension' => pathinfo($fullPath, PATHINFO_EXTENSION)
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Read Error', ['error' => $e->getMessage(), 'path' => $path ?? null]);
             return response()->json(['error' => 'Failed to read file'], 500);
@@ -165,8 +168,7 @@ class CodeEditorController extends Controller
                 'content' => 'nullable|string'
             ]);
 
-            $path = $this->sanitizePath($request->input('path'));
-            $fullPath = $this->basePath . $path;
+            [$fullPath, $path] = $this->resolvePath($request->input('path'));
             $type = $request->input('type');
 
             // Check permission
@@ -180,14 +182,7 @@ class CodeEditorController extends Controller
 
             // Check extension for files
             if ($type === 'file') {
-                $extension = pathinfo($fullPath, PATHINFO_EXTENSION);
-                if (!in_array($extension, $this->allowedExtensions)) {
-                    return response()->json([
-                        'error' => 'File extension not allowed',
-                        'extension' => $extension,
-                        'allowed' => $this->allowedExtensions
-                    ], 400);
-                }
+                $this->assertExtensionAllowed($fullPath);
             }
 
             // Create
@@ -199,7 +194,7 @@ class CodeEditorController extends Controller
                 if (!File::isDirectory($parentDir)) {
                     File::makeDirectory($parentDir, 0755, true);
                 }
-                File::put($fullPath, $request->input('content', ''));
+                File::put($fullPath, $request->input('content', ''), true);
             }
 
             // Log action
@@ -212,6 +207,8 @@ class CodeEditorController extends Controller
                 'message' => ucfirst($type) . ' created successfully'
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Create Error', ['error' => $e->getMessage(), 'path' => $path ?? null]);
             $this->logAction('create', $path ?? null, false, $e->getMessage());
@@ -230,8 +227,7 @@ class CodeEditorController extends Controller
                 'content' => 'required|string'
             ]);
 
-            $path = $this->sanitizePath($request->input('path'));
-            $fullPath = $this->basePath . $path;
+            [$fullPath, $path] = $this->resolvePath($request->input('path'));
 
             // Check permission
             if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'write')) {
@@ -246,12 +242,14 @@ class CodeEditorController extends Controller
                 return response()->json(['error' => 'Cannot update directory'], 400);
             }
 
+            $this->assertExtensionAllowed($fullPath);
+
             // Backup original (optional - for safety)
             $backup = $fullPath . '.backup.' . time();
             File::copy($fullPath, $backup);
 
             // Write new content
-            File::put($fullPath, $request->input('content'));
+            File::put($fullPath, $request->input('content'), true);
 
             // Remove backup after successful write
             File::delete($backup);
@@ -267,6 +265,8 @@ class CodeEditorController extends Controller
                 'modified' => File::lastModified($fullPath)
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Update Error', ['error' => $e->getMessage(), 'path' => $path ?? null]);
             $this->logAction('update', $path ?? null, false, $e->getMessage());
@@ -290,8 +290,7 @@ class CodeEditorController extends Controller
                 'path' => 'required|string'
             ]);
 
-            $path = $this->sanitizePath($request->input('path'));
-            $fullPath = $this->basePath . $path;
+            [$fullPath, $path] = $this->resolvePath($request->input('path'));
 
             // Check permission
             if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'delete')) {
@@ -321,6 +320,8 @@ class CodeEditorController extends Controller
                 'message' => ucfirst($type) . ' deleted successfully'
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Delete Error', ['error' => $e->getMessage(), 'path' => $path ?? null]);
             $this->logAction('delete', $path ?? null, false, $e->getMessage());
@@ -339,11 +340,8 @@ class CodeEditorController extends Controller
                 'new_path' => 'required|string'
             ]);
 
-            $oldPath = $this->sanitizePath($request->input('old_path'));
-            $newPath = $this->sanitizePath($request->input('new_path'));
-
-            $oldFullPath = $this->basePath . $oldPath;
-            $newFullPath = $this->basePath . $newPath;
+            [$oldFullPath, $oldPath] = $this->resolvePath($request->input('old_path'));
+            [$newFullPath, $newPath] = $this->resolvePath($request->input('new_path'));
 
             // Check permissions
             if (!CodeEditorPermission::canPerform(auth()->id(), $oldPath, 'write')) {
@@ -372,7 +370,7 @@ class CodeEditorController extends Controller
             File::move($oldFullPath, $newFullPath);
 
             // Log action
-            $this->logAction('rename', "$oldPath → $newPath", true);
+            $this->logAction('rename', $oldPath . ' -> ' . $newPath, true);
 
             return response()->json([
                 'success' => true,
@@ -381,9 +379,11 @@ class CodeEditorController extends Controller
                 'message' => 'Renamed successfully'
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Rename Error', ['error' => $e->getMessage()]);
-            $this->logAction('rename', ($oldPath ?? '') . ' → ' . ($newPath ?? ''), false, $e->getMessage());
+            $this->logAction('rename', ($oldPath ?? '') . ' -> ' . ($newPath ?? ''), false, $e->getMessage());
             return response()->json(['error' => 'Failed to rename'], 500);
         }
     }
@@ -402,18 +402,30 @@ class CodeEditorController extends Controller
             ]);
 
             $query = $request->input('query');
-            $path = $this->sanitizePath($request->input('path', '/'));
+            [$fullPath, $path] = $this->resolvePath($request->input('path', '/'), true);
             $caseSensitive = $request->boolean('case_sensitive', false);
             $isRegex = $request->boolean('regex', false);
 
-            $fullPath = $this->basePath . $path;
+            if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'read')) {
+                return response()->json(['error' => 'Permission denied'], 403);
+            }
 
             if (!File::isDirectory($fullPath)) {
                 return response()->json(['error' => 'Invalid search path'], 400);
             }
 
+            $pattern = null;
+            if ($isRegex) {
+                $pattern = '/' . $query . '/' . ($caseSensitive ? '' : 'i');
+                if (@preg_match($pattern, '') === false) {
+                    return response()->json(['error' => 'Invalid regex pattern'], 400);
+                }
+            }
+
             $results = [];
-            $files = File::allFiles($fullPath);
+            $files = [];
+            $count = 0;
+            $this->collectFiles($fullPath, $path, 0, $this->maxSearchDepth, $files, $count);
 
             foreach ($files as $file) {
                 $relativePath = $this->relativePath($file->getRealPath());
@@ -430,23 +442,29 @@ class CodeEditorController extends Controller
 
                 // Skip binary files
                 $extension = $file->getExtension();
-                if (!in_array($extension, $this->allowedExtensions)) {
-                    continue;
+                if (!empty($this->allowedExtensions)) {
+                    if ($extension === '' && $this->allowExtensionless) {
+                        // allow extensionless
+                    } elseif (!in_array($extension, $this->allowedExtensions)) {
+                        continue;
+                    }
                 }
 
                 $content = File::get($file->getRealPath());
                 $lines = explode("\n", $content);
 
+                $fileMatchCount = 0;
+
                 foreach ($lines as $lineNum => $lineContent) {
                     $matched = false;
 
                     if ($isRegex) {
-                        $matched = @preg_match("/$query/", $lineContent);
+                        $matched = preg_match($pattern, $lineContent) === 1;
                     } else {
                         if ($caseSensitive) {
                             $matched = str_contains($lineContent, $query);
                         } else {
-                            $matched = str_contains(strtolower($lineContent), strtolower($query));
+                            $matched = stripos($lineContent, $query) !== false;
                         }
                     }
 
@@ -455,18 +473,18 @@ class CodeEditorController extends Controller
                             'file' => $relativePath,
                             'line' => $lineNum + 1,
                             'content' => trim($lineContent),
-                            'match' => $query
+                            'match' => $query,
                         ];
+                        $fileMatchCount++;
 
-                        // Limit results per file
-                        if (count(array_filter($results, fn($r) => $r['file'] === $relativePath)) >= 10) {
+                        if ($fileMatchCount >= $this->maxSearchResultsPerFile) {
                             break;
                         }
                     }
                 }
 
                 // Limit total results
-                if (count($results) >= 100) {
+                if (count($results) >= $this->maxSearchResults) {
                     break;
                 }
             }
@@ -477,6 +495,8 @@ class CodeEditorController extends Controller
                 'query' => $query
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Search Error', ['error' => $e->getMessage()]);
             return response()->json(['error' => 'Search failed'], 500);
@@ -489,16 +509,24 @@ class CodeEditorController extends Controller
     public function tree(Request $request)
     {
         try {
-            $path = $this->sanitizePath($request->input('path', '/'));
-            $maxDepth = $request->input('depth', 3);
+            [$fullPath, $path] = $this->resolvePath($request->input('path', '/'), true);
+            $maxDepth = (int) $request->input('depth', $this->maxTreeDepth);
+            $maxDepth = max(1, min($maxDepth, $this->maxTreeDepth));
 
-            $tree = $this->buildTree($path, 0, $maxDepth);
+            if (!CodeEditorPermission::canPerform(auth()->id(), $path, 'read')) {
+                return response()->json(['error' => 'Permission denied'], 403);
+            }
+
+            $count = 0;
+            $tree = $this->buildTree($fullPath, $path, 0, $maxDepth, $count);
 
             return response()->json([
                 'tree' => $tree,
                 'path' => $path
             ]);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('Code Editor Tree Error', ['error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to build tree'], 500);
@@ -508,13 +536,11 @@ class CodeEditorController extends Controller
     /**
      * Build file tree recursively
      */
-    protected function buildTree($path, $currentDepth, $maxDepth)
+    protected function buildTree(string $fullPath, string $relativePath, int $currentDepth, int $maxDepth, int &$count): array
     {
-        if ($currentDepth >= $maxDepth) {
+        if ($currentDepth >= $maxDepth || $count >= $this->maxScanItems) {
             return [];
         }
-
-        $fullPath = $this->basePath . $path;
         $items = [];
 
         if (!File::isDirectory($fullPath)) {
@@ -523,60 +549,297 @@ class CodeEditorController extends Controller
 
         // Directories first
         foreach (File::directories($fullPath) as $dir) {
-            $relativePath = $this->relativePath($dir);
-            $name = basename($dir);
+            if ($count >= $this->maxScanItems) {
+                return $items;
+            }
 
-            // Skip common excluded directories
-            if (in_array($name, ['node_modules', 'vendor', '.git', 'storage', 'bootstrap/cache'])) {
+            if (is_link($dir)) {
                 continue;
             }
 
+            $name = basename($dir);
+            $childRelative = $this->joinRelativePath($relativePath, $name);
+            if ($this->isExcludedPath($childRelative)) {
+                continue;
+            }
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative . '/*', 'read')) {
+                continue;
+            }
+
+            $count++;
+
             $items[] = [
                 'name' => $name,
-                'path' => $relativePath,
+                'path' => $childRelative,
                 'type' => 'directory',
-                'children' => $this->buildTree($relativePath, $currentDepth + 1, $maxDepth)
+                'children' => $this->buildTree($dir, $childRelative, $currentDepth + 1, $maxDepth, $count)
             ];
         }
 
         // Then files
         foreach (File::files($fullPath) as $file) {
-            $relativePath = $this->relativePath($file->getRealPath());
+            if ($count >= $this->maxScanItems) {
+                return $items;
+            }
+
+            if (is_link($file->getRealPath())) {
+                continue;
+            }
+
+            $childRelative = $this->joinRelativePath($relativePath, $file->getFilename());
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative, 'read')) {
+                continue;
+            }
 
             $items[] = [
                 'name' => $file->getFilename(),
-                'path' => $relativePath,
+                'path' => $childRelative,
                 'type' => 'file',
                 'size' => $file->getSize(),
                 'extension' => $file->getExtension()
             ];
+            $count++;
         }
 
         return $items;
     }
 
-    /**
-     * Sanitize and validate path
-     */
-    protected function sanitizePath($path)
+    protected function scanDirectory(string $fullPath, string $relativePath, int $depth, int $maxDepth, array &$items, int &$count): void
     {
-        // Remove any ../ attempts
-        $path = str_replace('..', '', $path);
+        if ($depth > $maxDepth || $count >= $this->maxScanItems) {
+            return;
+        }
 
-        // Remove multiple slashes
+        if (!File::isDirectory($fullPath)) {
+            return;
+        }
+
+        foreach (File::directories($fullPath) as $dir) {
+            if ($count >= $this->maxScanItems) {
+                return;
+            }
+
+            if (is_link($dir)) {
+                continue;
+            }
+
+            $name = basename($dir);
+            $childRelative = $this->joinRelativePath($relativePath, $name);
+            if ($this->isExcludedPath($childRelative)) {
+                continue;
+            }
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative . '/*', 'read')) {
+                continue;
+            }
+
+            $items[] = [
+                'name' => $name,
+                'path' => $childRelative,
+                'type' => 'directory',
+                'size' => 0,
+                'modified' => filemtime($dir),
+                'extension' => '',
+                'readable' => CodeEditorPermission::canPerform(auth()->id(), $childRelative . '/*', 'read'),
+                'writable' => CodeEditorPermission::canPerform(auth()->id(), $childRelative . '/*', 'write'),
+            ];
+            $count++;
+
+            $this->scanDirectory($dir, $childRelative, $depth + 1, $maxDepth, $items, $count);
+        }
+
+        foreach (File::files($fullPath) as $file) {
+            if ($count >= $this->maxScanItems) {
+                return;
+            }
+
+            if (is_link($file->getRealPath())) {
+                continue;
+            }
+
+            $childRelative = $this->joinRelativePath($relativePath, $file->getFilename());
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative, 'read')) {
+                continue;
+            }
+
+            $items[] = [
+                'name' => $file->getFilename(),
+                'path' => $childRelative,
+                'type' => 'file',
+                'size' => $file->getSize(),
+                'modified' => $file->getMTime(),
+                'extension' => $file->getExtension(),
+                'readable' => CodeEditorPermission::canPerform(auth()->id(), $childRelative, 'read'),
+                'writable' => CodeEditorPermission::canPerform(auth()->id(), $childRelative, 'write'),
+            ];
+            $count++;
+        }
+    }
+
+    protected function collectFiles(string $fullPath, string $relativePath, int $depth, int $maxDepth, array &$files, int &$count): void
+    {
+        if ($depth > $maxDepth || $count >= $this->maxScanItems) {
+            return;
+        }
+
+        if (!File::isDirectory($fullPath)) {
+            return;
+        }
+
+        foreach (File::directories($fullPath) as $dir) {
+            if ($count >= $this->maxScanItems) {
+                return;
+            }
+
+            if (is_link($dir)) {
+                continue;
+            }
+
+            $name = basename($dir);
+            $childRelative = $this->joinRelativePath($relativePath, $name);
+            if ($this->isExcludedPath($childRelative)) {
+                continue;
+            }
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative . '/*', 'read')) {
+                continue;
+            }
+
+            $this->collectFiles($dir, $childRelative, $depth + 1, $maxDepth, $files, $count);
+        }
+
+        foreach (File::files($fullPath) as $file) {
+            if ($count >= $this->maxScanItems) {
+                return;
+            }
+
+            if (is_link($file->getRealPath())) {
+                continue;
+            }
+
+            $childRelative = $this->joinRelativePath($relativePath, $file->getFilename());
+            if (!CodeEditorPermission::canPerform(auth()->id(), $childRelative, 'read')) {
+                continue;
+            }
+
+            $files[] = $file;
+            $count++;
+        }
+    }
+
+    protected function resolvePath(?string $path, bool $allowRoot = false): array
+    {
+        $raw = str_replace('\\', '/', (string) $path);
+
+        if ($allowRoot && ($raw === '' || $raw === '/')) {
+            return [$this->basePath, '/'];
+        }
+
+        if ($raw === '' || str_contains($raw, "\0")) {
+            throw ValidationException::withMessages(['path' => 'Invalid path']);
+        }
+
+        if (preg_match('#^[A-Za-z]:#', $raw) || str_starts_with($raw, '//')) {
+            throw ValidationException::withMessages(['path' => 'Invalid path']);
+        }
+
+        $relative = rtrim(ltrim($raw, '/'), '/');
+        if ($relative === '' || preg_match('#(^|/)\.\.(?:/|$)#', $relative)) {
+            throw ValidationException::withMessages(['path' => 'Invalid path']);
+        }
+
+        $full = $this->normalizePath($this->basePath . '/' . $relative);
+        $this->assertWithinBase($full);
+
+        return [$full, '/' . $relative];
+    }
+
+    protected function assertWithinBase(string $fullPath): void
+    {
+        $baseReal = realpath($this->basePath) ?: $this->basePath;
+        $baseNorm = $this->normalizeForCompare($baseReal);
+
+        if (file_exists($fullPath)) {
+            $fullReal = realpath($fullPath) ?: $fullPath;
+            $fullNorm = $this->normalizeForCompare($fullReal);
+        } else {
+            $parent = dirname($fullPath);
+            while ($parent !== '.' && $parent !== DIRECTORY_SEPARATOR && !file_exists($parent)) {
+                $next = dirname($parent);
+                if ($next === $parent) {
+                    break;
+                }
+                $parent = $next;
+            }
+            $parentReal = realpath($parent);
+            if ($parentReal === false) {
+                throw ValidationException::withMessages(['path' => 'Invalid path']);
+            }
+            $fullNorm = $this->normalizeForCompare($parentReal);
+        }
+
+        $baseNorm = rtrim($baseNorm, '/') . '/';
+        $fullNorm = rtrim($fullNorm, '/') . '/';
+
+        if (!str_starts_with($fullNorm, $baseNorm)) {
+            throw ValidationException::withMessages(['path' => 'Invalid path']);
+        }
+    }
+
+    protected function normalizePath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
         $path = preg_replace('#/+#', '/', $path);
+        return rtrim($path, '/');
+    }
 
-        // Ensure leading slash
-        if (!str_starts_with($path, '/')) {
-            $path = '/' . $path;
+    protected function normalizeForCompare(string $path): string
+    {
+        $path = $this->normalizePath($path);
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $path = strtolower($path);
         }
-
-        // Remove trailing slash (except for root)
-        if ($path !== '/' && str_ends_with($path, '/')) {
-            $path = rtrim($path, '/');
-        }
-
         return $path;
+    }
+
+    protected function joinRelativePath(string $base, string $child): string
+    {
+        $base = rtrim($base, '/');
+        if ($base === '' || $base === '/') {
+            return '/' . ltrim($child, '/');
+        }
+        return $base . '/' . ltrim($child, '/');
+    }
+
+    protected function isExcludedPath(string $relativePath): bool
+    {
+        $relativePath = trim(str_replace('\\', '/', $relativePath), '/');
+
+        foreach ($this->excludedDirectories as $excluded) {
+            $excluded = trim(str_replace('\\', '/', $excluded), '/');
+            if ($excluded === '') {
+                continue;
+            }
+
+            if ($relativePath === $excluded || str_starts_with($relativePath, $excluded . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function assertExtensionAllowed(string $path): void
+    {
+        if (empty($this->allowedExtensions)) {
+            return;
+        }
+
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if ($ext === '' && $this->allowExtensionless) {
+            return;
+        }
+        if ($ext === '' || !in_array($ext, $this->allowedExtensions, true)) {
+            throw ValidationException::withMessages(['path' => 'File extension not allowed']);
+        }
     }
 
     /**
@@ -584,8 +847,21 @@ class CodeEditorController extends Controller
      */
     protected function relativePath($fullPath)
     {
-        $path = str_replace($this->basePath, '', $fullPath);
-        return str_replace('\\', '/', $path);
+        $fullPath = $this->normalizePath((string) $fullPath);
+        $base = $this->normalizePath($this->basePath);
+
+        if (str_starts_with($fullPath, $base)) {
+            $relative = substr($fullPath, strlen($base));
+        } else {
+            $relative = $fullPath;
+        }
+
+        $relative = str_replace('\\', '/', $relative);
+        if ($relative === '') {
+            return '/';
+        }
+
+        return str_starts_with($relative, '/') ? $relative : '/' . $relative;
     }
 
     /**

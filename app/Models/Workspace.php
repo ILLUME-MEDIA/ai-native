@@ -63,6 +63,11 @@ class Workspace extends Model
         return $this->hasMany(AICommandApproval::class);
     }
 
+    public function aiConversations(): HasMany
+    {
+        return $this->hasMany(AIConversation::class);
+    }
+
     public function getFullPathAttribute(): string
     {
         return base_path($this->path);

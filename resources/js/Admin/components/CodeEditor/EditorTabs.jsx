@@ -1,7 +1,18 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Eye, Terminal as TerminalIcon } from 'lucide-react';
 
-export default function EditorTabs({ tabs, activeTab, onTabSelect, onTabClose }) {
+export default function EditorTabs({
+    tabs,
+    activeTab,
+    onTabSelect,
+    onTabClose,
+    showPreviewTab = true,
+    activeCenterView = 'code', // 'code' | 'preview'
+    onPreviewSelect,
+    showTerminalButton = true,
+    terminalOpen = false,
+    onToggleTerminal,
+}) {
     return (
         <div className="editor-tabs">
             {tabs.map((tab, index) => (
@@ -29,6 +40,32 @@ export default function EditorTabs({ tabs, activeTab, onTabSelect, onTabClose })
                     </button>
                 </div>
             ))}
+
+            {showPreviewTab && (
+                <div
+                    className={`editor-tab ${activeCenterView === 'preview' ? 'active' : ''}`}
+                    onClick={() => onPreviewSelect?.()}
+                    title="Preview"
+                >
+                    <span className="tab-icon">
+                        <Eye size={14} />
+                    </span>
+                    <span className="tab-name">Preview</span>
+                </div>
+            )}
+
+            <div className="editor-tabs-actions">
+                {showTerminalButton && (
+                    <button
+                        type="button"
+                        className={`editor-tab-action ${terminalOpen ? 'active' : ''}`}
+                        onClick={() => onToggleTerminal?.()}
+                        title={terminalOpen ? 'Hide Terminal' : 'Show Terminal'}
+                    >
+                        <TerminalIcon size={14} />
+                    </button>
+                )}
+            </div>
         </div>
     );
 }

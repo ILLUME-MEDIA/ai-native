@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AICommandApproval extends Model
 {
+    protected $table = 'ai_command_approvals'; // Override default table name
+
     protected $fillable = [
         'workspace_id',
         'user_id',
