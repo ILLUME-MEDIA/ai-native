@@ -18,6 +18,7 @@ class YoutubeVideo extends Model
         'channel_id',
         'thumbnail_url',
         'thumbnail_animated_url',
+        'manual_image_url',
         'video_url',
         'duration',
         'view_count',
@@ -27,7 +28,7 @@ class YoutubeVideo extends Model
         'tags',
         'genres',
         'tags_generated_at',
-        'metadata'
+        'metadata',
     ];
 
     protected $casts = [

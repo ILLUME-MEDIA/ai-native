@@ -10,6 +10,7 @@ use App\Models\YoutubeVideo;
 use App\Models\YoutubePlatformPush;
 use App\Services\AI\YouTubeScraperService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class AiScraperController extends Controller
 {
@@ -21,7 +22,7 @@ class AiScraperController extends Controller
     {
         return response()->json(
             YoutubePlaylist::query()
-                ->select(['id', 'playlist_id', 'playlist_url', 'title', 'last_fetched_at', 'created_at'])
+                ->select(['id', 'playlist_id', 'playlist_url', 'title', 'manual_image_url', 'last_fetched_at', 'created_at'])
                 ->withCount('videos')
                 ->latest()
                 ->limit(100)
@@ -487,6 +488,209 @@ IMPORTANT:
         }
     }
 
+    /**
+     * Batch generate tags and genres for all videos in a playlist using Mistral AI.
+     * Uses the enhanced 3-tag structure and contextual genre generation.
+     */
+    public function batchGenerateMetadata(Request $request, YoutubePlaylist $playlist)
+    {
+        set_time_limit(600); // Allow up to 10 minutes for large playlists
+
+        $request->validate([
+            'video_ids' => 'nullable|array',
+            'video_ids.*' => 'string',
+            'force' => 'nullable|boolean', // Force regeneration even if already exists
+        ]);
+
+        try {
+            $query = YoutubeVideo::where('playlist_id', $playlist->playlist_id);
+
+            // Filter by specific video IDs if provided
+            if ($request->filled('video_ids')) {
+                $query->whereIn('video_id', $request->video_ids);
+            }
+
+            // Only generate for videos without tags/genres unless forced
+            if (!$request->boolean('force')) {
+                $query->where(function($q) {
+                    $q->whereNull('tags_generated_at')
+                      ->orWhereJsonLength('tags', 0)
+                      ->orWhereJsonLength('genres', 0);
+                });
+            }
+
+            $videos = $query->get();
+
+            if ($videos->isEmpty()) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'No videos need metadata generation',
+                    'generated' => 0,
+                    'total' => 0,
+                ]);
+            }
+
+            $generated = 0;
+            $failed = 0;
+            $errors = [];
+
+            foreach ($videos as $video) {
+                try {
+                    // Generate structured 3-tag system: ContentType | Focus | Summary
+                    $tags = $this->scraperService->generateTagsOnly(
+                        $video->title,
+                        $video->description ?? ''
+                    );
+
+                    // Generate 3-5 contextual genres
+                    $genres = $this->scraperService->generateGenresOnly(
+                        $video->title,
+                        $video->description ?? '',
+                        $video->channel_name ?? ''
+                    );
+
+                    // Merge with existing if not forcing
+                    if (!$request->boolean('force')) {
+                        $existingTags = $video->tags ?? [];
+                        $existingGenres = $video->genres ?? [];
+                        $tags = array_values(array_unique(array_merge($existingTags, $tags)));
+                        $genres = array_values(array_unique(array_merge($existingGenres, $genres)));
+                    }
+
+                    // Update video with AI-generated metadata
+                    $video->update([
+                        'tags' => $tags,
+                        'genres' => $genres,
+                        'tags_generated_at' => now(),
+                    ]);
+
+                    $generated++;
+                } catch (\Exception $e) {
+                    $failed++;
+                    $errors[] = [
+                        'video_id' => $video->video_id,
+                        'title' => $video->title,
+                        'error' => $e->getMessage(),
+                    ];
+                    \Log::warning("Failed to generate metadata for video {$video->video_id}: " . $e->getMessage());
+                }
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Generated tags and genres for {$generated}/{$videos->count()} videos",
+                'generated' => $generated,
+                'failed' => $failed,
+                'total' => $videos->count(),
+                'errors' => $errors,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Set a manual image URL or upload file for a playlist (overrides scraper image on both platforms).
+     */
+    public function uploadPlaylistImage(Request $request, YoutubePlaylist $playlist)
+    {
+        $imageUrl = null;
+
+        // Mode 1: File upload
+        if ($request->hasFile('image')) {
+            $request->validate([
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB max
+            ]);
+
+            $file = $request->file('image');
+            $filename = 'playlist_' . $playlist->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('public/scraper_images', $filename);
+            $imageUrl = \Storage::url($path);
+        }
+        // Mode 2: URL input
+        elseif ($request->filled('image_url')) {
+            $request->validate([
+                'image_url' => 'required|url',
+            ]);
+            $imageUrl = $request->image_url;
+        } else {
+            return response()->json(['error' => 'Provide either image file or image_url'], 422);
+        }
+
+        $playlist->update(['manual_image_url' => $imageUrl]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Manual image set for playlist. This will override the scraper image on next push to streaming and watchlist.',
+            'image_url' => $imageUrl,
+        ]);
+    }
+
+    /**
+     * Remove manual image override for a playlist (reverts to scraper image).
+     */
+    public function removePlaylistImage(YoutubePlaylist $playlist)
+    {
+        $playlist->update(['manual_image_url' => null]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Manual image removed. Scraper image will be used on next push.',
+        ]);
+    }
+
+    /**
+     * Set a manual image URL or upload file for a specific video (overrides scraper image on both platforms).
+     */
+    public function uploadVideoImage(Request $request, string $videoId)
+    {
+        $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+        $imageUrl = null;
+
+        // Mode 1: File upload
+        if ($request->hasFile('image')) {
+            $request->validate([
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB max
+            ]);
+
+            $file = $request->file('image');
+            $filename = 'video_' . $videoId . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('public/scraper_images', $filename);
+            $imageUrl = \Storage::url($path);
+        }
+        // Mode 2: URL input
+        elseif ($request->filled('image_url')) {
+            $request->validate([
+                'image_url' => 'required|url',
+            ]);
+            $imageUrl = $request->image_url;
+        } else {
+            return response()->json(['error' => 'Provide either image file or image_url'], 422);
+        }
+
+        $video->update(['manual_image_url' => $imageUrl]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Manual image set for video. This will override the scraper image on next push to streaming and watchlist.',
+            'image_url' => $imageUrl,
+        ]);
+    }
+
+    /**
+     * Remove manual image override for a specific video (reverts to scraper image).
+     */
+    public function removeVideoImage(string $videoId)
+    {
+        $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+        $video->update(['manual_image_url' => null]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Manual image removed. Scraper image will be used on next push.',
+        ]);
+    }
+
     public function videos(Request $request)
     {
         // Allow custom page size up to 1000 rows for power users
@@ -507,7 +711,8 @@ IMPORTANT:
                 'youtube_videos.id', 'youtube_videos.video_id', 'youtube_videos.playlist_id',
                 'youtube_videos.title', 'youtube_videos.description', 'youtube_videos.channel_name',
                 'youtube_videos.duration', 'youtube_videos.published_at', 'youtube_videos.thumbnail_url',
-                'youtube_videos.thumbnail_animated_url', 'youtube_videos.tags', 'youtube_videos.genres',
+                'youtube_videos.thumbnail_animated_url', 'youtube_videos.manual_image_url',
+                'youtube_videos.tags', 'youtube_videos.genres',
                 'youtube_videos.view_count', 'youtube_videos.like_count', 'youtube_videos.comment_count',
                 'youtube_videos.metadata', 'youtube_videos.created_at',
             ]);

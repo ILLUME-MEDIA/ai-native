@@ -73,7 +73,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'destroy']);
         Route::get('scrapers/videos/list', [\App\Http\Controllers\AI\AiScraperController::class, 'videos']);
         Route::post('scrapers/{playlist}/bulk-update', [\App\Http\Controllers\AI\AiScraperController::class, 'bulkUpdate']);
+        Route::post('scrapers/{playlist}/batch-generate-metadata', [\App\Http\Controllers\AI\AiScraperController::class, 'batchGenerateMetadata']);
         Route::post('scrapers/videos/{videoId}/generate-metadata', [\App\Http\Controllers\AI\AiScraperController::class, 'generateMetadataForVideo']);
+
+        // Manual image overrides (apply to both streaming and watchlist pushes)
+        Route::post('scrapers/{playlist}/image', [\App\Http\Controllers\AI\AiScraperController::class, 'uploadPlaylistImage']);
+        Route::delete('scrapers/{playlist}/image', [\App\Http\Controllers\AI\AiScraperController::class, 'removePlaylistImage']);
+        Route::post('scrapers/videos/{videoId}/image', [\App\Http\Controllers\AI\AiScraperController::class, 'uploadVideoImage']);
+        Route::delete('scrapers/videos/{videoId}/image', [\App\Http\Controllers\AI\AiScraperController::class, 'removeVideoImage']);
 
         Route::apiResource('skills', \App\Http\Controllers\AI\AiSkillController::class);
         Route::apiResource('rules', \App\Http\Controllers\AI\AiRuleController::class);

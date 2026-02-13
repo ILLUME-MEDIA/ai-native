@@ -99,6 +99,187 @@ class WatchlistSyncHelper
     }
 
     /**
+     * Create or find a Person on the watchlist platform.
+     * Mirrors the streaming Artist lookup flow: by-name → search → create.
+     */
+    public function createOrGetPerson(array $payload): ?int
+    {
+        $name = $payload['name'] ?? '';
+        if (empty($name)) {
+            return null;
+        }
+
+        try {
+            // Strategy 1: Lookup by exact name
+            Log::info("Watchlist Person Strategy 1: by-name lookup", ['name' => $name]);
+            $response = $this->makeRequest('GET', 'people/by-name/' . rawurlencode($name));
+            if ($response->successful()) {
+                $personId = $response->json('person.id')
+                    ?? $response->json('data.person.id')
+                    ?? $response->json('data.id')
+                    ?? $response->json('id');
+                if ($personId) {
+                    Log::info("Found existing person by name", ['person_id' => $personId, 'name' => $name]);
+                    $this->updatePersonIfNeeded((int) $personId, $payload);
+                    return (int) $personId;
+                }
+            }
+
+            // Strategy 2: Browse/search people list
+            Log::info("Watchlist Person Strategy 2: search people list", ['name' => $name]);
+            $searchResponse = $this->makeRequest('GET', 'people', ['query' => $name, 'perPage' => 10]);
+            if ($searchResponse->successful()) {
+                foreach ($searchResponse->json('pagination.data', []) as $person) {
+                    if (strtolower(trim($person['name'] ?? '')) === strtolower(trim($name))) {
+                        $personId = $person['id'] ?? null;
+                        if ($personId) {
+                            Log::info("Found existing person via search", ['person_id' => $personId, 'name' => $name]);
+                            $this->updatePersonIfNeeded((int) $personId, $payload);
+                            return (int) $personId;
+                        }
+                    }
+                }
+            }
+
+            // Strategy 3: Create person
+            Log::info("Creating new person on watchlist", ['name' => $name]);
+            $createPayload = array_filter([
+                'name'        => $name,
+                'description' => $payload['description'] ?? "YouTube content creator: {$name}",
+                'poster'      => $payload['poster'] ?? null,
+                'known_for'   => $payload['known_for'] ?? 'creating',
+            ], fn ($v) => $v !== null);
+
+            $createResponse = $this->makeRequest('POST', 'people', $createPayload);
+
+            if ($createResponse->successful()) {
+                $personId = $createResponse->json('person.id')
+                    ?? $createResponse->json('data.person.id')
+                    ?? $createResponse->json('data.id')
+                    ?? $createResponse->json('id');
+                if ($personId) {
+                    Log::info("Successfully created person", ['person_id' => $personId, 'name' => $name]);
+                    return (int) $personId;
+                }
+            }
+
+            // Strategy 4: Minimal fallback on server error
+            if ($createResponse->status() === 500) {
+                Log::warning("Full person payload failed with 500. Retrying with minimal fields.");
+                $minimalResponse = $this->makeRequest('POST', 'people', ['name' => $name]);
+                if ($minimalResponse->successful()) {
+                    $personId = $minimalResponse->json('person.id')
+                        ?? $minimalResponse->json('data.id')
+                        ?? $minimalResponse->json('id');
+                    if ($personId) {
+                        Log::info("Created person with minimal payload", ['person_id' => $personId]);
+                        return (int) $personId;
+                    }
+                }
+            }
+
+            Log::error("Failed to create person on watchlist", [
+                'name'     => $name,
+                'status'   => $createResponse->status(),
+                'response' => substr((string) $createResponse->body(), 0, 500),
+            ]);
+            return null;
+        } catch (\Throwable $e) {
+            Log::error("WatchlistSyncHelper Error (createOrGetPerson): " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Update a person's poster/description if missing on the remote platform.
+     */
+    private function updatePersonIfNeeded(int $personId, array $payload): void
+    {
+        try {
+            $update = [];
+            if (!empty($payload['poster'])) {
+                $update['poster'] = $payload['poster'];
+            }
+            if (!empty($payload['description'])) {
+                $update['description'] = $payload['description'];
+            }
+
+            if (!empty($update)) {
+                $response = $this->makeRequest('PUT', "people/{$personId}", $update);
+                if ($response->successful()) {
+                    Log::info("Updated existing person with missing data", [
+                        'person_id'      => $personId,
+                        'updated_fields' => array_keys($update),
+                    ]);
+                } else {
+                    Log::warning("Failed to update person", [
+                        'person_id' => $personId,
+                        'status'    => $response->status(),
+                        'response'  => substr((string) $response->body(), 0, 500),
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error updating person: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Attempt to attach a person as a credit (creator) to a title.
+     * Not all watchlist APIs support this — fails gracefully.
+     */
+    public function attachPersonToTitle(int $titleId, int $personId): bool
+    {
+        try {
+            // Try the credits/cast attachment via title update
+            $response = $this->makeRequest('POST', "titles/{$titleId}/credits", [
+                'person_id'  => $personId,
+                'department' => 'creators',
+                'job'        => 'creator',
+            ]);
+
+            if ($response->successful()) {
+                Log::info("Attached person to title as creator", [
+                    'title_id'  => $titleId,
+                    'person_id' => $personId,
+                ]);
+                return true;
+            }
+
+            // Fallback: try via title PUT with credits array
+            $putResponse = $this->makeRequest('PUT', "titles/{$titleId}", [
+                'credits' => [
+                    [
+                        'person_id'  => $personId,
+                        'pivot' => [
+                            'department' => 'creators',
+                            'job'        => 'creator',
+                        ],
+                    ],
+                ],
+            ]);
+
+            if ($putResponse->successful()) {
+                Log::info("Attached person to title via PUT", [
+                    'title_id'  => $titleId,
+                    'person_id' => $personId,
+                ]);
+                return true;
+            }
+
+            Log::warning("Could not attach person to title (API may not support credits)", [
+                'title_id'  => $titleId,
+                'person_id' => $personId,
+                'status'    => $response->status(),
+            ]);
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning("Error attaching person to title: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Update title with missing data if needed.
      */
     private function updateTitleIfNeeded(int $titleId, array $payload): void
@@ -205,6 +386,32 @@ class WatchlistSyncHelper
         } catch (\Throwable $e) {
             Log::error("WatchlistSyncHelper Error (createOrGetTitle): " . $e->getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Attempt to attach genres/tags to a title via PUT.
+     * Fails gracefully — not all watchlist APIs accept these fields.
+     */
+    public function updateTitleTags(int $titleId, array $payload): void
+    {
+        try {
+            $response = $this->makeRequest('PUT', "titles/{$titleId}", $payload);
+            if ($response->successful()) {
+                Log::info("Updated title with genres/tags", [
+                    'title_id' => $titleId,
+                    'genres'   => count($payload['genres'] ?? []),
+                    'tags'     => count($payload['tags'] ?? []),
+                ]);
+            } else {
+                Log::warning("Failed to update title with genres/tags (non-fatal)", [
+                    'title_id' => $titleId,
+                    'status'   => $response->status(),
+                    'response' => substr((string) $response->body(), 0, 300),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error updating title tags: " . $e->getMessage());
         }
     }
 

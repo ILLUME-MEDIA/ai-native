@@ -13,13 +13,15 @@ class YoutubePlatformPush extends Model
         'video_id',
         'playlist_id',
         'platform_name',
+        'push_type',
         'platform_album_id',
         'platform_track_id',
+        'platform_person_id',
         'status',
         'error_message',
         'push_data',
         'response_data',
-        'pushed_at'
+        'pushed_at',
     ];
 
     protected $casts = [

@@ -14,16 +14,19 @@ class YoutubePlaylist extends Model
         'playlist_url',
         'title',
         'description',
+        'manual_image_url',
         'video_count',
         'last_fetched_at',
         'last_synced_at',
-        'metadata'
+        'metadata',
+        'watchlist_person_ids',
     ];
 
     protected $casts = [
         'last_fetched_at' => 'datetime',
         'last_synced_at' => 'datetime',
-        'metadata' => 'array'
+        'metadata' => 'array',
+        'watchlist_person_ids' => 'array',
     ];
 
     public function videos()

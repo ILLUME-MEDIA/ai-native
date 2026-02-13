@@ -424,6 +424,42 @@ class YouTubeScraperService
                     $update['metadata'] = $meta;
 
                     $dbVideo->update($update);
+
+                    // ✨ AUTO-GENERATE TAGS & GENRES using Mistral service
+                    // Only generate if not already generated or if tags/genres are empty
+                    if (empty($dbVideo->tags_generated_at) || empty($dbVideo->tags) || empty($dbVideo->genres)) {
+                        try {
+                            $title = $dbVideo->title;
+                            $description = $update['description'] ?? $dbVideo->description ?? '';
+                            $channelName = $update['channel_name'] ?? $dbVideo->channel_name ?? '';
+
+                            // Generate structured 3-tag system
+                            $generatedTags = $this->generateTagsOnly($title, $description);
+
+                            // Generate 3-5 contextual genres
+                            $generatedGenres = $this->generateGenresOnly($title, $description, $channelName);
+
+                            // Merge with existing tags/genres
+                            $existingTags = $dbVideo->tags ?? [];
+                            $existingGenres = $dbVideo->genres ?? [];
+
+                            $finalTags = array_values(array_unique(array_merge($existingTags, $generatedTags)));
+                            $finalGenres = array_values(array_unique(array_merge($existingGenres, $generatedGenres)));
+
+                            // Update video with AI-generated metadata
+                            $dbVideo->update([
+                                'tags' => $finalTags,
+                                'genres' => $finalGenres,
+                                'tags_generated_at' => now(),
+                            ]);
+
+                            Log::info("Auto-generated tags/genres for video: {$vid}");
+                        } catch (\Exception $tagError) {
+                            Log::warning("Failed to auto-generate tags/genres for {$vid}: " . $tagError->getMessage());
+                            // Continue enrichment even if tag/genre generation fails
+                        }
+                    }
+
                     $enriched++;
                 }
             } catch (\Exception $e) {
@@ -669,8 +705,8 @@ class YouTubeScraperService
             if (!$artistId) {
                 $artistPayload = ['name' => $artistName];
                 $firstVideo = $playlist->videos[0];
-                $img = $firstVideo->thumbnail_url ?? null;
-                if ($img && filter_var($img, FILTER_VALIDATE_URL)) {
+                $img = $this->resolveImage(null, $firstVideo->thumbnail_url, $firstVideo->video_id);
+                if ($img) {
                     $artistPayload['image_small'] = $img;
                 }
                 $artistResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'artists', $artistPayload);
@@ -703,11 +739,12 @@ class YouTubeScraperService
             // Step 2: Album setup
             $singleAlbumId = null;
             if ($albumMode === 'single') {
-                // One shared album for the whole playlist
-                $albumImage = $playlist->videos[0]->thumbnail_url ?? null;
-                if (!$albumImage) {
-                    $albumImage = 'https://i.ytimg.com/vi/' . ($playlist->videos[0]->video_id ?? '') . '/hqdefault.jpg';
-                }
+                // One shared album for the whole playlist — manual image overrides scraper
+                $albumImage = $this->resolveImage(
+                    $playlist->manual_image_url,
+                    $playlist->videos[0]->thumbnail_url,
+                    $playlist->videos[0]->video_id ?? null
+                );
                 $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
                 $albumPayload = [
                     'name' => $playlist->title,
@@ -762,10 +799,11 @@ class YouTubeScraperService
                 if ($durationMs < 1000) {
                     $durationMs = 60000;
                 }
-                $trackImage = $video->thumbnail_url ?? null;
-                if (!$trackImage) {
-                    $trackImage = 'https://i.ytimg.com/vi/' . $video->video_id . '/hqdefault.jpg';
-                }
+                $trackImage = $this->resolveImage(
+                    $video->manual_image_url,
+                    $video->thumbnail_url,
+                    $video->video_id
+                );
                 $trackPayload = [
                     'name' => $video->title ?? 'YouTube Video',
                     'release_date' => date('Y-m-d'),
@@ -837,6 +875,7 @@ class YouTubeScraperService
                             'platform_name' => $platform->name,
                         ],
                         [
+                            'push_type' => 'streaming',
                             'status' => 'success',
                             'pushed_at' => now(),
                             'platform_album_id' => $albumIdForTrack,
@@ -884,63 +923,147 @@ class YouTubeScraperService
                 'token'   => $platform->api_token,
             ]);
 
-            // 1. Create or Get Title
+            $firstVideo = $playlist->videos->first();
+
+            // === STEP 0: Resolve title image (manual override → scraper auto) ===
+            $titleImage = $this->resolveImage(
+                $playlist->manual_image_url,
+                $firstVideo->thumbnail_url ?? null,
+                $firstVideo->video_id ?? null
+            );
+
+            // === STEP 1: Create/Get Person (channel_name → People entity) ===
+            $channelName = trim($firstVideo->channel_name ?? '');
+            $personId = null;
+
+            if (!empty($channelName)) {
+                $personPayload = [
+                    'name'        => $channelName,
+                    'description' => "YouTube content creator: {$channelName}",
+                    'poster'      => $titleImage,
+                    'known_for'   => 'creating',
+                ];
+                $personId = $helper->createOrGetPerson($personPayload);
+                Log::info("Watchlist person resolved", [
+                    'channel'   => $channelName,
+                    'person_id' => $personId,
+                ]);
+            }
+
+            // === STEP 2: Collect deduplicated genres/tags from all videos ===
+            $allGenres = [];
+            $allTags = [];
+            foreach ($playlist->videos as $video) {
+                $allGenres = array_merge($allGenres, $video->genres ?? []);
+                $allTags = array_merge($allTags, $video->tags ?? []);
+            }
+            $allGenres = array_values(array_unique($allGenres));
+            $allTags = array_values(array_unique(array_slice($allTags, 0, 20)));
+
+            // === STEP 3: Create/Get Title ===
             $titlePayload = [
-                'name' => $playlist->title,
-                'is_series' => true,
+                'name'        => $playlist->title,
+                'is_series'   => true,
                 'description' => $playlist->description,
-                'poster' => $playlist->videos->first()->thumbnail_url ?? null
+                'poster'      => $titleImage,
             ];
 
             $titleId = $helper->createOrGetTitle($titlePayload);
 
-            if (! $titleId) {
+            if (!$titleId) {
                 throw new \Exception("Failed to create/get title on Watchlist platform.");
             }
 
-            // 2. Prepare episodes payloads (one per video)
+            // === STEP 4: Attach Person as credit to Title ===
+            if ($personId) {
+                $helper->attachPersonToTitle($titleId, $personId);
+
+                // Cache person ID per platform for re-push efficiency
+                $cachedPersonIds = $playlist->watchlist_person_ids ?? [];
+                $cachedPersonIds[$platform->name] = $personId;
+                $playlist->update(['watchlist_person_ids' => $cachedPersonIds]);
+            }
+
+            // === STEP 5: Attach genres/tags to title if API supports it ===
+            if (!empty($allGenres) || !empty($allTags)) {
+                try {
+                    $tagPayload = [];
+                    if (!empty($allGenres)) {
+                        $tagPayload['genres'] = $allGenres;
+                    }
+                    if (!empty($allTags)) {
+                        $tagPayload['tags'] = $allTags;
+                    }
+                    $helper->updateTitleTags($titleId, $tagPayload);
+                } catch (\Throwable $e) {
+                    Log::warning("Watchlist: genres/tags attachment failed (non-fatal)", [
+                        'title_id' => $titleId,
+                        'error'    => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // === STEP 6: Create Episodes with resolved images ===
             $results = ['success' => 0, 'failed' => 0, 'skipped' => 0];
             $episodesPayload = [];
-            $videoMap = []; // index => video model for tracking
+            $videoIndexMap = []; // episode index → video model
 
             foreach ($playlist->videos->values() as $index => $video) {
+                $episodeImage = $this->resolveImage(
+                    $video->manual_image_url,
+                    $video->thumbnail_url,
+                    $video->video_id
+                );
                 $episodesPayload[] = [
-                    'name' => $video->title,
+                    'name'           => $video->title,
                     'episode_number' => $index + 1,
-                    'description' => $video->description,
-                    'poster' => $video->thumbnail_url,
+                    'description'    => $video->description,
+                    'poster'         => $episodeImage,
                 ];
-                $videoMap[$index] = $video;
+                $videoIndexMap[$index] = $video;
             }
 
             $episodeIds = $helper->createEpisodes($titleId, $episodesPayload);
 
-            // 3. Add to Watchlist
+            // === STEP 7: Add to Watchlist ===
             $added = $helper->addToWatchlist($titleId, $episodeIds);
 
-            // 4. Track each video push in youtube_platform_pushes for deduplication
-            foreach ($playlist->videos as $video) {
+            // === STEP 8: Track each video push with per-video status ===
+            foreach ($playlist->videos->values() as $index => $video) {
+                $episodeCreated = isset($episodeIds[$index]);
                 \App\Models\YoutubePlatformPush::updateOrCreate(
                     [
-                        'video_id' => $video->video_id,
-                        'playlist_id' => $playlist->playlist_id,
+                        'video_id'      => $video->video_id,
+                        'playlist_id'   => $playlist->playlist_id,
                         'platform_name' => $platform->name,
                     ],
                     [
-                        'status' => 'success',
-                        'pushed_at' => now(),
-                        'platform_album_id' => $titleId,
+                        'push_type'          => 'watchlist',
+                        'status'             => $episodeCreated ? 'success' : 'failed',
+                        'error_message'      => $episodeCreated ? null : 'Episode creation failed or skipped',
+                        'pushed_at'          => $episodeCreated ? now() : null,
+                        'platform_album_id'  => $titleId,
+                        'platform_person_id' => $personId,
                     ]
                 );
-                $results['success']++;
+                if ($episodeCreated) {
+                    $results['success']++;
+                } else {
+                    $results['failed']++;
+                }
             }
 
             return [
-                'status' => 'success',
-                'message' => 'Playlist metadata synced to Watchlist successfully.',
+                'status'  => 'success',
+                'message' => 'Playlist synced to Watchlist with Person entity.',
                 'details' => [
-                    'success' => $results['success'],
-                    'episodes_created' => count($episodeIds),
+                    'success'            => $results['success'],
+                    'failed'             => $results['failed'],
+                    'title_id'           => $titleId,
+                    'person_id'          => $personId,
+                    'episodes_created'   => count($episodeIds),
+                    'genres_attached'    => count($allGenres),
+                    'tags_attached'      => count($allTags),
                     'added_to_watchlist' => $added,
                 ],
             ];
@@ -1033,52 +1156,220 @@ class YouTubeScraperService
 
     public function generateTagsOnly(string $title, string $description = ''): array
     {
-        $msg = "Generate 5-10 relevant SEO tags for this content. Return only a JSON object: {\"tags\": [\"tag1\", \"tag2\", ...]}. No explanation.\n\nTitle: {$title}\nDescription: " . substr($description, 0, 500);
-        $content = $this->callMistral($msg);
-        if ($content) {
-            $content = trim($content);
-            if (preg_match('/\{[\s\S]*\}/', $content, $m)) {
-                $result = json_decode($m[0], true);
-                if ($result && isset($result['tags'])) {
-                    return array_values(array_map('trim', (array) $result['tags']));
-                }
-            }
-            return array_values(array_map('trim', array_filter(explode(',', $content))));
-        }
-        try {
-            $result = $this->aiManager->execute("Generate 5 SEO tags for: {$title}. Return JSON: {\"tags\": []}", ['mode' => 'json']);
-            if (is_string($result)) {
-                $result = json_decode($result, true);
-            }
-            return $result['tags'] ?? [];
-        } catch (\Exception $e) {
+        if (empty($title) && empty($description)) {
             return [];
         }
+
+        $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
+        if (empty($key)) {
+            Log::info("Mistral API key not configured, using fallback tag extraction");
+            return $this->extractStructuredTags($title, $description);
+        }
+
+        try {
+            $prompt = "Given the following YouTube video title and description, generate exactly 3 relevant tags for this video, separated by a vertical bar (|), following this structure:
+
+1. Content type (e.g., 'Music', 'Gaming', 'Education', 'Technology', 'Comedy', 'Entertainment', 'Cooking', 'Travel', 'Sports', 'Health', 'Beauty', 'DIY', 'Documentary', 'Review')
+2. Specific focus (e.g., 'Tutorial', 'Review', 'Gameplay', 'Interview', 'Recipe', 'Workout', 'Makeup', 'Crafting', 'Analysis')
+3. One-word summary (e.g., 'entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring')
+
+Rules:
+- DO NOT use generic words like 'video', 'content', 'media', 'the', 'how to' as tags.
+- Each tag must be concise (1-3 words), descriptive, and relevant to the actual content.
+- Focus on what makes this video unique and searchable.
+- Output format: ContentType | Focus | OneWordSummary (no extra text, no numbers, no explanations)
+
+Title: {$title}
+Description: " . substr($description, 0, 500) . "
+
+IMPORTANT: Respond with ONLY the tags in the format \"Tag1 | Tag2 | Tag3\" - no explanations, no additional text, just the three tags separated by vertical bars.
+
+Tags:";
+
+            $content = $this->callMistral($prompt, 'mistral-large-latest');
+            if ($content) {
+                $cleanContent = trim($content);
+
+                // Remove any prompt text that might be included
+                if (stripos($cleanContent, 'Title:') !== false || stripos($cleanContent, 'Description:') !== false) {
+                    $tagsIndex = strripos($cleanContent, 'Tags:');
+                    if ($tagsIndex !== false) {
+                        $cleanContent = trim(substr($cleanContent, $tagsIndex + 5));
+                    }
+                }
+
+                // Remove any explanatory text after newline
+                if (strpos($cleanContent, "\n") !== false) {
+                    $cleanContent = trim(explode("\n", $cleanContent)[0]);
+                }
+
+                // Split on | and filter
+                $newTags = array_map('trim', explode('|', $cleanContent));
+                $newTags = array_filter($newTags, function($tag) {
+                    return strlen($tag) > 0 && strlen($tag) < 50 &&
+                           !stripos($tag, 'generate') &&
+                           !stripos($tag, 'title:') &&
+                           !stripos($tag, 'description:');
+                });
+
+                // Validate: should be exactly 3 tags
+                if (count($newTags) === 3) {
+                    return array_values($newTags);
+                }
+
+                Log::warning("Invalid AI response for tags, using fallback", ['tags' => $newTags]);
+            }
+
+            // Fallback to structured extraction
+            return $this->extractStructuredTags($title, $description);
+        } catch (\Exception $e) {
+            Log::error("Error generating tags: " . $e->getMessage());
+            return $this->extractStructuredTags($title, $description);
+        }
+    }
+
+    /**
+     * Fallback structured tag extraction using rule-based detection
+     */
+    protected function extractStructuredTags(string $title, string $description): array
+    {
+        $text = strtolower($title . ' ' . $description);
+
+        $contentTypes = [
+            'Music' => ['music', 'song', 'album', 'artist', 'band', 'concert', 'lyrics', 'cover', 'remix', 'track'],
+            'Gaming' => ['game', 'gaming', 'gameplay', 'player', 'level', 'boss', 'rpg', 'fps', 'strategy', 'walkthrough'],
+            'Education' => ['learn', 'tutorial', 'how to', 'explained', 'lesson', 'course', 'study', 'guide', 'education'],
+            'Technology' => ['tech', 'software', 'hardware', 'computer', 'phone', 'app', 'code', 'programming', 'review'],
+            'Comedy' => ['funny', 'comedy', 'humor', 'jokes', 'laugh', 'meme', 'parody', 'satire', 'sketch'],
+            'Entertainment' => ['entertainment', 'show', 'celebrity', 'news', 'gossip', 'drama', 'reality', 'interview'],
+            'Cooking' => ['recipe', 'cooking', 'food', 'kitchen', 'chef', 'baking', 'meal', 'cuisine', 'cook'],
+            'Travel' => ['travel', 'vacation', 'trip', 'destination', 'tour', 'adventure', 'explore', 'traveling'],
+            'Sports' => ['sport', 'game', 'match', 'team', 'player', 'football', 'basketball', 'soccer', 'athletics'],
+            'Health' => ['health', 'fitness', 'workout', 'exercise', 'nutrition', 'diet', 'wellness', 'training'],
+            'Beauty' => ['beauty', 'makeup', 'skincare', 'fashion', 'style', 'hair', 'cosmetics'],
+            'DIY' => ['diy', 'craft', 'handmade', 'project', 'build', 'make', 'create', 'homemade', 'crafting'],
+            'Documentary' => ['documentary', 'investigation', 'true story', 'real life', 'history', 'fact'],
+            'Review' => ['review', 'unboxing', 'test', 'comparison', 'rating', 'opinion', 'verdict']
+        ];
+
+        $detectedType = 'Entertainment'; // Default
+        foreach ($contentTypes as $type => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (str_contains($text, $keyword)) {
+                    $detectedType = $type;
+                    break 2;
+                }
+            }
+        }
+
+        $tagMap = [
+            'Music' => ['Music', 'Audio', 'Entertainment'],
+            'Gaming' => ['Gaming', 'Entertainment', 'Interactive'],
+            'Education' => ['Education', 'Learning', 'Tutorial'],
+            'Technology' => ['Technology', 'Tech', 'Review'],
+            'Comedy' => ['Comedy', 'Humor', 'Entertainment'],
+            'Entertainment' => ['Entertainment', 'Show', 'Media'],
+            'Cooking' => ['Cooking', 'Food', 'Recipe'],
+            'Travel' => ['Travel', 'Adventure', 'Exploration'],
+            'Sports' => ['Sports', 'Athletics', 'Competition'],
+            'Health' => ['Health', 'Fitness', 'Wellness'],
+            'Beauty' => ['Beauty', 'Fashion', 'Lifestyle'],
+            'DIY' => ['DIY', 'Crafting', 'Creative'],
+            'Documentary' => ['Documentary', 'Educational', 'Factual'],
+            'Review' => ['Review', 'Analysis', 'Opinion'],
+        ];
+
+        return $tagMap[$detectedType] ?? ['Entertainment', 'Media', 'Content'];
     }
 
     public function generateGenresOnly(string $title, string $description = '', string $channelName = ''): array
     {
-        $msg = "Generate 2-3 music/content genres for this content. Return only a JSON object: {\"genres\": [\"genre1\", \"genre2\"]}. No explanation.\n\nTitle: {$title}\nChannel: {$channelName}\nDescription: " . substr($description, 0, 500);
-        $content = $this->callMistral($msg);
-        if ($content) {
-            $content = trim($content);
-            if (preg_match('/\{[\s\S]*\}/', $content, $m)) {
-                $result = json_decode($m[0], true);
-                if ($result && isset($result['genres'])) {
-                    return array_values(array_map('trim', (array) $result['genres']));
-                }
-            }
-            return array_values(array_map('trim', array_filter(explode(',', $content))));
-        }
-        try {
-            $result = $this->aiManager->execute("Generate 2 genres for: {$title}. Return JSON: {\"genres\": []}", ['mode' => 'json']);
-            if (is_string($result)) {
-                $result = json_decode($result, true);
-            }
-            return $result['genres'] ?? [];
-        } catch (\Exception $e) {
+        if (empty($title)) {
             return [];
         }
+
+        $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
+        if (empty($key)) {
+            Log::info("Mistral API key not configured, using fallback genre detection");
+            return $this->generateBasicGenres($title, $channelName, $description);
+        }
+
+        try {
+            $prompt = "Given a YouTube video with the following details:
+Title: {$title}
+Channel: {$channelName}
+Description: " . substr($description, 0, 500) . "
+
+Please generate 3-5 relevant genres for this video content. Consider:
+1. Content type (Educational, Entertainment, Music, Gaming, Tech, etc.)
+2. Format (Tutorial, Review, Vlog, Comedy, etc.)
+3. Subject matter (Science, History, Pop Culture, etc.)
+4. Target audience (Kids, Adults, Professionals, etc.)
+
+Common genres include: Education, Entertainment, Music, Gaming, Technology, Comedy, Drama, Action, Documentary, Tutorial, Review, Vlog, News, Sports, Travel, Cooking, Health, Fitness, Beauty, Fashion, DIY, Art, Science, History, Politics, Business, Finance, Self-help, Motivation, Kids, Family, Horror, Thriller, Romance, Animation, Podcast.
+
+Return only the genres as a comma-separated list, without explanations or additional text. Maximum 5 genres.";
+
+            $content = $this->callMistral($prompt, 'mistral-large-latest');
+            if ($content) {
+                $genres = array_map('trim', explode(',', $content));
+                $genres = array_filter($genres, function($genre) {
+                    return strlen($genre) > 0 && strlen($genre) < 50;
+                });
+                $genres = array_slice($genres, 0, 5);
+
+                if (count($genres) > 0) {
+                    return array_values($genres);
+                }
+            }
+
+            // Fallback to basic genre detection
+            return $this->generateBasicGenres($title, $channelName, $description);
+        } catch (\Exception $e) {
+            Log::error("Error generating genres: " . $e->getMessage());
+            return $this->generateBasicGenres($title, $channelName, $description);
+        }
+    }
+
+    /**
+     * Fallback basic genre detection from title, channel name, and description
+     */
+    protected function generateBasicGenres(string $title, string $channelName = '', string $description = ''): array
+    {
+        $content = strtolower($title . ' ' . $channelName . ' ' . $description);
+        $genres = [];
+
+        $genreKeywords = [
+            'Music' => ['music', 'song', 'album', 'artist', 'band', 'concert', 'lyrics', 'cover', 'remix'],
+            'Gaming' => ['game', 'gaming', 'gameplay', 'player', 'level', 'boss', 'rpg', 'fps', 'strategy'],
+            'Education' => ['learn', 'tutorial', 'how to', 'explained', 'lesson', 'course', 'study', 'guide'],
+            'Technology' => ['tech', 'software', 'hardware', 'computer', 'phone', 'app', 'code', 'programming'],
+            'Comedy' => ['funny', 'comedy', 'humor', 'jokes', 'laugh', 'meme', 'parody', 'satire'],
+            'Entertainment' => ['entertainment', 'show', 'celebrity', 'news', 'gossip', 'drama', 'reality'],
+            'Cooking' => ['recipe', 'cooking', 'food', 'kitchen', 'chef', 'baking', 'meal', 'cuisine'],
+            'Travel' => ['travel', 'vacation', 'trip', 'destination', 'tour', 'adventure', 'explore'],
+            'Sports' => ['sport', 'game', 'match', 'team', 'player', 'football', 'basketball', 'soccer'],
+            'Health' => ['health', 'fitness', 'workout', 'exercise', 'nutrition', 'diet', 'wellness'],
+            'Beauty' => ['beauty', 'makeup', 'skincare', 'fashion', 'style', 'hair', 'cosmetics'],
+            'DIY' => ['diy', 'craft', 'handmade', 'project', 'build', 'make', 'create', 'homemade'],
+            'Documentary' => ['documentary', 'investigation', 'true story', 'real life', 'history', 'fact'],
+            'Review' => ['review', 'unboxing', 'test', 'comparison', 'rating', 'opinion', 'verdict']
+        ];
+
+        foreach ($genreKeywords as $genre => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (str_contains($content, $keyword)) {
+                    $genres[] = $genre;
+                    break;
+                }
+            }
+        }
+
+        if (empty($genres)) {
+            $genres[] = 'Entertainment';
+        }
+
+        return array_slice(array_unique($genres), 0, 3);
     }
 
     /**
@@ -1262,6 +1553,27 @@ class YouTubeScraperService
         }
 
         return $count;
+    }
+
+    /**
+     * Resolve the best image URL using manual override > scraper thumbnail > YouTube CDN fallback.
+     * Used by both streaming and watchlist push flows.
+     */
+    protected function resolveImage(?string $manualUrl, ?string $scraperUrl, ?string $videoId = null): ?string
+    {
+        if (!empty($manualUrl) && filter_var($manualUrl, FILTER_VALIDATE_URL)) {
+            return $manualUrl;
+        }
+
+        if (!empty($scraperUrl) && filter_var($scraperUrl, FILTER_VALIDATE_URL)) {
+            return $scraperUrl;
+        }
+
+        if (!empty($videoId)) {
+            return "https://i.ytimg.com/vi/{$videoId}/hqdefault.jpg";
+        }
+
+        return null;
     }
 
     protected function convertDurationToMs(string $duration): int

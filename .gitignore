@@ -28,6 +28,8 @@ Thumbs.db
 /node_modules
 /public/hot
 /public/build
+nul
+/public/storage
 
 # Laravel
 /Paces_v1.1.0

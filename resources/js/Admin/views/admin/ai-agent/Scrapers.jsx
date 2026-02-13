@@ -140,6 +140,15 @@ const Scrapers = () => {
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
 
+    /* ─── Image Manager modal state ─── */
+    const [showImageModal, setShowImageModal] = useState(false);
+    const [imageTarget, setImageTarget] = useState(null); // { type: 'playlist'|'video', id, title, currentImage, manualImage }
+    const [imageUrl, setImageUrl] = useState('');
+    const [imageFile, setImageFile] = useState(null);
+    const [imagePreview, setImagePreview] = useState(null);
+    const [imageMode, setImageMode] = useState('url'); // 'url' or 'upload'
+    const [imageSubmitting, setImageSubmitting] = useState(false);
+
     const searchTimeout = useRef(null);
 
     /* ─── Load playlists + platforms once ─── */
@@ -430,6 +439,123 @@ const Scrapers = () => {
         }
     };
 
+    /* ─── Image Manager actions ─── */
+    const openPlaylistImage = (pl) => {
+        setImageTarget({
+            type: 'playlist',
+            id: pl.id,
+            title: pl.title || pl.playlist_id,
+            currentImage: pl.manual_image_url || null,
+            manualImage: pl.manual_image_url || null,
+        });
+        setImageUrl(pl.manual_image_url || '');
+        setImageFile(null);
+        setImagePreview(null);
+        setImageMode('url');
+        setShowImageModal(true);
+    };
+
+    const openVideoImage = (video) => {
+        setImageTarget({
+            type: 'video',
+            id: video.video_id,
+            title: video.title,
+            currentImage: video.manual_image_url || video.thumbnail_url,
+            manualImage: video.manual_image_url || null,
+            scraperImage: video.thumbnail_url,
+        });
+        setImageUrl(video.manual_image_url || '');
+        setImageFile(null);
+        setImagePreview(null);
+        setImageMode('url');
+        setShowImageModal(true);
+    };
+
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+            alert('Please select an image file (JPG, PNG, WebP, etc.)');
+            return;
+        }
+
+        // Validate file size (max 10MB)
+        if (file.size > 10 * 1024 * 1024) {
+            alert('Image size must be less than 10MB');
+            return;
+        }
+
+        setImageFile(file);
+        setImageUrl(''); // Clear URL input when file is selected
+
+        // Generate preview
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            setImagePreview(ev.target.result);
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleImageSave = async () => {
+        if (!imageTarget) return;
+        if (!imageUrl.trim() && !imageFile) {
+            alert('Please provide an image URL or upload a file');
+            return;
+        }
+
+        setImageSubmitting(true);
+        try {
+            const endpoint = imageTarget.type === 'playlist'
+                ? `/api/ai/scrapers/${imageTarget.id}/image`
+                : `/api/ai/scrapers/videos/${imageTarget.id}/image`;
+
+            let response;
+            if (imageFile) {
+                // File upload mode
+                const formData = new FormData();
+                formData.append('image', imageFile);
+                response = await axios.post(endpoint, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+            } else {
+                // URL mode
+                response = await axios.post(endpoint, { image_url: imageUrl.trim() });
+            }
+
+            alert('Image saved. It will be used on the next push to streaming and watchlist.');
+            setShowImageModal(false);
+            if (imageTarget.type === 'playlist') loadInitial();
+            else loadVideos();
+        } catch (error) {
+            alert('Failed to save image: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setImageSubmitting(false);
+        }
+    };
+
+    const handleImageRemove = async () => {
+        if (!imageTarget) return;
+        if (!window.confirm('Remove manual image? The scraper image will be used on next push.')) return;
+        setImageSubmitting(true);
+        try {
+            const endpoint = imageTarget.type === 'playlist'
+                ? `/api/ai/scrapers/${imageTarget.id}/image`
+                : `/api/ai/scrapers/videos/${imageTarget.id}/image`;
+
+            await axios.delete(endpoint);
+            alert('Manual image removed. Scraper image will be used on next push.');
+            setShowImageModal(false);
+            if (imageTarget.type === 'playlist') loadInitial();
+            else loadVideos();
+        } catch (error) {
+            alert('Failed to remove image: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setImageSubmitting(false);
+        }
+    };
+
     /* ─── Pagination renderer ─── */
     const renderPagination = () => {
         if (pagination.last_page <= 1) return null;
@@ -529,6 +655,10 @@ const Scrapers = () => {
                                                     <Button variant="soft-secondary" size="sm" className="me-1"
                                                         onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
                                                         <Icon icon="sparkles" className="icon-xs" /> AI / Meta
+                                                    </Button>
+                                                    <Button variant="soft-warning" size="sm" className="me-1" onClick={() => openPlaylistImage(pl)}
+                                                        title="Set cover image for streaming album / watchlist title">
+                                                        <Icon icon="image" className="icon-xs" /> Image
                                                     </Button>
                                                     <Button variant="soft-info" size="sm" className="me-1" onClick={() => openPushModal(pl)} disabled={pushing}>
                                                         <Icon icon="send" className="icon-xs" /> Push
@@ -665,7 +795,18 @@ const Scrapers = () => {
                                                     <Form.Check type="checkbox" checked={selectedVideoIds.has(v.video_id)}
                                                         onChange={() => toggleSelect(v.video_id)} />
                                                 </td>
-                                                <td><VideoThumb video={v} /></td>
+                                                <td>
+                                                    <div className="position-relative" style={{ cursor: 'pointer' }} onClick={() => openVideoImage(v)}
+                                                        title={v.manual_image_url ? 'Custom image set (click to change)' : 'Click to set custom image'}>
+                                                        <VideoThumb video={v} />
+                                                        {v.manual_image_url && (
+                                                            <span className="position-absolute top-0 end-0 translate-middle badge rounded-pill bg-warning"
+                                                                style={{ fontSize: '0.5rem', padding: '2px 4px', zIndex: 2 }}>
+                                                                <Icon icon="pen" style={{ width: 8, height: 8 }} />
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
                                                 <td>
                                                     <div className="fw-semibold text-truncate" style={{ maxWidth: '240px' }} title={v.description || v.title}>
                                                         {v.title}
@@ -823,6 +964,150 @@ const Scrapers = () => {
                                 disabled={bulkUpdating || !metadataGenres}>Add</Button>
                         </div>
                     </Form.Group>
+                </Modal.Body>
+            </Modal>
+
+            {/* ─── Image Manager Modal ─── */}
+            <Modal show={showImageModal} onHide={() => setShowImageModal(false)} size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        {imageTarget?.type === 'playlist' ? 'Playlist Cover Image' : 'Video Image Override'}
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <p className="small text-muted mb-3">
+                        <strong>{imageTarget?.title}</strong>
+                        <br />
+                        Set a custom image that will be used on <strong>both streaming and watchlist</strong> pushes.
+                        {imageTarget?.type === 'playlist'
+                            ? ' This image will be used as the album cover (streaming) and title poster (watchlist).'
+                            : ' This image will be used as the track image (streaming) and episode poster (watchlist).'}
+                    </p>
+
+                    {/* Current image preview */}
+                    {(imageTarget?.manualImage || imageTarget?.scraperImage || imageTarget?.currentImage) && (
+                        <div className="mb-3 text-center">
+                            <p className="small fw-semibold mb-1">
+                                {imageTarget?.manualImage ? 'Current Custom Image' : 'Current Scraper Image'}
+                            </p>
+                            <img
+                                src={imageTarget?.manualImage || imageTarget?.scraperImage || imageTarget?.currentImage}
+                                alt="Current"
+                                className="rounded border"
+                                style={{ maxWidth: '100%', maxHeight: '180px', objectFit: 'cover' }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                            {imageTarget?.manualImage && (
+                                <div className="mt-1">
+                                    <Badge bg="warning" className="text-dark">Custom Override Active</Badge>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Mode selector */}
+                    <div className="d-flex gap-2 mb-3">
+                        <Button
+                            variant={imageMode === 'url' ? 'primary' : 'outline-secondary'}
+                            size="sm"
+                            onClick={() => { setImageMode('url'); setImageFile(null); setImagePreview(null); }}
+                        >
+                            <Icon icon="link" className="icon-xs me-1" />
+                            Image URL
+                        </Button>
+                        <Button
+                            variant={imageMode === 'upload' ? 'primary' : 'outline-secondary'}
+                            size="sm"
+                            onClick={() => { setImageMode('upload'); setImageUrl(''); }}
+                        >
+                            <Icon icon="upload" className="icon-xs me-1" />
+                            Upload File
+                        </Button>
+                    </div>
+
+                    {imageMode === 'url' ? (
+                        <>
+                            {/* URL input */}
+                            <Form.Group className="mb-3">
+                                <Form.Label>Image URL</Form.Label>
+                                <Form.Control
+                                    type="url"
+                                    placeholder="https://example.com/image.jpg"
+                                    value={imageUrl}
+                                    onChange={(e) => setImageUrl(e.target.value)}
+                                />
+                                <Form.Text className="text-muted">
+                                    Paste a direct URL to an image (JPG, PNG, WebP). This overrides the YouTube thumbnail.
+                                </Form.Text>
+                            </Form.Group>
+
+                            {/* Preview of entered URL */}
+                            {imageUrl && imageUrl.startsWith('http') && (
+                                <div className="mb-3 text-center">
+                                    <p className="small fw-semibold mb-1">Preview</p>
+                                    <img
+                                        src={imageUrl}
+                                        alt="Preview"
+                                        className="rounded border"
+                                        style={{ maxWidth: '100%', maxHeight: '180px', objectFit: 'cover' }}
+                                        onError={(e) => { e.target.alt = 'Could not load image'; }}
+                                    />
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {/* File upload */}
+                            <Form.Group className="mb-3">
+                                <Form.Label>Upload Image</Form.Label>
+                                <Form.Control
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleFileSelect}
+                                />
+                                <Form.Text className="text-muted">
+                                    Select an image file (JPG, PNG, WebP, GIF). Max size: 10MB.
+                                </Form.Text>
+                            </Form.Group>
+
+                            {/* File preview */}
+                            {imagePreview && (
+                                <div className="mb-3 text-center">
+                                    <p className="small fw-semibold mb-1">Preview</p>
+                                    <img
+                                        src={imagePreview}
+                                        alt="Preview"
+                                        className="rounded border"
+                                        style={{ maxWidth: '100%', maxHeight: '180px', objectFit: 'cover' }}
+                                    />
+                                    {imageFile && (
+                                        <div className="mt-2">
+                                            <Badge bg="info">{imageFile.name}</Badge>
+                                            <Badge bg="secondary" className="ms-1">
+                                                {(imageFile.size / 1024).toFixed(1)} KB
+                                            </Badge>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    <div className="d-flex justify-content-between">
+                        {imageTarget?.manualImage ? (
+                            <Button variant="outline-danger" size="sm" onClick={handleImageRemove} disabled={imageSubmitting}>
+                                <Icon icon="trash" className="icon-xs me-1" />
+                                Remove Override
+                            </Button>
+                        ) : <div />}
+                        <div>
+                            <Button variant="secondary" size="sm" className="me-1" onClick={() => setShowImageModal(false)}>Cancel</Button>
+                            <Button variant="primary" size="sm" onClick={handleImageSave}
+                                disabled={imageSubmitting || (!imageUrl.trim() && !imageFile)}>
+                                {imageSubmitting ? <><Spinner animation="border" size="sm" className="me-1" />Saving...</> : 'Save Image'}
+                            </Button>
+                        </div>
+                    </div>
                 </Modal.Body>
             </Modal>
 
