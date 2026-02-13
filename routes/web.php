@@ -11,11 +11,18 @@ use Inertia\Inertia;
 // Run all migrations. GET /run-migrations (no key required).
 Route::get('/run-migrations', function () {
     try {
+        // Run all pending migrations
         Artisan::call('migrate', ['--force' => true]);
-        $output = Artisan::output();
+        $migrateOutput = Artisan::output();
+
+        // Ensure storage symlink exists
+        Artisan::call('storage:link');
+        $storageLinkOutput = Artisan::output();
+
         return response()->json([
-            'message' => 'Migrations completed.',
-            'output' => $output,
+            'message' => 'Migrations and storage link command completed.',
+            'migrate_output' => $migrateOutput,
+            'storage_link_output' => $storageLinkOutput,
         ]);
     } catch (\Illuminate\Database\QueryException $e) {
         $code = $e->getCode() ?? 0;

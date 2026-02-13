@@ -1,5 +1,14 @@
 import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts/core';
+import {
+  TooltipComponent,
+  GridComponent,
+  LegendComponent,
+  DatasetComponent,
+  TransformComponent,
+  TitleComponent,
+  AxisPointerComponent
+} from 'echarts/components';
 import { useMemo } from 'react';
 import { useLayoutContext } from '@admin/context/useLayoutContext';
 let extensionsRegistered = false;
@@ -9,7 +18,17 @@ const EChart = ({
   ...props
 }) => {
   if (!extensionsRegistered) {
-    echarts.use(extensions);
+    // Register common components once so charts that rely on tooltip/axisPointer don't break
+    echarts.use([
+      TooltipComponent,
+      GridComponent,
+      LegendComponent,
+      DatasetComponent,
+      TransformComponent,
+      TitleComponent,
+      AxisPointerComponent,
+      ...(extensions || [])
+    ]);
     extensionsRegistered = true;
   }
   const {
