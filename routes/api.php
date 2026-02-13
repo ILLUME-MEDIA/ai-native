@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\SectionBuilder\EntityController;
 use App\Http\Controllers\SectionBuilder\FieldController;
+use App\Http\Controllers\SectionBuilder\CombinedEntityController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
 use Illuminate\Support\Facades\Route;
@@ -30,6 +31,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/section-builder/entities/{entity}', [EntityController::class, 'update'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.update');
+    // Combined endpoint: ek hi API se 2 entities ka data
+    Route::get('/section-builder/entities-combined/{first}/{second}', [CombinedEntityController::class, 'index'])
+        ->where(['first' => '[0-9]+|[a-zA-Z0-9_-]+', 'second' => '[0-9]+|[a-zA-Z0-9_-]+'])
+        ->name('api.section-builder.entities.combined.index');
     Route::get('/section-builder/entities/{entity}/mcp', [EntityController::class, 'getMcpConfig'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.mcp');

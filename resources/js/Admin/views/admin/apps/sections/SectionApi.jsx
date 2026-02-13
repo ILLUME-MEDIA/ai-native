@@ -119,6 +119,7 @@ const SectionApi = () => {
 
     const slugOrTable = section.slug || section.table_name;
     const baseUrl = `${window.location.origin}/api/entities/${slugOrTable}`;
+    const combinedExampleUrl = `${window.location.origin}/api/section-builder/entities-combined/${slugOrTable}/{other_slug_or_table}`;
 
     const handleCopy = async (text) => {
         try {
@@ -530,6 +531,71 @@ const SectionApi = () => {
                             </CardBody>
                         </Card>
                     </Tab.Container>
+
+                    <Card className="mb-4">
+                        <CardHeader>
+                            <h5 className="mb-0">Combined Entities (2 Tables in One API)</h5>
+                        </CardHeader>
+                        <CardBody>
+                            <p className="text-muted small">
+                                Kabhi kabhi aapko ek hi request se <strong>do alag tables</strong> ka data chahiye hota hai.
+                                Is project me us ke liye ek generic endpoint hai jo <code>Section Editor</code> ki kisi bhi
+                                2 entities ka data ek JSON response me la sakta hai.
+                            </p>
+
+                            <div className="mb-3">
+                                <Badge bg="success" className="me-2">GET</Badge>
+                                <code className="d-block text-break">
+                                    {combinedExampleUrl}
+                                </code>
+                            </div>
+
+                            <ul className="text-muted small mb-3">
+                                <li>
+                                    <code>{'{first}'}</code> aur <code>{'{second}'}</code> dono me aap <strong>entity ka slug</strong> ya
+                                    <strong> table ka naam</strong> de sakte hain (jo Section Editor se auto-sync hota hai).
+                                </li>
+                                <li>
+                                    Example: agar yeh section ka slug <code>{slugOrTable}</code> hai aur doosra section
+                                    <code>categories</code> hai, to URL hoga:&nbsp;
+                                    <code>{window.location.origin}/api/section-builder/entities-combined/{slugOrTable}/categories</code>
+                                </li>
+                                <li>
+                                    Query params (e.g. <code>search</code>, <code>page</code>, <code>per_page</code>,{' '}
+                                    <code>sort</code>, <code>direction</code>, <code>filters[column]</code>) dono entities par
+                                    same tarah apply honge.
+                                </li>
+                            </ul>
+
+                            <h6 className="mt-3">Response Structure</h6>
+                            <p className="text-muted small mb-2">
+                                Response me <code>first</code> aur <code>second</code> keys hoti hain, har ek ke andar
+                                entity meta + paginated data hota hai:
+                            </p>
+                            <pre className="bg-light p-3 rounded small">
+{JSON.stringify({
+    first: {
+        entity: { id: 1, name: 'First Entity', table_name: 'first_table', slug: 'first-entity' },
+        data: {
+            current_page: 1,
+            data: [responseExample],
+            last_page: 1,
+            per_page: 15
+        }
+    },
+    second: {
+        entity: { id: 2, name: 'Second Entity', table_name: 'second_table', slug: 'second-entity' },
+        data: {
+            current_page: 1,
+            data: [responseExample],
+            last_page: 1,
+            per_page: 15
+        }
+    }
+}, null, 2)}
+                            </pre>
+                        </CardBody>
+                    </Card>
                 </Col>
             </Row>
         </>
