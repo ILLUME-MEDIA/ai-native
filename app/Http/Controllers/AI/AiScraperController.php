@@ -179,26 +179,45 @@ class AiScraperController extends Controller
             ];
             $platformResults = [];
 
+            // Check if both streaming and watchlist platforms are selected
+            $platforms = \App\Models\AiPlatform::whereIn('id', $platformIds)->get();
+            $hasStreaming = $platforms->where('type', 'streaming')->isNotEmpty();
+            $hasWatchlist = $platforms->where('type', 'watchlist')->isNotEmpty();
+            $streamingUrls = [];
+
+            // If both platforms selected, push to streaming first
+            if ($hasStreaming && $hasWatchlist && count($platformIds) > 1) {
+                // Reorder: streaming platforms first, then watchlist
+                $streamingPlatforms = $platforms->where('type', 'streaming')->pluck('id')->toArray();
+                $watchlistPlatforms = $platforms->where('type', 'watchlist')->pluck('id')->toArray();
+                $platformIds = array_merge($streamingPlatforms, $watchlistPlatforms);
+            }
+
             foreach ($platformIds as $platformId) {
                 /** @var AiPlatform $platform */
-                $platform = AiPlatform::findOrFail($platformId);
+                $platform = \App\Models\AiPlatform::findOrFail($platformId);
 
                 // Determine which video IDs to push for THIS platform
                 $options = ['album_mode' => $albumMode];
                 $skippedForPlatform = 0;
 
+                // Pass streaming URLs to watchlist if both platforms are selected
+                if ($platform->type === 'watchlist' && !empty($streamingUrls)) {
+                    $options['streaming_urls'] = $streamingUrls;
+                }
+
                 if ($request->filled('video_ids')) {
                     // Admin explicitly selected specific videos
                     $videoIds = $request->video_ids;
                 } else {
-                    // Default: only push videos not already successfully pushed to this platform
-                    $pushedVideoIds = \App\Models\YoutubePlatformPush::where('playlist_id', $playlist->playlist_id)
-                        ->where('platform_name', $platform->name)
-                        ->where('status', 'success')
-                        ->pluck('video_id')
-                        ->toArray();
+                    // Get all videos from playlist (platform will check for duplicates)
+                    $videoIds = $playlist->videos()->pluck('video_id')->toArray();
 
-                    $videoIds = $playlist->videos()->pluck('video_id')->diff($pushedVideoIds)->values()->toArray();
+                    \Log::info("Preparing to push videos to platform: {$platform->name}", [
+                        'playlist_id' => $playlist->playlist_id,
+                        'total_videos' => count($videoIds),
+                        'note' => 'Platform will skip videos that already exist as tracks'
+                    ]);
                 }
 
                 // Apply explicit limit from request (admin-selected batch size)
@@ -208,21 +227,33 @@ class AiScraperController extends Controller
                 }
 
                 if (empty($videoIds)) {
+                    \Log::info("No videos in playlist for platform: {$platform->name}", [
+                        'playlist_id' => $playlist->playlist_id,
+                    ]);
+
                     $platformResults[$platform->name] = [
                         'status' => 'success',
-                        'message' => 'All videos have already been pushed to this platform.',
+                        'message' => 'No videos found in playlist.',
                         'details' => ['success' => 0, 'failed' => 0, 'skipped' => 0],
                     ];
                     continue;
                 }
 
+                // Pass check_existing flag to service to check platform for duplicates
                 $options['only_video_ids'] = $videoIds;
+                $options['check_existing'] = true;
 
                 $result = $this->scraperService->pushToPlatform(
                     $playlist->playlist_id,
                     $platformId,
                     $options
                 );
+
+                // Capture streaming URLs if this was a streaming platform push
+                if ($platform->type === 'streaming' && isset($result['streaming_urls'])) {
+                    $streamingUrls = $result['streaming_urls'];
+                    \Log::info("Captured streaming URLs for watchlist", ['streaming_urls' => $streamingUrls]);
+                }
 
                 // Ensure an automated duty exists for remaining videos (optional)
                 if ($createDuties) {

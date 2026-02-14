@@ -374,8 +374,8 @@ class YouTubeScraperService
                         $update['description'] = $snippet['description'];
                     }
 
-                    // Published date
-                    if (!empty($snippet['publishedAt']) && empty($dbVideo->published_at)) {
+                    // Published date - always update with YouTube's value
+                    if (!empty($snippet['publishedAt'])) {
                         $update['published_at'] = $snippet['publishedAt'];
                     }
 
@@ -585,10 +585,13 @@ class YouTubeScraperService
 
         $platform = \App\Models\AiPlatform::findOrFail($platformId);
 
+        // Extract streaming URLs from options if provided (when both platforms selected)
+        $streamingUrls = $options['streaming_urls'] ?? [];
+
         if ($platform->type === 'streaming') {
             return $this->postToStreamingPlatform($playlist, $platform, $options);
         } elseif ($platform->type === 'watchlist') {
-            return $this->syncPlaylistToWatchlist($playlist, $platform);
+            return $this->syncPlaylistToWatchlist($playlist, $platform, $streamingUrls);
         }
 
         throw new \Exception("Unsupported platform type: {$platform->type}");
@@ -710,12 +713,54 @@ class YouTubeScraperService
         return null;
     }
 
+    /**
+     * Build frontend URL for streaming platform (not API URL)
+     * Album: https://creatorstream.tv/channel/bollymix/album/4834/artist-slug/album-slug
+     * Track: https://creatorstream.tv/channel/bollymix/track/26785/track-slug
+     */
+    protected function buildStreamingFrontendUrl($baseUrl, $type, $id, $title, $artistName = null): string
+    {
+        // Extract base domain and channel from API URL
+        // API URL format: https://creatorstream.tv/channel/bollymix/api/v1
+        $parts = parse_url($baseUrl);
+        $scheme = $parts['scheme'] ?? 'https';
+        $host = $parts['host'] ?? '';
+        $path = $parts['path'] ?? '';
+
+        // Extract channel name from path like /channel/bollymix/api/v1
+        preg_match('/\/channel\/([^\/]+)/', $path, $matches);
+        $channel = $matches[1] ?? 'default';
+
+        // Build frontend URL
+        $baseHostUrl = "{$scheme}://{$host}";
+
+        if ($type === 'album') {
+            // Album URL: /channel/{channel}/album/{id}/{artist-slug}/{album-slug}
+            $artistSlug = \Illuminate\Support\Str::slug($artistName ?: 'artist');
+            $albumSlug = \Illuminate\Support\Str::slug($title);
+            return "{$baseHostUrl}/channel/{$channel}/album/{$id}/{$artistSlug}/{$albumSlug}";
+        } else if ($type === 'track') {
+            // Track URL: /channel/{channel}/track/{id}/{track-slug} (singular track)
+            $trackSlug = \Illuminate\Support\Str::slug($title);
+            return "{$baseHostUrl}/channel/{$channel}/track/{$id}/{$trackSlug}";
+        }
+
+        return "{$baseHostUrl}/channel/{$channel}";
+    }
+
     protected function postToStreamingPlatform($playlist, $platform, array $options = []): array
     {
         Log::info("Pushing to Streaming Platform: {$platform->name}");
 
         $baseUrl = rtrim($platform->base_url, '/');
         $token = $platform->api_token;
+
+        // Track streaming URLs for passing to watchlist
+        $streamingUrls = [
+            'album_url' => null,
+            'album_id' => null,
+            'track_urls' => [], // video_id => track_url mapping
+        ];
 
         try {
             $albumMode = $options['album_mode'] ?? 'single'; // "single" playlist album (default) or "per_video"
@@ -834,11 +879,20 @@ class YouTubeScraperService
                 // Ensure genres/tags exist on streaming platform
                 $validated = $this->ensureStreamingGenresTagsExist($baseUrl, $token, $playlistGenres, $playlistTags);
 
+                // Use first video's published date for album release date
+                $albumReleaseDate = date('Y-m-d');
+                if (!empty($first->published_at)) {
+                    try {
+                        $albumReleaseDate = \Carbon\Carbon::parse($first->published_at)->format('Y-m-d');
+                    } catch (\Exception $e) {
+                        Log::warning("Failed to parse album release date", ['published_at' => $first->published_at]);
+                    }
+                }
+
                 $albumPayload = [
                     'name' => $playlist->title,
                     'image' => $albumImage,
-                    'release_date' => date('Y-m-d'),
-                    'description' => $playlist->description ?? '',
+                    'release_date' => $albumReleaseDate,
                     'artists' => [$artistId],
                     'genres' => $validated['genres'],
                     'tags' => $validated['tags'],
@@ -852,29 +906,154 @@ class YouTubeScraperService
                 $existingAlbumId = $options['existing_album_id'] ?? null;
                 if ($existingAlbumId) {
                     $singleAlbumId = $existingAlbumId;
+                    Log::info("Reusing provided album ID", ['album_id' => $singleAlbumId]);
                 } else {
-                    $albumResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'albums', $albumPayload);
-                    $singleAlbumId = $albumResponse->json()['album']['id'] ?? $albumResponse->json()['id'] ?? $albumResponse->json()['data']['id'] ?? $albumResponse->json()['data']['album']['id'] ?? null;
+                    // First, search for existing album by name using by-name endpoint
+                    $singleAlbumId = null;
+                    try {
+                        // Try direct by-name endpoint first (more efficient)
+                        $albumSlug = \Illuminate\Support\Str::slug($playlist->title);
+                        $byNameResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', "albums/by-name/{$albumSlug}");
 
+                        if ($byNameResponse->successful()) {
+                            $albumData = $byNameResponse->json()['album'] ?? $byNameResponse->json()['data'] ?? null;
+                            if ($albumData) {
+                                $singleAlbumId = $albumData['id'] ?? null;
+                                if ($singleAlbumId) {
+                                    Log::info("Found existing album on streaming platform (by-name)", [
+                                        'album_id' => $singleAlbumId,
+                                        'album_name' => $playlist->title,
+                                        'method' => 'by-name'
+                                    ]);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::info("Album by-name search failed, trying search endpoint", ['error' => $e->getMessage()]);
+                    }
+
+                    // Fallback to search endpoint if by-name didn't work
                     if (!$singleAlbumId) {
                         try {
                             $searchResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', 'albums/search', ['query' => $playlist->title]);
-                            $singleAlbumId = $searchResponse->json()['data'][0]['id'] ?? $searchResponse->json()['data'][0]['album']['id'] ?? null;
+                            if ($searchResponse->successful()) {
+                                $albums = $searchResponse->json()['data'] ?? $searchResponse->json()['albums'] ?? [];
+                                foreach ($albums as $album) {
+                                    $albumName = $album['name'] ?? $album['album']['name'] ?? '';
+                                    if (trim(strtolower($albumName)) === trim(strtolower($playlist->title))) {
+                                        $singleAlbumId = $album['id'] ?? $album['album']['id'] ?? null;
+                                        Log::info("Found existing album on streaming platform (search)", [
+                                            'album_id' => $singleAlbumId,
+                                            'album_name' => $albumName,
+                                            'method' => 'search'
+                                        ]);
+                                        break;
+                                    }
+                                }
+                            }
                         } catch (\Exception $e) {
-                            // Ignore
+                            Log::warning("Album search failed, will create new album", ['error' => $e->getMessage()]);
                         }
                     }
 
+                    // If no existing album found, create new one
                     if (!$singleAlbumId) {
-                        throw new \Exception("Failed to create album. Response: " . substr($albumResponse->body(), 0, 200));
+                        $albumResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'albums', $albumPayload);
+                        $singleAlbumId = $albumResponse->json()['album']['id'] ?? $albumResponse->json()['id'] ?? $albumResponse->json()['data']['id'] ?? $albumResponse->json()['data']['album']['id'] ?? null;
+
+                        if ($singleAlbumId) {
+                            Log::info("Created new album on streaming platform", [
+                                'album_id' => $singleAlbumId,
+                                'album_name' => $playlist->title
+                            ]);
+                        } else {
+                            throw new \Exception("Failed to create album. Response: " . substr($albumResponse->body(), 0, 200));
+                        }
                     }
+                }
+
+                // Capture album URL for watchlist (frontend URL, not API)
+                if ($singleAlbumId) {
+                    $streamingUrls['album_id'] = $singleAlbumId;
+                    // Get artist name from first video's channel
+                    $artistName = $playlist->videos[0]->channel_name ?? 'Artist';
+                    $streamingUrls['album_url'] = $this->buildStreamingFrontendUrl(
+                        $baseUrl,
+                        'album',
+                        $singleAlbumId,
+                        $playlist->title,
+                        $artistName
+                    );
+                    Log::info("Album frontend URL built", ['url' => $streamingUrls['album_url']]);
                 }
             }
 
             // Step 3: Tracks — full payload (image, release_date, description, duration in ms)
-            $results = ['success' => 0, 'failed' => 0];
+            $results = ['success' => 0, 'failed' => 0, 'skipped' => 0];
             $trackErrors = [];
+            $existingTracks = [];
+
+            // If check_existing is enabled, fetch existing tracks from album
+            $checkExisting = $options['check_existing'] ?? false;
+            if ($checkExisting && $singleAlbumId) {
+                try {
+                    $albumTracksResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', "albums/{$singleAlbumId}");
+                    if ($albumTracksResponse->successful()) {
+                        $albumData = $albumTracksResponse->json();
+                        $tracks = $albumData['album']['tracks'] ?? $albumData['tracks'] ?? $albumData['data']['tracks'] ?? [];
+
+                        // Build a map of existing track names (normalized for comparison)
+                        foreach ($tracks as $track) {
+                            $trackName = $track['name'] ?? '';
+                            if ($trackName) {
+                                $existingTracks[] = strtolower(trim($trackName));
+                            }
+                        }
+
+                        Log::info("Fetched existing tracks from album", [
+                            'album_id' => $singleAlbumId,
+                            'existing_tracks_count' => count($existingTracks)
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning("Failed to fetch existing tracks from album", [
+                        'album_id' => $singleAlbumId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
             foreach ($playlist->videos as $video) {
+                // Check if track already exists in album
+                if ($checkExisting && !empty($existingTracks)) {
+                    $videoTitleNormalized = strtolower(trim($video->title ?? ''));
+                    if (in_array($videoTitleNormalized, $existingTracks)) {
+                        $results['skipped']++;
+                        Log::info("Skipping video - track already exists in album", [
+                            'video_id' => $video->video_id,
+                            'title' => $video->title,
+                            'album_id' => $singleAlbumId ?? 'N/A'
+                        ]);
+
+                        // Still mark as success in database since it exists on platform
+                        \App\Models\YoutubePlatformPush::updateOrCreate(
+                            [
+                                'video_id' => $video->video_id,
+                                'playlist_id' => $playlist->playlist_id,
+                                'platform_name' => $platform->name,
+                            ],
+                            [
+                                'push_type' => 'streaming',
+                                'status' => 'success',
+                                'pushed_at' => now(),
+                                'platform_album_id' => $singleAlbumId ?? null,
+                            ]
+                        );
+                        continue;
+                    }
+                }
+
+
                 $durationMs = $this->convertDurationToMs($video->duration ?? 'PT0S');
                 if ($durationMs < 1000) {
                     $durationMs = 60000;
@@ -884,12 +1063,25 @@ class YouTubeScraperService
                     $video->thumbnail_url,
                     $video->video_id
                 );
+
+                // Use video's published date as track release date
+                $trackReleaseDate = date('Y-m-d');
+                if (!empty($video->published_at)) {
+                    try {
+                        $trackReleaseDate = \Carbon\Carbon::parse($video->published_at)->format('Y-m-d');
+                    } catch (\Exception $e) {
+                        Log::warning("Failed to parse track release date", [
+                            'video_id' => $video->video_id,
+                            'published_at' => $video->published_at
+                        ]);
+                    }
+                }
+
                 $trackPayload = [
                     'name' => $video->title ?? 'YouTube Video',
-                    'release_date' => date('Y-m-d'),
+                    'release_date' => $trackReleaseDate,
                     'image' => $trackImage,
                     'duration' => $durationMs,
-                    'description' => $video->description ?? '',
                     // API docs expect an array of artist IDs
                     'artists' => [$artistId],
                 ];
@@ -904,11 +1096,13 @@ class YouTubeScraperService
                     $videoTags = is_array($video->tags ?? null) ? array_slice($video->tags, 0, 10) : [];
                     $videoValidated = $this->ensureStreamingGenresTagsExist($baseUrl, $token, $videoGenres, $videoTags);
 
+                    // Use video's published date for per-video album
+                    $videoAlbumReleaseDate = $trackReleaseDate; // Reuse the same date we calculated for track
+
                     $videoAlbumPayload = [
                         'name' => $video->title ?? $playlist->title,
                         'image' => $trackImage,
-                        'release_date' => date('Y-m-d'),
-                        'description' => $video->description ?? $playlist->description ?? '',
+                        'release_date' => $videoAlbumReleaseDate,
                         'artists' => [$artistId],
                         'genres' => $videoValidated['genres'],
                         'tags' => $videoValidated['tags'],
@@ -920,16 +1114,89 @@ class YouTubeScraperService
                         ],
                     ];
 
-                    $albumResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'albums', $videoAlbumPayload);
-                    $albumIdForTrack = $albumResponse->json()['album']['id'] ?? $albumResponse->json()['id'] ?? $albumResponse->json()['data']['id'] ?? $albumResponse->json()['data']['album']['id'] ?? null;
+                    // Search for existing album by video title using by-name endpoint
+                    $albumIdForTrack = null;
+                    $videoAlbumName = $video->title ?? $playlist->title;
 
-                    if (! $albumIdForTrack) {
-                        $results['failed']++;
-                        Log::warning("Per-video album creation failed for: " . ($video->title ?? $video->video_id), [
-                            'status' => $albumResponse->status(),
-                            'body' => substr((string) $albumResponse->body(), 0, 500),
-                        ]);
-                        continue;
+                    // Try direct by-name endpoint first
+                    try {
+                        $videoSlug = \Illuminate\Support\Str::slug($videoAlbumName);
+                        $byNameResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', "albums/by-name/{$videoSlug}");
+
+                        if ($byNameResponse->successful()) {
+                            $albumData = $byNameResponse->json()['album'] ?? $byNameResponse->json()['data'] ?? null;
+                            if ($albumData) {
+                                $albumIdForTrack = $albumData['id'] ?? null;
+                                if ($albumIdForTrack) {
+                                    Log::info("Found existing per-video album (by-name)", [
+                                        'album_id' => $albumIdForTrack,
+                                        'video_id' => $video->video_id,
+                                        'method' => 'by-name'
+                                    ]);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::info("Per-video album by-name failed, trying search", ['video_id' => $video->video_id]);
+                    }
+
+                    // Fallback to search endpoint
+                    if (!$albumIdForTrack) {
+                        try {
+                            $searchResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', 'albums/search', ['query' => $videoAlbumName]);
+                            if ($searchResponse->successful()) {
+                                $albums = $searchResponse->json()['data'] ?? $searchResponse->json()['albums'] ?? [];
+                                foreach ($albums as $album) {
+                                    $albumName = $album['name'] ?? $album['album']['name'] ?? '';
+                                    if (trim(strtolower($albumName)) === trim(strtolower($videoAlbumName))) {
+                                        $albumIdForTrack = $album['id'] ?? $album['album']['id'] ?? null;
+                                        Log::info("Found existing per-video album (search)", [
+                                            'album_id' => $albumIdForTrack,
+                                            'video_id' => $video->video_id,
+                                            'method' => 'search'
+                                        ]);
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning("Per-video album search failed", ['video_id' => $video->video_id]);
+                        }
+                    }
+
+                    // If no existing album found, create new one
+                    if (!$albumIdForTrack) {
+                        $albumResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'albums', $videoAlbumPayload);
+                        $albumIdForTrack = $albumResponse->json()['album']['id'] ?? $albumResponse->json()['id'] ?? $albumResponse->json()['data']['id'] ?? $albumResponse->json()['data']['album']['id'] ?? null;
+
+                        if ($albumIdForTrack) {
+                            Log::info("Created new per-video album", [
+                                'album_id' => $albumIdForTrack,
+                                'video_id' => $video->video_id
+                            ]);
+                        } else {
+                            $results['failed']++;
+                            Log::warning("Per-video album creation failed for: " . ($video->title ?? $video->video_id), [
+                                'status' => $albumResponse->status(),
+                                'body' => substr((string) $albumResponse->body(), 0, 500),
+                            ]);
+                            continue;
+                        }
+                    }
+
+                    // In per_video mode, capture first video's album URL for watchlist title
+                    if (empty($streamingUrls['album_url']) && $albumIdForTrack) {
+                        $streamingUrls['album_id'] = $albumIdForTrack;
+                        // Get artist name from video's channel
+                        $videoArtistName = $video->channel_name ?? 'Artist';
+                        $streamingUrls['album_url'] = $this->buildStreamingFrontendUrl(
+                            $baseUrl,
+                            'album',
+                            $albumIdForTrack,
+                            $video->title ?? $playlist->title,
+                            $videoArtistName
+                        );
+                        Log::info("Per-video album frontend URL built", ['url' => $streamingUrls['album_url']]);
                     }
                 }
 
@@ -953,6 +1220,29 @@ class YouTubeScraperService
 
                 if ($trackRes->successful()) {
                     $results['success']++;
+
+                    // Extract track ID from response
+                    $trackJson = $trackRes->json();
+                    $trackId = $trackJson['track']['id']
+                        ?? $trackJson['data']['track']['id']
+                        ?? $trackJson['data']['id']
+                        ?? $trackJson['id']
+                        ?? null;
+
+                    // Capture track URL for watchlist (frontend URL, not API)
+                    if ($trackId) {
+                        $streamingUrls['track_urls'][$video->video_id] = $this->buildStreamingFrontendUrl(
+                            $baseUrl,
+                            'track',
+                            $trackId,
+                            $video->title ?? 'YouTube Video'
+                        );
+                        Log::info("Track frontend URL built", [
+                            'video_id' => $video->video_id,
+                            'url' => $streamingUrls['track_urls'][$video->video_id]
+                        ]);
+                    }
+
                     \App\Models\YoutubePlatformPush::updateOrCreate(
                         [
                             'video_id' => $video->video_id,
@@ -984,24 +1274,47 @@ class YouTubeScraperService
                     'status' => 'error',
                     'message' => "Streaming platform rejected track creation. First error: {$trackErrors[0]}",
                     'details' => $results,
+                    'streaming_urls' => $streamingUrls,
                 ];
             }
 
+            $skippedMsg = $results['skipped'] > 0
+                ? " ({$results['skipped']} already exist)"
+                : "";
+
+            Log::info("Streaming push complete - URLs captured", [
+                'album_url' => $streamingUrls['album_url'],
+                'track_count' => count($streamingUrls['track_urls']),
+                'total_success' => $results['success'],
+                'total_skipped' => $results['skipped']
+            ]);
+
             return [
                 'status' => 'success',
-                'message' => "Successfully pushed to streaming: {$playlist->title}",
+                'message' => "Successfully pushed {$results['success']} tracks to streaming: {$playlist->title}{$skippedMsg}",
                 'details' => $results,
+                'streaming_urls' => $streamingUrls,
             ];
         } catch (\Exception $e) {
             Log::error("Streaming Push Error: " . $e->getMessage());
-            return ['status' => 'error', 'message' => $e->getMessage()];
+            return ['status' => 'error', 'message' => $e->getMessage(), 'streaming_urls' => $streamingUrls];
         }
     }
 
-    protected function syncPlaylistToWatchlist($playlist, $platform): array
+    protected function syncPlaylistToWatchlist($playlist, $platform, array $streamingUrls = []): array
     {
         try {
             Log::info("Syncing to Watchlist platform via helper: {$platform->name}");
+
+            // Extract streaming URLs if provided
+            $albumUrl = $streamingUrls['album_url'] ?? null;
+            $trackUrls = $streamingUrls['track_urls'] ?? [];
+
+            Log::info("Watchlist sync - Streaming URLs received", [
+                'album_url' => $albumUrl,
+                'track_count' => count($trackUrls),
+                'has_streaming_urls' => !empty($streamingUrls)
+            ]);
 
             $helper = new WatchlistSyncHelper([
                 'api_url' => $platform->base_url,
@@ -1047,6 +1360,17 @@ class YouTubeScraperService
 
             // === STEP 3: Create/Get Title ===
             $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
+
+            // Use first video's published date as title release date
+            $titleReleaseDate = null;
+            if (!empty($firstVideo->published_at)) {
+                try {
+                    $titleReleaseDate = \Carbon\Carbon::parse($firstVideo->published_at)->format('Y-m-d');
+                } catch (\Exception $e) {
+                    Log::warning("Failed to parse title release date", ['published_at' => $firstVideo->published_at]);
+                }
+            }
+
             $titlePayload = [
                 'name'        => $playlist->title,
                 'is_series'   => true,
@@ -1054,6 +1378,16 @@ class YouTubeScraperService
                 'poster'      => $titleImage,
                 'youtube_url' => $playlistYoutubeUrl,
             ];
+
+            if ($titleReleaseDate) {
+                $titlePayload['release_date'] = $titleReleaseDate;
+            }
+
+            // Add streaming album URL if available
+            if ($albumUrl) {
+                $titlePayload['stream_url'] = $albumUrl;
+                Log::info("Adding streaming album URL to watchlist title", ['album_url' => $albumUrl]);
+            }
 
             $titleId = $helper->createOrGetTitle($titlePayload);
 
@@ -1102,13 +1436,42 @@ class YouTubeScraperService
                     $video->video_id
                 );
                 $videoYoutubeUrl = $video->video_url ?: ('https://www.youtube.com/watch?v=' . $video->video_id);
-                $episodesPayload[] = [
+
+                // Parse episode release date from video's published_at
+                $episodeReleaseDate = null;
+                if (!empty($video->published_at)) {
+                    try {
+                        $episodeReleaseDate = \Carbon\Carbon::parse($video->published_at)->format('Y-m-d');
+                    } catch (\Exception $e) {
+                        Log::warning("Failed to parse episode release date", [
+                            'video_id' => $video->video_id,
+                            'published_at' => $video->published_at
+                        ]);
+                    }
+                }
+
+                $episodeData = [
                     'name'           => $video->title,
                     'episode_number' => $index + 1,
                     'description'    => $video->description,
                     'poster'         => $episodeImage,
                     'youtube_url'    => $videoYoutubeUrl,
                 ];
+
+                if ($episodeReleaseDate) {
+                    $episodeData['release_date'] = $episodeReleaseDate;
+                }
+
+                // Add streaming track URL if available
+                if (isset($trackUrls[$video->video_id])) {
+                    $episodeData['stream_url'] = $trackUrls[$video->video_id];
+                    Log::info("Adding streaming track URL to episode", [
+                        'video_id' => $video->video_id,
+                        'track_url' => $trackUrls[$video->video_id]
+                    ]);
+                }
+
+                $episodesPayload[] = $episodeData;
                 $videoIndexMap[$index] = $video;
             }
 

@@ -359,7 +359,7 @@ const Scrapers = () => {
     /* ─── Push action ─── */
     const openPushModal = (pl) => {
         setSelectedPlaylist(pl);
-        setPushData({ platform_ids: [], limit: '', create_duties: true, album_mode: 'single' });
+        setPushData({ platform_ids: [], limit: '', create_duties: true, album_mode: 'single', force: false });
         setShowPushModal(true);
     };
 
@@ -371,7 +371,7 @@ const Scrapers = () => {
         const pl = playlists.find(p => p.playlist_id === firstVideo.playlist_id);
         if (!pl) { alert('Cannot determine playlist for selected videos.'); return; }
         setSelectedPlaylist(pl);
-        setPushData({ platform_ids: [], limit: '', create_duties: true, album_mode: 'single' });
+        setPushData({ platform_ids: [], limit: '', create_duties: true, album_mode: 'single', force: false });
         setShowPushModal(true);
     };
 
