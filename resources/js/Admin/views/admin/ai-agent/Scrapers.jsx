@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, Pagination, InputGroup } from 'react-bootstrap';
+import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, Pagination, InputGroup, Tabs, Tab, ListGroup } from 'react-bootstrap';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
+
+/* ─── Predefined Tag Categories (from mistralService.ts) ─── */
+const TAG_CATEGORIES = {
+    contentTypes: ['Music', 'Gaming', 'Education', 'Technology', 'Comedy', 'Entertainment', 'Cooking', 'Travel', 'Sports', 'Health', 'Beauty', 'DIY', 'Documentary', 'Review'],
+    focusTypes: ['Tutorial', 'Review', 'Gameplay', 'Interview', 'Recipe', 'Workout', 'Makeup', 'Crafting', 'Analysis', 'Guide', 'Tips', 'Vlog', 'News'],
+    summaryWords: ['entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring', 'practical', 'engaging']
+};
 
 /* ─── Number formatter (1200 → "1.2K", 1500000 → "1.5M") ─── */
 const fmtNum = (n) => {
@@ -136,9 +143,21 @@ const Scrapers = () => {
     const [showMetadataModal, setShowMetadataModal] = useState(false);
     const [metadataTags, setMetadataTags] = useState('');
     const [metadataGenres, setMetadataGenres] = useState('');
+    const [replaceMode, setReplaceMode] = useState(true); // true = replace, false = merge
     const [generating, setGenerating] = useState(false);
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
+
+    // Use ref for immediate cancellation (state updates are async and won't be seen in the loop)
+    const cancelGenerationRef = useRef(false);
+
+    /* ─── Manual Tag/Genre Selector modal state ─── */
+    const [showManualSelectorModal, setShowManualSelectorModal] = useState(false);
+    const [selectorTab, setSelectorTab] = useState('tags'); // 'tags' or 'genres'
+    const [selectedPlatform, setSelectedPlatform] = useState('');
+    const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedGenres, setSelectedGenres] = useState([]);
+    const [platformGenres, setPlatformGenres] = useState({});
 
     /* ─── Image Manager modal state ─── */
     const [showImageModal, setShowImageModal] = useState(false);
@@ -398,11 +417,15 @@ const Scrapers = () => {
         setBulkUpdating(true);
         try {
             const payload = type === 'tags'
-                ? { tags: metadataTags.split(',').map(t => t.trim()).filter(t => t) }
-                : { genres: metadataGenres.split(',').map(t => t.trim()).filter(t => t) };
+                ? { tags: metadataTags.split(',').map(t => t.trim()).filter(t => t), replace: replaceMode }
+                : { genres: metadataGenres.split(',').map(t => t.trim()).filter(t => t), replace: replaceMode };
 
             const response = await axios.post(`/api/ai/scrapers/${selectedPlaylist.id}/bulk-update`, payload);
-            alert(`Updated ${response.data.updated_count} videos.`);
+
+            // Show clear message about what happened
+            const mode = response.data.mode === 'replace' ? 'Replaced (AI tags removed)' : 'Merged (AI tags kept)';
+            alert(`${response.data.message || `Updated ${response.data.updated_count} videos`}\nMode: ${mode}`);
+
             if (type === 'tags') setMetadataTags('');
             else setMetadataGenres('');
             loadVideos();
@@ -416,12 +439,37 @@ const Scrapers = () => {
     const handleGenerateMetadata = async () => {
         if (!selectedPlaylist) return;
         setGenerating(true);
+        cancelGenerationRef.current = false; // Reset cancel flag
+
         try {
             const res = await axios.get(`/api/ai/scrapers/${selectedPlaylist.id}`);
             const playlistVideos = res.data.videos || [];
             setGenerationProgress({ current: 0, total: playlistVideos.length });
 
+            let cancelled = false;
+            let playlistDeleted = false;
+
             for (let i = 0; i < playlistVideos.length; i++) {
+                // ⚠️ Check if generation should be cancelled (using ref for immediate check)
+                if (cancelGenerationRef.current) {
+                    console.log('AI generation cancelled by user at video', i + 1);
+                    cancelled = true;
+                    break;
+                }
+
+                // ⚠️ Check if playlist still exists (check every 5 videos to avoid too many requests)
+                if (i % 5 === 0) {
+                    try {
+                        await axios.get(`/api/ai/scrapers/${selectedPlaylist.id}`);
+                    } catch (playlistCheckError) {
+                        if (playlistCheckError.response?.status === 404) {
+                            console.log('Playlist deleted, stopping generation');
+                            playlistDeleted = true;
+                            break;
+                        }
+                    }
+                }
+
                 const video = playlistVideos[i];
                 try {
                     await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`);
@@ -430,12 +478,178 @@ const Scrapers = () => {
                     console.error(`Failed to generate for ${video.video_id}`, e);
                 }
             }
-            alert('Metadata generation completed!');
-            loadVideos();
+
+            // Show appropriate completion message
+            if (cancelled) {
+                alert('AI generation cancelled by user.');
+            } else if (playlistDeleted) {
+                alert('Playlist was deleted. AI generation stopped.');
+            } else {
+                alert('Metadata generation completed!');
+                loadVideos();
+            }
         } catch (error) {
-            alert('Failed to start generation: ' + error.message);
+            console.error('Error in handleGenerateMetadata:', error);
+            alert('Failed to start generation: ' + (error.message || 'Unknown error'));
         } finally {
             setGenerating(false);
+            cancelGenerationRef.current = false;
+        }
+    };
+
+    const handleStopGeneration = () => {
+        try {
+            cancelGenerationRef.current = true; // Set ref immediately
+            console.log('Stop button clicked - cancelling generation');
+        } catch (error) {
+            console.error('Error in handleStopGeneration:', error);
+        }
+    };
+
+    /* ─── Manual Tag/Genre Selector handlers ─── */
+    const handleOpenManualSelector = async () => {
+        // Close metadata modal to prevent overdisplay
+        setShowMetadataModal(false);
+
+        // Fetch platform genres if not already loaded
+        if (Object.keys(platformGenres).length === 0) {
+            try {
+                const response = await axios.get('/api/ai/scrapers/platform-genres');
+                setPlatformGenres(response.data.genres);
+            } catch (error) {
+                console.error('Error loading platform genres:', error);
+                alert('Failed to load platform genres');
+                // Re-open metadata modal if loading fails
+                setShowMetadataModal(true);
+                return;
+            }
+        }
+        setShowManualSelectorModal(true);
+    };
+
+    const handleToggleTag = (tag) => {
+        setSelectedTags(prev =>
+            prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+        );
+    };
+
+    const handleToggleGenre = (genre) => {
+        setSelectedGenres(prev =>
+            prev.includes(genre) ? prev.filter(g => g !== genre) : [...prev, genre]
+        );
+    };
+
+    const handleApplyManualSelection = async () => {
+        if (selectedTags.length === 0 && selectedGenres.length === 0) {
+            alert('Please select at least one tag or genre');
+            return;
+        }
+
+        try {
+            const payload = {};
+            if (selectedTags.length > 0) payload.tags = selectedTags;
+            if (selectedGenres.length > 0) payload.genres = selectedGenres;
+            payload.replace = replaceMode;
+
+            const response = await axios.post(`/api/ai/scrapers/${selectedPlaylist.id}/bulk-update`, payload);
+
+            alert(`${response.data.message}\nMode: ${response.data.mode === 'replace' ? 'Replaced (AI tags removed)' : 'Merged (AI tags kept)'}`);
+
+            // Reset selections
+            setSelectedTags([]);
+            setSelectedGenres([]);
+            setSelectedPlatform('');
+            setShowManualSelectorModal(false);
+            setShowMetadataModal(true); // Reopen metadata modal
+
+            // Refresh videos
+            loadPlaylistVideos(currentPage);
+        } catch (error) {
+            console.error('Error applying manual selections:', error);
+            alert('Failed to apply manual selections: ' + (error.response?.data?.error || error.message));
+        }
+    };
+
+    const handleCloseManualSelector = () => {
+        setShowManualSelectorModal(false);
+        setShowMetadataModal(true); // Reopen metadata modal
+    };
+
+    const handleAiPickGenre = async () => {
+        if (!selectedPlatform) {
+            alert('Please select a platform first');
+            return;
+        }
+
+        if (!videos || videos.length === 0) {
+            alert('No videos in this playlist');
+            return;
+        }
+
+        const availableGenres = platformGenres[selectedPlatform] || [];
+        if (availableGenres.length === 0) {
+            alert('No genres available for this platform');
+            return;
+        }
+
+        // Confirm before starting
+        if (!confirm(`AI will analyze ${videos.length} videos and assign appropriate genres from ${selectedPlatform} platform. Continue?`)) {
+            return;
+        }
+
+        // Close manual selector and show progress
+        setShowManualSelectorModal(false);
+        setGenerating(true);
+        setGenerationProgress({ current: 0, total: videos.length });
+
+        try {
+            let updated = 0;
+            for (let i = 0; i < videos.length; i++) {
+                const video = videos[i];
+                setGenerationProgress({ current: i + 1, total: videos.length });
+
+                // Smart genre matching based on title and description
+                const videoText = `${video.title} ${video.description || ''}`.toLowerCase();
+                const matchedGenres = availableGenres
+                    .filter(genre => {
+                        const genreWords = genre.toLowerCase().split(/[\s&\/]+/);
+                        return genreWords.some(word => videoText.includes(word.toLowerCase()));
+                    })
+                    .slice(0, 3); // Max 3 genres per video
+
+                // If no matches, pick 1-2 random genres
+                if (matchedGenres.length === 0) {
+                    const randomCount = Math.min(2, availableGenres.length);
+                    const shuffled = [...availableGenres].sort(() => 0.5 - Math.random());
+                    matchedGenres.push(...shuffled.slice(0, randomCount));
+                }
+
+                // Update video with genres
+                if (matchedGenres.length > 0) {
+                    try {
+                        await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`, {
+                            platform: selectedPlatform,
+                            genres: matchedGenres
+                        });
+                        updated++;
+                    } catch (error) {
+                        console.error(`Error updating video ${video.video_id}:`, error);
+                    }
+                }
+
+                // Small delay to prevent overwhelming the server
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            alert(`✅ AI Genre Assignment Complete!\n\nUpdated ${updated} out of ${videos.length} videos with ${selectedPlatform} genres.`);
+            loadVideos();
+        } catch (error) {
+            console.error('Error in AI genre assignment:', error);
+            alert('Failed to assign genres: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setGenerating(false);
+            setGenerationProgress({ current: 0, total: 0 });
+            setShowMetadataModal(true);
         }
     };
 
@@ -654,7 +868,12 @@ const Scrapers = () => {
                                                     </Button>
                                                     <Button variant="soft-secondary" size="sm" className="me-1"
                                                         onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
-                                                        <Icon icon="sparkles" className="icon-xs" /> AI / Meta
+                                                        {(generating && selectedPlaylist?.id === pl.id) ? (
+                                                            <><Spinner animation="border" size="sm" className="me-1" style={{width: '12px', height: '12px', borderWidth: '2px'}} />
+                                                                AI ({generationProgress.current}/{generationProgress.total})</>
+                                                        ) : (
+                                                            <><Icon icon="sparkles" className="icon-xs" /> AI / Meta</>
+                                                        )}
                                                     </Button>
                                                     <Button variant="soft-warning" size="sm" className="me-1" onClick={() => openPlaylistImage(pl)}
                                                         title="Set cover image for streaming album / watchlist title">
@@ -846,17 +1065,23 @@ const Scrapers = () => {
                                                 </td>
                                                 <td>
                                                     {(v.tags && v.tags.length > 0) ? (
-                                                        <div className="mb-1">
+                                                        <div className="mb-2">
+                                                            <small className="text-dark fw-bold d-flex align-items-center mb-1" style={{fontSize: '0.6rem', letterSpacing: '0.5px'}}>
+                                                                <Icon icon="tag" className="me-1 text-dark" style={{width: '10px', height: '10px', stroke: '#000', strokeWidth: 2}} /> TAGS
+                                                            </small>
                                                             {v.tags.slice(0, 3).map((tag, i) => (
-                                                                <Badge key={i} bg="soft-success" className="text-success me-1" style={{fontSize: '0.65rem'}}>{tag}</Badge>
+                                                                <Badge key={i} bg="light" className="text-dark border me-1 mb-1" style={{fontSize: '0.7rem', fontWeight: '600'}}>{tag}</Badge>
                                                             ))}
                                                             {v.tags.length > 3 && <span className="small text-muted">+{v.tags.length - 3}</span>}
                                                         </div>
                                                     ) : null}
                                                     {(v.genres && v.genres.length > 0) ? (
                                                         <div>
+                                                            <small className="text-dark fw-bold d-flex align-items-center mb-1" style={{fontSize: '0.6rem', letterSpacing: '0.5px'}}>
+                                                                <Icon icon="grid" className="me-1 text-dark" style={{width: '10px', height: '10px', stroke: '#000', strokeWidth: 2}} /> GENRES
+                                                            </small>
                                                             {v.genres.map((g, i) => (
-                                                                <Badge key={i} bg="soft-warning" className="text-warning me-1" style={{fontSize: '0.65rem'}}>{g}</Badge>
+                                                                <Badge key={i} bg="light" className="text-dark border me-1 mb-1" style={{fontSize: '0.7rem', fontWeight: '600', borderColor: '#ffc107', backgroundColor: '#fff9e6'}}>{g}</Badge>
                                                             ))}
                                                         </div>
                                                     ) : null}
@@ -932,27 +1157,90 @@ const Scrapers = () => {
             {/* ─── Metadata Manager Modal ─── */}
             <Modal show={showMetadataModal} onHide={() => setShowMetadataModal(false)} size="lg">
                 <Modal.Header closeButton>
-                    <Modal.Title>Metadata Manager: {selectedPlaylist?.title}</Modal.Title>
+                    <Modal.Title>
+                        Metadata Manager: {selectedPlaylist?.title}
+                        {generating && <small className="text-muted ms-2">(AI running in background...)</small>}
+                    </Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
                     <h6>AI Generation</h6>
                     <p className="small text-muted">Generate Tags and Genres using Mistral AI for all videos in this playlist.</p>
-                    <Button variant="success" onClick={handleGenerateMetadata} disabled={generating} className="mb-4">
-                        {generating ? (
-                            <><Spinner animation="border" size="sm" className="me-1" />
-                                Generating ({generationProgress.current}/{generationProgress.total})...</>
-                        ) : 'Generate AI Metadata for All Videos'}
+                    <div className="d-flex gap-2 mb-4">
+                        <Button variant="success" onClick={handleGenerateMetadata} disabled={generating} className="flex-grow-1">
+                            {generating ? (
+                                <><Spinner animation="border" size="sm" className="me-1" />
+                                    Generating ({generationProgress.current}/{generationProgress.total})...</>
+                            ) : (
+                                <><Icon icon="sparkles" className="icon-xs me-1" />
+                                    Generate AI Metadata for All Videos</>
+                            )}
+                        </Button>
+                        {generating && (
+                            <Button variant="danger" onClick={handleStopGeneration} title="Stop AI generation">
+                                <Icon icon="x-circle" className="icon-xs me-1" />
+                                Stop
+                            </Button>
+                        )}
+                    </div>
+
+                    <h6 className="mt-3">Manual Selection</h6>
+                    <p className="small text-muted">Select tags and genres from predefined categories.</p>
+                    <Button variant="info" onClick={handleOpenManualSelector} className="w-100 mb-3">
+                        <Icon icon="list" className="icon-xs me-1" />
+                        Open Manual Selector
                     </Button>
+
                     <hr />
                     <h6>Bulk Add Metadata</h6>
                     <p className="small text-muted">Add static tags or genres to ALL videos in this playlist.</p>
+
+                    {/* Replace/Merge Mode Toggle */}
+                    <Form.Group className="mb-3">
+                        <div className="d-flex align-items-center gap-3 p-2 bg-light rounded">
+                            <Form.Check
+                                type="radio"
+                                id="mode-replace"
+                                name="updateMode"
+                                label={
+                                    <span>
+                                        <strong>Replace Mode</strong>
+                                        <br />
+                                        <small className="text-muted">Remove AI/YouTube tags, use only manual tags</small>
+                                    </span>
+                                }
+                                checked={replaceMode === true}
+                                onChange={() => setReplaceMode(true)}
+                            />
+                            <Form.Check
+                                type="radio"
+                                id="mode-merge"
+                                name="updateMode"
+                                label={
+                                    <span>
+                                        <strong>Merge Mode</strong>
+                                        <br />
+                                        <small className="text-muted">Keep AI/YouTube tags, add manual tags</small>
+                                    </span>
+                                }
+                                checked={replaceMode === false}
+                                onChange={() => setReplaceMode(false)}
+                            />
+                        </div>
+                    </Form.Group>
+
                     <Form.Group className="mb-3">
                         <Form.Label>Add Tags (comma separated)</Form.Label>
                         <div className="d-flex">
                             <Form.Control type="text" placeholder="tag1, tag2, tag3" value={metadataTags}
                                 onChange={(e) => setMetadataTags(e.target.value)} />
                             <Button variant="primary" className="ms-2" onClick={() => handleBulkUpdate('tags')}
-                                disabled={bulkUpdating || !metadataTags}>Add</Button>
+                                disabled={bulkUpdating || !metadataTags}>
+                                {replaceMode ? (
+                                    <><Icon icon="refresh-cw" className="icon-xs me-1" /> Replace</>
+                                ) : (
+                                    <><Icon icon="plus" className="icon-xs me-1" /> Merge</>
+                                )}
+                            </Button>
                         </div>
                     </Form.Group>
                     <Form.Group className="mb-3">
@@ -961,9 +1249,188 @@ const Scrapers = () => {
                             <Form.Control type="text" placeholder="Genre 1, Genre 2" value={metadataGenres}
                                 onChange={(e) => setMetadataGenres(e.target.value)} />
                             <Button variant="warning" className="ms-2" onClick={() => handleBulkUpdate('genres')}
-                                disabled={bulkUpdating || !metadataGenres}>Add</Button>
+                                disabled={bulkUpdating || !metadataGenres}>
+                                {replaceMode ? (
+                                    <><Icon icon="refresh-cw" className="icon-xs me-1" /> Replace</>
+                                ) : (
+                                    <><Icon icon="plus" className="icon-xs me-1" /> Merge</>
+                                )}
+                            </Button>
                         </div>
                     </Form.Group>
+                </Modal.Body>
+            </Modal>
+
+            {/* ─── Manual Tag/Genre Selector Modal ─── */}
+            <Modal show={showManualSelectorModal} onHide={handleCloseManualSelector} size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        <Icon icon="list" className="icon-xs me-2" />
+                        Manual Tag & Genre Selector
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <p className="small text-muted mb-3">
+                        Select predefined tags and genres to apply to all videos in this playlist.
+                        Choose between Replace (remove AI/YouTube tags) or Merge (keep existing tags) mode in the main modal.
+                    </p>
+
+                    <Tabs activeKey={selectorTab} onSelect={(k) => setSelectorTab(k)} className="mb-3">
+                        {/* ─── Tags Tab ─── */}
+                        <Tab eventKey="tags" title={<><Icon icon="tag" className="icon-xs me-1" />Tags</>}>
+                            <div className="mt-3">
+                                <h6>Selected Tags ({selectedTags.length})</h6>
+                                {selectedTags.length > 0 ? (
+                                    <div className="mb-3">
+                                        {selectedTags.map((tag, i) => (
+                                            <Badge key={i} bg="primary" className="me-1 mb-1">
+                                                {tag}
+                                                <span className="ms-1 cursor-pointer" onClick={() => handleToggleTag(tag)} style={{cursor: 'pointer'}}>×</span>
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="small text-muted">No tags selected yet</p>
+                                )}
+
+                                <hr />
+
+                                {/* Content Types */}
+                                <div className="mb-3">
+                                    <h6 className="text-muted small">Content Types</h6>
+                                    <div className="d-flex flex-wrap gap-2">
+                                        {TAG_CATEGORIES.contentTypes.map((tag) => (
+                                            <Form.Check
+                                                key={tag}
+                                                type="checkbox"
+                                                id={`tag-content-${tag}`}
+                                                label={tag}
+                                                checked={selectedTags.includes(tag)}
+                                                onChange={() => handleToggleTag(tag)}
+                                                className="border rounded px-2 py-1"
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Focus Types */}
+                                <div className="mb-3">
+                                    <h6 className="text-muted small">Focus Types</h6>
+                                    <div className="d-flex flex-wrap gap-2">
+                                        {TAG_CATEGORIES.focusTypes.map((tag) => (
+                                            <Form.Check
+                                                key={tag}
+                                                type="checkbox"
+                                                id={`tag-focus-${tag}`}
+                                                label={tag}
+                                                checked={selectedTags.includes(tag)}
+                                                onChange={() => handleToggleTag(tag)}
+                                                className="border rounded px-2 py-1"
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Summary Words */}
+                                <div className="mb-3">
+                                    <h6 className="text-muted small">Summary Words</h6>
+                                    <div className="d-flex flex-wrap gap-2">
+                                        {TAG_CATEGORIES.summaryWords.map((tag) => (
+                                            <Form.Check
+                                                key={tag}
+                                                type="checkbox"
+                                                id={`tag-summary-${tag}`}
+                                                label={tag}
+                                                checked={selectedTags.includes(tag)}
+                                                onChange={() => handleToggleTag(tag)}
+                                                className="border rounded px-2 py-1"
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </Tab>
+
+                        {/* ─── Genres Tab ─── */}
+                        <Tab eventKey="genres" title={<><Icon icon="grid" className="icon-xs me-1" />Genres</>}>
+                            <div className="mt-3">
+                                <h6>Selected Genres ({selectedGenres.length})</h6>
+                                {selectedGenres.length > 0 ? (
+                                    <div className="mb-3">
+                                        {selectedGenres.map((genre, i) => (
+                                            <Badge key={i} bg="warning" text="dark" className="me-1 mb-1">
+                                                {genre}
+                                                <span className="ms-1 cursor-pointer" onClick={() => handleToggleGenre(genre)} style={{cursor: 'pointer'}}>×</span>
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="small text-muted">No genres selected yet</p>
+                                )}
+
+                                <hr />
+
+                                {/* Platform Selector */}
+                                <Form.Group className="mb-3">
+                                    <Form.Label>Select Platform</Form.Label>
+                                    <div className="d-flex gap-2">
+                                        <Form.Select
+                                            value={selectedPlatform}
+                                            onChange={(e) => setSelectedPlatform(e.target.value)}
+                                            className="flex-grow-1"
+                                        >
+                                            <option value="">Choose a platform...</option>
+                                            {Object.keys(platformGenres).map((platform) => (
+                                                <option key={platform} value={platform}>{platform}</option>
+                                            ))}
+                                        </Form.Select>
+                                        <Button
+                                            variant="success"
+                                            onClick={handleAiPickGenre}
+                                            disabled={!selectedPlatform || generating}
+                                            title="AI will analyze each video and assign appropriate genres from selected platform"
+                                        >
+                                            <Icon icon="sparkles" className="icon-xs me-1" />
+                                            {generating ? 'Assigning...' : 'AI Assign All'}
+                                        </Button>
+                                    </div>
+                                </Form.Group>
+
+                                {/* Genre Checkboxes */}
+                                {selectedPlatform && platformGenres[selectedPlatform] && (
+                                    <div className="mb-3">
+                                        <h6 className="text-muted small">{selectedPlatform} Genres</h6>
+                                        <div className="d-flex flex-wrap gap-2">
+                                            {platformGenres[selectedPlatform].map((genre) => (
+                                                <Form.Check
+                                                    key={genre}
+                                                    type="checkbox"
+                                                    id={`genre-${selectedPlatform}-${genre}`}
+                                                    label={genre}
+                                                    checked={selectedGenres.includes(genre)}
+                                                    onChange={() => handleToggleGenre(genre)}
+                                                    className="border rounded px-2 py-1"
+                                                />
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </Tab>
+                    </Tabs>
+
+                    <hr />
+
+                    {/* Action Buttons */}
+                    <div className="d-flex gap-2">
+                        <Button variant="secondary" onClick={handleCloseManualSelector}>
+                            Cancel
+                        </Button>
+                        <Button variant="primary" onClick={handleApplyManualSelection} className="flex-grow-1">
+                            <Icon icon="check" className="icon-xs me-1" />
+                            Apply Selection ({selectedTags.length} tags, {selectedGenres.length} genres)
+                        </Button>
+                    </div>
                 </Modal.Body>
             </Modal>
 

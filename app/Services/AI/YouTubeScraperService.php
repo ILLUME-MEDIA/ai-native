@@ -490,9 +490,26 @@ class YouTubeScraperService
             throw new \Exception("YouTube API Key not configured.");
         }
 
+        // First, fetch the actual playlist title using playlists.list endpoint
+        $playlistTitle = '';
+        try {
+            $playlistResponse = Http::timeout(15)->get('https://www.googleapis.com/youtube/v3/playlists', [
+                'part' => 'snippet',
+                'id' => $playlistId,
+                'key' => $this->apiKey,
+            ]);
+
+            if ($playlistResponse->successful()) {
+                $playlistData = $playlistResponse->json();
+                $playlistTitle = $playlistData['items'][0]['snippet']['title'] ?? '';
+                Log::info("Fetched playlist title from API: {$playlistTitle}");
+            }
+        } catch (\Exception $e) {
+            Log::warning("Failed to fetch playlist title via API: " . $e->getMessage());
+        }
+
         $videos = [];
         $pageToken = null;
-        $playlistTitle = '';
 
         do {
             $params = [
@@ -519,8 +536,9 @@ class YouTubeScraperService
                 if (!$videoId || $snippet['title'] === 'Deleted video' || $snippet['title'] === 'Private video') {
                     continue;
                 }
-                if (empty($playlistTitle) && !empty($snippet['playlistId'])) {
-                    $playlistTitle = $snippet['channelTitle'] ?? '';
+                // Fallback to channel title only if playlist title fetch failed
+                if (empty($playlistTitle) && !empty($snippet['channelTitle'])) {
+                    $playlistTitle = $snippet['channelTitle'];
                 }
                 $videos[] = [
                     'video_id' => $videoId,
@@ -605,6 +623,68 @@ class YouTubeScraperService
         }
 
         return $response;
+    }
+
+    /**
+     * Ensure genres/tags exist on streaming platform before assigning.
+     * Returns arrays of valid genres and tags.
+     */
+    protected function ensureStreamingGenresTagsExist($baseUrl, $token, array $genres = [], array $tags = []): array
+    {
+        $validGenres = [];
+        $validTags = [];
+
+        // Ensure genres exist
+        foreach ($genres as $genreName) {
+            try {
+                // Check if genre exists
+                $searchResponse = $this->makePlatformRequest($baseUrl, $token, 'GET', 'genres', ['query' => $genreName, 'perPage' => 50]);
+
+                if ($searchResponse->successful()) {
+                    $data = $searchResponse->json();
+                    $existingGenres = $data['pagination']['data'] ?? $data['data'] ?? $data['genres'] ?? [];
+
+                    $found = false;
+                    foreach ($existingGenres as $genre) {
+                        if (trim(strtolower($genre['name'] ?? '')) === trim(strtolower($genreName))) {
+                            $validGenres[] = $genreName;
+                            $found = true;
+                            Log::info("Streaming: Genre already exists", ['genre' => $genreName]);
+                            break;
+                        }
+                    }
+
+                    if (!$found) {
+                        // Create genre
+                        $createResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'genres', [
+                            'name' => $genreName,
+                            'display_name' => $genreName,
+                        ]);
+
+                        if ($createResponse->successful()) {
+                            $validGenres[] = $genreName;
+                            Log::info("Streaming: Successfully created genre", ['genre' => $genreName]);
+                        } else {
+                            // Some streaming platforms auto-create, so add anyway
+                            $validGenres[] = $genreName;
+                            Log::info("Streaming: Genre creation skipped (platform may auto-create)", ['genre' => $genreName]);
+                        }
+                    }
+                } else {
+                    // If genre API not available, include it anyway (streaming platforms usually handle this)
+                    $validGenres[] = $genreName;
+                }
+            } catch (\Throwable $e) {
+                // Include anyway, streaming platforms usually auto-create
+                $validGenres[] = $genreName;
+                Log::info("Streaming: Including genre (platform may auto-create)", ['genre' => $genreName]);
+            }
+        }
+
+        // For tags, most streaming platforms auto-create, so just include them
+        $validTags = $tags;
+
+        return ['genres' => $validGenres, 'tags' => $validTags];
     }
 
     /**
@@ -746,28 +826,28 @@ class YouTubeScraperService
                     $playlist->videos[0]->video_id ?? null
                 );
                 $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
+                // Collect genres/tags from first video
+                $first = $playlist->videos[0];
+                $playlistGenres = !empty($first->genres) && is_array($first->genres) ? $first->genres : [];
+                $playlistTags = !empty($first->tags) && is_array($first->tags) ? array_slice($first->tags, 0, 10) : [];
+
+                // Ensure genres/tags exist on streaming platform
+                $validated = $this->ensureStreamingGenresTagsExist($baseUrl, $token, $playlistGenres, $playlistTags);
+
                 $albumPayload = [
                     'name' => $playlist->title,
                     'image' => $albumImage,
                     'release_date' => date('Y-m-d'),
                     'description' => $playlist->description ?? '',
                     'artists' => [$artistId],
-                    'genres' => [],
-                    'tags' => [],
+                    'genres' => $validated['genres'],
+                    'tags' => $validated['tags'],
                     'youtube_url' => $playlistYoutubeUrl,
                     'metadata' => [
                         'source' => 'youtube',
                         'playlist_id' => $playlist->playlist_id,
                     ],
                 ];
-                // Add playlist-level tags/genres if we have them from first video
-                $first = $playlist->videos[0];
-                if (!empty($first->genres)) {
-                    $albumPayload['genres'] = is_array($first->genres) ? $first->genres : [];
-                }
-                if (!empty($first->tags)) {
-                    $albumPayload['tags'] = is_array($first->tags) ? array_slice($first->tags, 0, 10) : [];
-                }
 
                 $existingAlbumId = $options['existing_album_id'] ?? null;
                 if ($existingAlbumId) {
@@ -819,14 +899,19 @@ class YouTubeScraperService
                     $albumIdForTrack = $singleAlbumId;
                 } else {
                     // One album per video: create (or reuse) album based on video title
+                    // Ensure genres/tags exist for this video's album
+                    $videoGenres = $video->genres ?? [];
+                    $videoTags = is_array($video->tags ?? null) ? array_slice($video->tags, 0, 10) : [];
+                    $videoValidated = $this->ensureStreamingGenresTagsExist($baseUrl, $token, $videoGenres, $videoTags);
+
                     $videoAlbumPayload = [
                         'name' => $video->title ?? $playlist->title,
                         'image' => $trackImage,
                         'release_date' => date('Y-m-d'),
                         'description' => $video->description ?? $playlist->description ?? '',
                         'artists' => [$artistId],
-                        'genres' => $video->genres ?? [],
-                        'tags' => is_array($video->tags ?? null) ? array_slice($video->tags, 0, 10) : [],
+                        'genres' => $videoValidated['genres'],
+                        'tags' => $videoValidated['tags'],
                         'youtube_url' => $video->video_url ?: ('https://www.youtube.com/watch?v=' . $video->video_id),
                         'metadata' => [
                             'source' => 'youtube',
@@ -961,11 +1046,13 @@ class YouTubeScraperService
             $allTags = array_values(array_unique(array_slice($allTags, 0, 20)));
 
             // === STEP 3: Create/Get Title ===
+            $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
             $titlePayload = [
                 'name'        => $playlist->title,
                 'is_series'   => true,
                 'description' => $playlist->description,
                 'poster'      => $titleImage,
+                'youtube_url' => $playlistYoutubeUrl,
             ];
 
             $titleId = $helper->createOrGetTitle($titlePayload);
@@ -1014,11 +1101,13 @@ class YouTubeScraperService
                     $video->thumbnail_url,
                     $video->video_id
                 );
+                $videoYoutubeUrl = $video->video_url ?: ('https://www.youtube.com/watch?v=' . $video->video_id);
                 $episodesPayload[] = [
                     'name'           => $video->title,
                     'episode_number' => $index + 1,
                     'description'    => $video->description,
                     'poster'         => $episodeImage,
+                    'youtube_url'    => $videoYoutubeUrl,
                 ];
                 $videoIndexMap[$index] = $video;
             }
@@ -1529,7 +1618,7 @@ Return only the genres as a comma-separated list, without explanations or additi
         }
     }
 
-    public function bulkUpdateMetadata(string $playlistId, array $tags, array $genres): int
+    public function bulkUpdateMetadata(string $playlistId, array $tags, array $genres, bool $replace = true): int
     {
         $playlist = YoutubePlaylist::where('playlist_id', $playlistId)->first();
         if (!$playlist)
@@ -1539,17 +1628,38 @@ Return only the genres as a comma-separated list, without explanations or additi
         $count = 0;
 
         foreach ($videos as $video) {
-            $existingTags = $video->tags ?? [];
-            $existingGenres = $video->genres ?? [];
+            $update = [];
 
-            $newTags = array_values(array_unique(array_merge($existingTags, $tags)));
-            $newGenres = array_values(array_unique(array_merge($existingGenres, $genres)));
+            // 🏷️ TAGS UPDATE
+            if (!empty($tags)) {
+                if ($replace) {
+                    // Replace mode: Overwrite all existing tags
+                    $update['tags'] = $tags;
+                } else {
+                    // Merge mode: Keep existing and add new
+                    $existingTags = $video->tags ?? [];
+                    $update['tags'] = array_values(array_unique(array_merge($existingTags, $tags)));
+                }
+            }
 
-            $video->update([
-                'tags' => $newTags,
-                'genres' => $newGenres
-            ]);
-            $count++;
+            // 🎭 GENRES UPDATE
+            if (!empty($genres)) {
+                if ($replace) {
+                    // Replace mode: Overwrite all existing genres
+                    $update['genres'] = $genres;
+                } else {
+                    // Merge mode: Keep existing and add new
+                    $existingGenres = $video->genres ?? [];
+                    $update['genres'] = array_values(array_unique(array_merge($existingGenres, $genres)));
+                }
+            }
+
+            // Only update if there's something to update
+            if (!empty($update)) {
+                $update['tags_generated_at'] = now(); // Mark as manually updated
+                $video->update($update);
+                $count++;
+            }
         }
 
         return $count;

@@ -457,9 +457,24 @@ IMPORTANT:
         }
     }
 
-    public function generateMetadataForVideo(string $videoId)
+    public function generateMetadataForVideo(Request $request, string $videoId)
     {
         try {
+            // If genres are provided in request, use them directly (manual assignment)
+            if ($request->has('genres')) {
+                $video = \App\Models\YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+                $video->update([
+                    'genres' => $request->genres,
+                    'tags_generated_at' => now(),
+                ]);
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Genres updated',
+                    'genres' => $request->genres
+                ]);
+            }
+
+            // Otherwise, generate using AI
             $metadata = $this->scraperService->generateMetadata($videoId);
             return response()->json(['status' => 'success', 'metadata' => $metadata]);
         } catch (\Exception $e) {
@@ -473,19 +488,49 @@ IMPORTANT:
 
         $request->validate([
             'tags' => 'array',
-            'genres' => 'array'
+            'genres' => 'array',
+            'replace' => 'nullable|boolean', // true = overwrite, false = merge
         ]);
 
         try {
+            // Default behavior: REPLACE (overwrite all AI/YouTube tags with manual ones)
+            // Set replace=false to MERGE instead
+            $replace = $request->boolean('replace', true);
+
             $count = $this->scraperService->bulkUpdateMetadata(
                 $playlist->playlist_id,
                 $request->tags ?? [],
-                $request->genres ?? []
+                $request->genres ?? [],
+                $replace
             );
-            return response()->json(['status' => 'success', 'updated_count' => $count]);
+
+            $message = $replace
+                ? "Replaced tags/genres for {$count} videos (AI/YouTube tags removed)"
+                : "Merged tags/genres for {$count} videos (AI/YouTube tags kept)";
+
+            return response()->json([
+                'status' => 'success',
+                'updated_count' => $count,
+                'message' => $message,
+                'mode' => $replace ? 'replace' : 'merge',
+            ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Get platform-specific genre vocabularies for manual selection
+     */
+    public function getPlatformGenres()
+    {
+        $platformGenres = config('platform_genres');
+
+        return response()->json([
+            'status' => 'success',
+            'platforms' => array_keys($platformGenres),
+            'genres' => $platformGenres,
+        ]);
     }
 
     /**

@@ -5,6 +5,7 @@ use App\Http\Controllers\SectionBuilder\FieldController;
 use App\Http\Controllers\SectionBuilder\CombinedEntityController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
+use App\Http\Controllers\PublicApi\CaseStudyController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -71,12 +72,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('scrapers', [\App\Http\Controllers\AI\AiScraperController::class, 'index']);
         Route::post('scrapers', [\App\Http\Controllers\AI\AiScraperController::class, 'store']);
+
+        // Specific routes must come BEFORE dynamic {playlist} route
+        Route::get('scrapers/platform-genres', [\App\Http\Controllers\AI\AiScraperController::class, 'getPlatformGenres']);
+        Route::get('scrapers/videos/list', [\App\Http\Controllers\AI\AiScraperController::class, 'videos']);
+
+        // Dynamic {playlist} routes
         Route::get('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'show']);
         Route::post('scrapers/{playlist}/sync', [\App\Http\Controllers\AI\AiScraperController::class, 'sync']);
         Route::post('scrapers/{playlist}/enrich', [\App\Http\Controllers\AI\AiScraperController::class, 'enrich']);
         Route::post('scrapers/{playlist}/push', [\App\Http\Controllers\AI\AiScraperController::class, 'push']);
         Route::delete('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'destroy']);
-        Route::get('scrapers/videos/list', [\App\Http\Controllers\AI\AiScraperController::class, 'videos']);
         Route::post('scrapers/{playlist}/bulk-update', [\App\Http\Controllers\AI\AiScraperController::class, 'bulkUpdate']);
         Route::post('scrapers/{playlist}/batch-generate-metadata', [\App\Http\Controllers\AI\AiScraperController::class, 'batchGenerateMetadata']);
         Route::post('scrapers/videos/{videoId}/generate-metadata', [\App\Http\Controllers\AI\AiScraperController::class, 'generateMetadataForVideo']);
@@ -184,6 +190,10 @@ Route::middleware('mcp.auth')->prefix('mcp')->group(function () {
 // - Valid MCP_API_KEY as Bearer token.
 // AND must pass MCP permissions via mcp.check.
 Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
+    // Special-case: force /api/entities/case-studies to use the custom
+    // CaseStudyController so that the response shape matches the legacy API.
+    Route::get('/entities/case-studies', [CaseStudyController::class, 'index']);
+
     Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
     Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
     Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
@@ -191,4 +201,8 @@ Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
     Route::patch('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
     Route::delete('/entities/{entity}/{id}', [DynamicEntityController::class, 'destroy']);
 });
+
+// Public Case Studies API (for marketing site / portfolio)
+Route::get('/case-studies', [CaseStudyController::class, 'index']);
+Route::get('/case-studies/{slug}', [CaseStudyController::class, 'show']);
 

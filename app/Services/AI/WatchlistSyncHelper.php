@@ -390,12 +390,71 @@ class WatchlistSyncHelper
     }
 
     /**
+     * Ensure genres exist on the platform, creating them if necessary.
+     * Returns array of genre names that successfully exist/were created.
+     */
+    public function ensureGenresExist(array $genreNames): array
+    {
+        $validGenres = [];
+
+        foreach ($genreNames as $genreName) {
+            try {
+                // Check if genre exists
+                $searchResponse = $this->makeRequest('GET', 'title-tags/genre', ['query' => $genreName, 'perPage' => 50]);
+
+                if ($searchResponse->successful()) {
+                    $data = $searchResponse->json();
+                    $genres = $data['pagination']['data'] ?? $data['data'] ?? [];
+
+                    $found = false;
+                    foreach ($genres as $genre) {
+                        if (trim(strtolower($genre['name'] ?? '')) === trim(strtolower($genreName))) {
+                            $validGenres[] = $genreName;
+                            $found = true;
+                            Log::info("Genre already exists on watchlist", ['genre' => $genreName]);
+                            break;
+                        }
+                    }
+
+                    if (!$found) {
+                        // Create genre
+                        $createResponse = $this->makeRequest('POST', 'title-tags/genre', [
+                            'name' => $genreName,
+                            'display_name' => $genreName,
+                        ]);
+
+                        if ($createResponse->successful()) {
+                            $validGenres[] = $genreName;
+                            Log::info("Successfully created genre on watchlist", ['genre' => $genreName]);
+                        } else {
+                            Log::warning("Failed to create genre (skipping)", [
+                                'genre' => $genreName,
+                                'status' => $createResponse->status(),
+                            ]);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Error ensuring genre exists: {$genreName} - " . $e->getMessage());
+            }
+        }
+
+        return $validGenres;
+    }
+
+    /**
      * Attempt to attach genres/tags to a title via PUT.
      * Fails gracefully — not all watchlist APIs accept these fields.
      */
     public function updateTitleTags(int $titleId, array $payload): void
     {
         try {
+            // Ensure genres exist first before attaching
+            if (!empty($payload['genres'])) {
+                $validGenres = $this->ensureGenresExist($payload['genres']);
+                $payload['genres'] = $validGenres;
+            }
+
             $response = $this->makeRequest('PUT', "titles/{$titleId}", $payload);
             if ($response->successful()) {
                 Log::info("Updated title with genres/tags", [
