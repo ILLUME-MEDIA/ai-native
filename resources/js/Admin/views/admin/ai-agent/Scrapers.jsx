@@ -302,12 +302,20 @@ const Scrapers = () => {
             if (parsedMax && parsedMax > 0) {
                 payload.max_results = Math.min(parsedMax, 10000);
             }
-            await axios.post('/api/ai/scrapers', payload);
+            const response = await axios.post('/api/ai/scrapers', payload);
             setPlaylistUrl('');
             setMaxResults('');
             setShowModal(false);
-            refreshAll();
-            alert('Playlist added and first sync started.');
+
+            // If backend returns the playlist object, add it to the list immediately
+            if (response.data.playlist) {
+                setPlaylists(prev => [response.data.playlist, ...prev]);
+            } else {
+                // Fallback: refresh all if no playlist returned
+                refreshAll();
+            }
+
+            alert(response.data.message || 'Playlist added successfully with all videos and thumbnails!');
         } catch (error) {
             alert('Failed to add playlist: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -655,12 +663,15 @@ const Scrapers = () => {
 
     /* ─── Image Manager actions ─── */
     const openPlaylistImage = (pl) => {
+        const playlistThumb = pl.metadata?.playlist_thumbnail || null;
+        const currentImg = pl.manual_image_url || playlistThumb;
         setImageTarget({
             type: 'playlist',
             id: pl.id,
             title: pl.title || pl.playlist_id,
-            currentImage: pl.manual_image_url || null,
+            currentImage: currentImg,
             manualImage: pl.manual_image_url || null,
+            scraperImage: playlistThumb,
         });
         setImageUrl(pl.manual_image_url || '');
         setImageFile(null);
@@ -842,6 +853,7 @@ const Scrapers = () => {
                                 <Table responsive className="table-centered table-nowrap mb-0">
                                     <thead className="table-light">
                                         <tr>
+                                            <th>Thumbnail</th>
                                             <th>Playlist</th>
                                             <th>Videos</th>
                                             <th>Last Fetched</th>
@@ -849,8 +861,43 @@ const Scrapers = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {playlists.map((pl) => (
+                                        {playlists.map((pl) => {
+                                            // Get playlist and artist/channel thumbnails
+                                            const playlistThumb = pl.manual_image_url || pl.metadata?.playlist_thumbnail || null;
+                                            const channelThumb = pl.metadata?.channel_thumbnail || null;
+                                            return (
                                             <tr key={pl.id}>
+                                                <td>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        {/* Album/Playlist Thumbnail */}
+                                                        {playlistThumb ? (
+                                                            <img
+                                                                src={playlistThumb}
+                                                                alt={pl.title}
+                                                                style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', cursor: 'pointer' }}
+                                                                onClick={() => openPlaylistImage(pl)}
+                                                                title="Album/Playlist Image - Click to change"
+                                                            />
+                                                        ) : (
+                                                            <div
+                                                                style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0', borderRadius: '4px', cursor: 'pointer' }}
+                                                                onClick={() => openPlaylistImage(pl)}
+                                                                title="No thumbnail - click to set image"
+                                                            >
+                                                                <Icon icon="image" style={{ fontSize: '24px', color: '#999' }} />
+                                                            </div>
+                                                        )}
+                                                        {/* Artist/Channel Avatar */}
+                                                        {channelThumb && channelThumb !== playlistThumb && (
+                                                            <img
+                                                                src={channelThumb}
+                                                                alt="Artist"
+                                                                style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #e0e0e0' }}
+                                                                title="Artist/Channel Image"
+                                                            />
+                                                        )}
+                                                    </div>
+                                                </td>
                                                 <td>
                                                     <strong>{pl.title || 'Untitled Playlist'}</strong>
                                                     <br />
@@ -859,9 +906,6 @@ const Scrapers = () => {
                                                 <td><Badge bg="info">{pl.videos_count} videos</Badge></td>
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
-                                                    <Button variant="soft-primary" size="sm" className="me-1" onClick={() => handleSync(pl.id)} disabled={syncing}>
-                                                        <Icon icon="refresh" className="icon-xs" /> {syncing ? 'Syncing...' : 'Sync'}
-                                                    </Button>
                                                     <Button variant="soft-success" size="sm" className="me-1" onClick={() => handleEnrich(pl.id)} disabled={enriching}
                                                         title="Fetch views, likes, comments, HD info from YouTube API">
                                                         <Icon icon="bar-chart" className="icon-xs" /> {enriching ? 'Enriching...' : 'Enrich'}
@@ -888,9 +932,9 @@ const Scrapers = () => {
                                                     </Button>
                                                 </td>
                                             </tr>
-                                        ))}
+                                        )})}
                                         {playlists.length === 0 && (
-                                            <tr><td colSpan="4" className="text-center text-muted py-3">No playlists added yet.</td></tr>
+                                            <tr><td colSpan="5" className="text-center text-muted py-3">No playlists added yet.</td></tr>
                                         )}
                                     </tbody>
                                 </Table>

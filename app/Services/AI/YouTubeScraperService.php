@@ -123,6 +123,7 @@ class YouTubeScraperService
             'playlist_id' => $playlistId,
             'title' => '',
             'description' => '',
+            'thumbnail' => null,
             'video_count' => 0,
             'videos' => []
         ];
@@ -132,6 +133,13 @@ class YouTubeScraperService
             $header = $data['header']['playlistHeaderRenderer'] ?? $data['header']['c4TabbedHeaderRenderer'] ?? null;
             if ($header) {
                 $results['title'] = $header['title']['simpleText'] ?? $header['title']['runs'][0]['text'] ?? '';
+                // Extract playlist thumbnail from header
+                $headerThumbs = $header['playlistHeaderBanner']['heroPlaylistThumbnailRenderer']['thumbnail']['thumbnails']
+                    ?? $header['banner']['thumbnails']
+                    ?? [];
+                if (!empty($headerThumbs)) {
+                    $results['thumbnail'] = end($headerThumbs)['url'] ?? null;
+                }
             }
 
             $sidebar = $data['sidebar']['playlistSidebarRenderer']['items'] ?? [];
@@ -190,6 +198,15 @@ class YouTubeScraperService
             }
         } catch (\Exception $e) {
             Log::error("Error parsing ytInitialData: " . $e->getMessage());
+        }
+
+        // Fallback: If scraping didn't find thumbnail, use first video's thumbnail
+        if (empty($results['thumbnail']) && !empty($results['videos'])) {
+            $firstVideo = $results['videos'][0] ?? null;
+            if ($firstVideo && !empty($firstVideo['thumbnail_url'])) {
+                $results['thumbnail'] = $firstVideo['thumbnail_url'];
+                Log::info("🎬 Using first video's thumbnail as playlist image (scraper)", ['url' => $results['thumbnail']]);
+            }
         }
 
         return $results;
@@ -484,14 +501,118 @@ class YouTubeScraperService
         return $result;
     }
 
+    /**
+     * Fetch ONLY basic playlist info (title, description, thumbnails) - very fast!
+     * Does not fetch any videos. Used for immediate UI feedback when adding a playlist.
+     */
+    public function fetchPlaylistBasicInfo(string $playlistId): array
+    {
+        if (empty($this->apiKey)) {
+            throw new \Exception("YouTube API Key not configured.");
+        }
+
+        $result = [
+            'playlist_id' => $playlistId,
+            'title' => '',
+            'description' => '',
+            'playlist_thumbnail' => null,
+            'channel_thumbnail' => null,
+            'channel_id' => null,
+        ];
+
+        try {
+            // Fetch playlist metadata (title, description, thumbnail)
+            $playlistResponse = Http::timeout(15)->get('https://www.googleapis.com/youtube/v3/playlists', [
+                'part' => 'snippet',
+                'id' => $playlistId,
+                'key' => $this->apiKey,
+            ]);
+
+            if ($playlistResponse->successful()) {
+                $playlistData = $playlistResponse->json();
+                $snippet = $playlistData['items'][0]['snippet'] ?? [];
+
+                $result['title'] = $snippet['title'] ?? '';
+                $result['description'] = $snippet['description'] ?? '';
+                $result['channel_id'] = $snippet['channelId'] ?? null;
+
+                Log::info("🎬 Fetched basic playlist info", [
+                    'playlist_id' => $playlistId,
+                    'title' => $result['title'],
+                ]);
+            }
+
+            // ALWAYS use YouTube's actual playlist header thumbnail (312x312)
+            // This is the real banner/header image, not a video thumbnail
+            $result['playlist_thumbnail'] = "https://i.ytimg.com/pl_c/{$playlistId}/studio_square_thumbnail.jpg";
+            Log::info("📸 Using playlist header thumbnail (312x312)", ['url' => $result['playlist_thumbnail']]);
+
+            // Try to scrape the HTML page to get the header image URL with quality parameters
+            try {
+                $htmlUrl = "https://www.youtube.com/playlist?list={$playlistId}";
+                $htmlResponse = Http::timeout(10)->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                ])->get($htmlUrl);
+
+                if ($htmlResponse->successful()) {
+                    $html = $htmlResponse->body();
+                    // Extract the header image URL with query parameters for better quality
+                    // Pattern: pl_c/PLAYLIST_ID/studio_square_thumbnail.jpg?sqp=...&rs=...
+                    if (preg_match('/pl_c\/' . preg_quote($playlistId, '/') . '\/studio_square_thumbnail\.jpg\?[^"\'&<>\s]+/', $html, $matches)) {
+                        $result['playlist_thumbnail'] = 'https://i.ytimg.com/' . $matches[0];
+                        Log::info("🖼️ Scraped high-quality playlist header image from HTML", ['url' => $result['playlist_thumbnail']]);
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning("Could not scrape playlist header image from HTML, using basic URL: " . $e->getMessage());
+            }
+
+            // Fetch channel thumbnail for artist image
+            if (!empty($result['channel_id'])) {
+                try {
+                    $channelResponse = Http::timeout(10)->get('https://www.googleapis.com/youtube/v3/channels', [
+                        'part' => 'snippet',
+                        'id' => $result['channel_id'],
+                        'key' => $this->apiKey,
+                    ]);
+
+                    if ($channelResponse->successful()) {
+                        $channelData = $channelResponse->json();
+                        $channelSnippet = $channelData['items'][0]['snippet'] ?? [];
+                        $channelThumbs = $channelSnippet['thumbnails'] ?? [];
+
+                        $result['channel_thumbnail'] = $channelThumbs['high']['url']
+                            ?? $channelThumbs['medium']['url']
+                            ?? $channelThumbs['default']['url']
+                            ?? null;
+
+                        Log::info("👤 Fetched channel thumbnail for artist", [
+                            'channel_id' => $result['channel_id'],
+                            'thumbnail' => $result['channel_thumbnail'],
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning("Failed to fetch channel thumbnail: " . $e->getMessage());
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error("Failed to fetch playlist basic info: " . $e->getMessage());
+            throw $e;
+        }
+
+        return $result;
+    }
+
     protected function fetchPlaylistViaApi(string $playlistId, int $maxResults = 500): array
     {
         if (empty($this->apiKey)) {
             throw new \Exception("YouTube API Key not configured.");
         }
 
-        // First, fetch the actual playlist title using playlists.list endpoint
+        // First, fetch the actual playlist title and thumbnail using playlists.list endpoint
         $playlistTitle = '';
+        $playlistThumbnail = null;
         try {
             $playlistResponse = Http::timeout(15)->get('https://www.googleapis.com/youtube/v3/playlists', [
                 'part' => 'snippet',
@@ -502,11 +623,18 @@ class YouTubeScraperService
             if ($playlistResponse->successful()) {
                 $playlistData = $playlistResponse->json();
                 $playlistTitle = $playlistData['items'][0]['snippet']['title'] ?? '';
-                Log::info("Fetched playlist title from API: {$playlistTitle}");
+                Log::info("🖼️  Fetched playlist title from YouTube API", [
+                    'title' => $playlistTitle,
+                ]);
             }
         } catch (\Exception $e) {
             Log::warning("Failed to fetch playlist title via API: " . $e->getMessage());
         }
+
+        // ALWAYS use YouTube's actual playlist header thumbnail (312x312)
+        // Don't use API thumbnails as they often return video thumbnails instead
+        $playlistThumbnail = "https://i.ytimg.com/pl_c/{$playlistId}/studio_square_thumbnail.jpg";
+        Log::info("📸 Using playlist header thumbnail URL (312x312)", ['url' => $playlistThumbnail]);
 
         $videos = [];
         $pageToken = null;
@@ -559,9 +687,44 @@ class YouTubeScraperService
 
         Log::info("YouTube API fetched {$playlistId}: " . count($videos) . " videos across multiple pages.");
 
+        // Try to get channel thumbnail as artist image (better than video thumbnail)
+        $channelThumbnail = null;
+        if (!empty($videos[0]['channel_id'])) {
+            try {
+                $channelResponse = Http::timeout(10)->get('https://www.googleapis.com/youtube/v3/channels', [
+                    'part' => 'snippet',
+                    'id' => $videos[0]['channel_id'],
+                    'key' => $this->apiKey,
+                ]);
+                if ($channelResponse->successful()) {
+                    $channelData = $channelResponse->json();
+                    $channelThumbs = $channelData['items'][0]['snippet']['thumbnails'] ?? [];
+                    $channelThumbnail = $channelThumbs['high']['url'] ?? $channelThumbs['medium']['url'] ?? $channelThumbs['default']['url'] ?? null;
+                    if ($channelThumbnail) {
+                        Log::info("👤 Fetched channel thumbnail for artist image", ['url' => $channelThumbnail]);
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning("Failed to fetch channel thumbnail: " . $e->getMessage());
+            }
+        }
+
+        // Final fallback priority: playlist thumb > channel thumb > first video thumb
+        if (empty($playlistThumbnail) || str_contains($playlistThumbnail, '/pl_c/')) {
+            if ($channelThumbnail) {
+                $playlistThumbnail = $channelThumbnail;
+                Log::info("🎬 Using channel thumbnail as playlist/artist image", ['url' => $playlistThumbnail]);
+            } elseif (!empty($videos) && !empty($videos[0]['thumbnail_url'])) {
+                $playlistThumbnail = $videos[0]['thumbnail_url'];
+                Log::info("🎬 Using first video's thumbnail as last resort", ['url' => $playlistThumbnail]);
+            }
+        }
+
         return [
             'playlist_id' => $playlistId,
             'title' => $playlistTitle,
+            'thumbnail' => $playlistThumbnail,
+            'channel_thumbnail' => $channelThumbnail, // Save separately for artist use
             'videos' => $videos,
         ];
     }
@@ -829,10 +992,17 @@ class YouTubeScraperService
 
             if (!$artistId) {
                 $artistPayload = ['name' => $artistName];
+                // Use channel thumbnail for artist image (best), fallback to playlist thumb, then first video
+                $channelThumb = $playlist->metadata['channel_thumbnail'] ?? null;
+                $playlistThumb = $playlist->metadata['playlist_thumbnail'] ?? null;
                 $firstVideo = $playlist->videos[0];
-                $img = $this->resolveImage(null, $firstVideo->thumbnail_url, $firstVideo->video_id);
+                $img = $channelThumb ?: ($playlistThumb ?: $this->resolveImage(null, $firstVideo->thumbnail_url, $firstVideo->video_id));
                 if ($img) {
                     $artistPayload['image_small'] = $img;
+                    Log::info("🎨 Using image for artist", [
+                        'source' => $channelThumb ? 'channel' : ($playlistThumb ? 'playlist' : 'video'),
+                        'url' => $img,
+                    ]);
                 }
                 $artistResponse = $this->makePlatformRequest($baseUrl, $token, 'POST', 'artists', $artistPayload);
                 if ($artistResponse->successful()) {
@@ -864,9 +1034,10 @@ class YouTubeScraperService
             // Step 2: Album setup
             $singleAlbumId = null;
             if ($albumMode === 'single') {
-                // One shared album for the whole playlist — manual image overrides scraper
-                $albumImage = $this->resolveImage(
-                    $playlist->manual_image_url,
+                // One shared album for the whole playlist — use playlist thumbnail > manual override > first video
+                $playlistThumb = $playlist->metadata['playlist_thumbnail'] ?? null;
+                $albumImage = $playlist->manual_image_url ?: $playlistThumb ?: $this->resolveImage(
+                    null,
                     $playlist->videos[0]->thumbnail_url,
                     $playlist->videos[0]->video_id ?? null
                 );
@@ -1058,11 +1229,14 @@ class YouTubeScraperService
                 if ($durationMs < 1000) {
                     $durationMs = 60000;
                 }
-                $trackImage = $this->resolveImage(
-                    $video->manual_image_url,
-                    $video->thumbnail_url,
-                    $video->video_id
-                );
+                // Each track gets its own unique per-video YouTube maxresdefault thumbnail
+                $trackImage = $video->manual_image_url;
+                if (empty($trackImage) && $video->video_id) {
+                    $trackImage = "https://i.ytimg.com/vi/{$video->video_id}/maxresdefault.jpg";
+                }
+                if (empty($trackImage)) {
+                    $trackImage = $this->resolveImage(null, $video->thumbnail_url, $video->video_id);
+                }
 
                 // Use video's published date as track release date
                 $trackReleaseDate = date('Y-m-d');
@@ -1076,6 +1250,14 @@ class YouTubeScraperService
                         ]);
                     }
                 }
+
+                Log::info("Track image for push", [
+                    'video_id' => $video->video_id,
+                    'title' => substr($video->title ?? '', 0, 40),
+                    'image_sent' => $trackImage,
+                    'db_thumbnail' => $video->thumbnail_url,
+                    'db_manual' => $video->manual_image_url,
+                ]);
 
                 $trackPayload = [
                     'name' => $video->title ?? 'YouTube Video',
@@ -1200,11 +1382,35 @@ class YouTubeScraperService
                     }
                 }
 
-                // Try including album_id first, but if the streaming API rejects it
-                // (invalid album id), retry once without album_id so tracks still get created.
+                // Rate limit: add delay between track push requests to avoid 429
+                usleep(300000); // 300ms delay between requests
+
+                // Keep image as URL in JSON payload (like albums, not file upload)
+                // The streaming platform expects image URLs in JSON, not multipart file uploads
+                $trackImageUrl = $trackPayload['image'] ?? null;
+
+                // Try including album_id first
                 $payloadWithAlbum = $trackPayload + ['album_id' => $albumIdForTrack];
+
+                // Create track with image URL in JSON (same as albums)
                 $trackRes = $this->makePlatformRequest($baseUrl, $token, 'POST', 'tracks', $payloadWithAlbum);
 
+                // Retry on 429 rate limit with exponential backoff
+                if (!$trackRes->successful() && $trackRes->status() === 429) {
+                    for ($retryAttempt = 1; $retryAttempt <= 3; $retryAttempt++) {
+                        $waitSeconds = pow(2, $retryAttempt); // 2s, 4s, 8s
+                        Log::info("Rate limited (429), waiting {$waitSeconds}s before retry #{$retryAttempt}", [
+                            'video_id' => $video->video_id,
+                        ]);
+                        sleep($waitSeconds);
+                        $trackRes = $this->makePlatformRequest($baseUrl, $token, 'POST', 'tracks', $payloadWithAlbum);
+                        if ($trackRes->successful() || $trackRes->status() !== 429) {
+                            break;
+                        }
+                    }
+                }
+
+                // Handle 422 errors (invalid album_id)
                 if (!$trackRes->successful() && $trackRes->status() === 422) {
                     $json = $trackRes->json();
                     $msg = is_array($json) ? ($json['message'] ?? '') : '';
@@ -1213,7 +1419,7 @@ class YouTubeScraperService
                         || (is_string($albumError) && str_contains($albumError, 'album id'));
 
                     if ($albumInvalid) {
-                        // Retry without album_id so that at least the track is created
+                        // Retry without album_id
                         $trackRes = $this->makePlatformRequest($baseUrl, $token, 'POST', 'tracks', $trackPayload);
                     }
                 }
@@ -1228,6 +1434,57 @@ class YouTubeScraperService
                         ?? $trackJson['data']['id']
                         ?? $trackJson['id']
                         ?? null;
+
+                    // Log API response to verify image field
+                    if ($trackImageUrl) {
+                        $trackData = $trackJson['track'] ?? $trackJson['data']['track'] ?? $trackJson['data'] ?? $trackJson;
+                        $hasImageInResponse = isset($trackData['image']);
+                        Log::info("Streaming API track creation response", [
+                            'track_id' => $trackId,
+                            'video_id' => $video->video_id,
+                            'has_image_field' => $hasImageInResponse,
+                            'returned_image' => $trackData['image'] ?? null,
+                            'sent_image' => $trackImageUrl,
+                        ]);
+
+                        // If image is null in response, update it separately
+                        if ($trackId && !$hasImageInResponse) {
+                            Log::info("Track image not set during creation, updating separately", [
+                                'track_id' => $trackId,
+                                'image_url' => $trackImageUrl,
+                            ]);
+
+                            // Try Method 1: Simple PATCH with JSON (image URL as string)
+                            $imageUpdateRes = $this->makePlatformRequest($baseUrl, $token, 'PATCH', 'tracks/' . $trackId, ['image' => $trackImageUrl]);
+
+                            // If PATCH fails, try Method 2: Multipart file upload
+                            if (!$imageUpdateRes || !$imageUpdateRes->successful()) {
+                                Log::info("PATCH with URL failed, trying multipart file upload", ['track_id' => $trackId]);
+                                $imageUpdateRes = $this->uploadImageToEndpoint($baseUrl, $token, 'PUT', 'tracks/' . $trackId, $trackImageUrl, []);
+                            }
+
+                            if ($imageUpdateRes && $imageUpdateRes->successful()) {
+                                $updateJson = $imageUpdateRes->json();
+                                $updatedTrack = $updateJson['track'] ?? $updateJson['data']['track'] ?? $updateJson['data'] ?? $updateJson;
+                                Log::info("✓ Track image updated successfully!", [
+                                    'track_id' => $trackId,
+                                    'video_id' => $video->video_id,
+                                    'has_image_field' => isset($updatedTrack['image']),
+                                    'image_value' => $updatedTrack['image'] ?? null,
+                                    'method' => 'PATCH or PUT succeeded',
+                                ]);
+                            } else {
+                                $errorBody = $imageUpdateRes ? $imageUpdateRes->body() : 'null';
+                                Log::error("✗ Track image update FAILED after both methods", [
+                                    'track_id' => $trackId,
+                                    'video_id' => $video->video_id,
+                                    'status' => $imageUpdateRes ? $imageUpdateRes->status() : 'null',
+                                    'error_response' => substr($errorBody, 0, 500),
+                                    'tried_methods' => 'PATCH with JSON URL, then PUT with multipart file',
+                                ]);
+                            }
+                        }
+                    }
 
                     // Capture track URL for watchlist (frontend URL, not API)
                     if ($trackId) {
@@ -1323,28 +1580,43 @@ class YouTubeScraperService
 
             $firstVideo = $playlist->videos->first();
 
-            // === STEP 0: Resolve title image (manual override → scraper auto) ===
-            $titleImage = $this->resolveImage(
-                $playlist->manual_image_url,
+            // === STEP 0: Resolve title image — use playlist's main YouTube thumbnail ===
+            $playlistThumb = $playlist->metadata['playlist_thumbnail'] ?? null;
+            $titleImage = $playlist->manual_image_url ?: $playlistThumb ?: $this->resolveImage(
+                null,
                 $firstVideo->thumbnail_url ?? null,
                 $firstVideo->video_id ?? null
             );
+
+            Log::info("Watchlist title image resolved", [
+                'playlist_thumbnail' => $playlistThumb,
+                'manual_image' => $playlist->manual_image_url,
+                'title_image' => $titleImage,
+            ]);
 
             // === STEP 1: Create/Get Person (channel_name → People entity) ===
             $channelName = trim($firstVideo->channel_name ?? '');
             $personId = null;
 
             if (!empty($channelName)) {
+                // Use same playlist thumbnail for person (channel) image
+                $personImage = $playlistThumb ?: $this->resolveImage(
+                    null,
+                    $firstVideo->thumbnail_url ?? null,
+                    $firstVideo->video_id ?? null
+                );
+
                 $personPayload = [
                     'name'        => $channelName,
                     'description' => "YouTube content creator: {$channelName}",
-                    'poster'      => $titleImage,
+                    'poster'      => $personImage,
                     'known_for'   => 'creating',
                 ];
                 $personId = $helper->createOrGetPerson($personPayload);
                 Log::info("Watchlist person resolved", [
                     'channel'   => $channelName,
                     'person_id' => $personId,
+                    'person_image' => $personImage,
                 ]);
             }
 
@@ -1430,11 +1702,15 @@ class YouTubeScraperService
             $videoIndexMap = []; // episode index → video model
 
             foreach ($playlist->videos->values() as $index => $video) {
-                $episodeImage = $this->resolveImage(
-                    $video->manual_image_url,
-                    $video->thumbnail_url,
-                    $video->video_id
-                );
+                // Each episode gets its own unique per-video YouTube thumbnail
+                $episodeImage = $video->manual_image_url;
+                if (empty($episodeImage) && $video->video_id) {
+                    $episodeImage = "https://i.ytimg.com/vi/{$video->video_id}/maxresdefault.jpg";
+                }
+                if (empty($episodeImage)) {
+                    $episodeImage = $this->resolveImage(null, $video->thumbnail_url, $video->video_id);
+                }
+
                 $videoYoutubeUrl = $video->video_url ?: ('https://www.youtube.com/watch?v=' . $video->video_id);
 
                 // Parse episode release date from video's published_at
@@ -1829,6 +2105,34 @@ Return only the genres as a comma-separated list, without explanations or additi
      */
     public function syncToDatabase(array $playlistData): YoutubePlaylist
     {
+        // Merge playlist thumbnail into metadata
+        $existingMetadata = [];
+        $existingPlaylist = YoutubePlaylist::where('playlist_id', $playlistData['playlist_id'])->first();
+        if ($existingPlaylist && is_array($existingPlaylist->metadata)) {
+            $existingMetadata = $existingPlaylist->metadata;
+        }
+        if (!empty($playlistData['thumbnail'])) {
+            $existingMetadata['playlist_thumbnail'] = $playlistData['thumbnail'];
+            Log::info("💾 Saving playlist thumbnail to metadata", [
+                'playlist_id' => $playlistData['playlist_id'],
+                'thumbnail' => $playlistData['thumbnail'],
+            ]);
+        } else {
+            Log::warning("⚠️ No playlist thumbnail found in playlistData", [
+                'playlist_id' => $playlistData['playlist_id'],
+                'has_videos' => !empty($playlistData['videos']),
+            ]);
+        }
+
+        // Also save channel thumbnail for artist image
+        if (!empty($playlistData['channel_thumbnail'])) {
+            $existingMetadata['channel_thumbnail'] = $playlistData['channel_thumbnail'];
+            Log::info("👤 Saving channel thumbnail for artist image", [
+                'playlist_id' => $playlistData['playlist_id'],
+                'channel_thumbnail' => $playlistData['channel_thumbnail'],
+            ]);
+        }
+
         $playlist = YoutubePlaylist::updateOrCreate(
             ['playlist_id' => $playlistData['playlist_id']],
             [
@@ -1836,7 +2140,8 @@ Return only the genres as a comma-separated list, without explanations or additi
                 'title' => $playlistData['title'] ?? null,
                 'description' => $playlistData['description'] ?? null,
                 'video_count' => count($playlistData['videos']),
-                'last_fetched_at' => now()
+                'last_fetched_at' => now(),
+                'metadata' => $existingMetadata,
             ]
         );
 
@@ -2047,6 +2352,114 @@ Return only the genres as a comma-separated list, without explanations or additi
         }
 
         return null;
+    }
+
+    /**
+     * Download an image from URL and upload it to the platform endpoint as a file.
+     * Returns the API response or null on failure.
+     */
+    protected function uploadImageToEndpoint(string $baseUrl, string $token, string $method, string $path, string $imageUrl, array $extraData = []): ?\Illuminate\Http\Client\Response
+    {
+        try {
+            // Download the image
+            $imageResponse = Http::timeout(15)->withoutVerifying()->get($imageUrl);
+            if (!$imageResponse->successful()) {
+                Log::warning("Failed to download image for upload", ['url' => $imageUrl, 'status' => $imageResponse->status()]);
+                return null;
+            }
+
+            $imageContent = $imageResponse->body();
+            $contentType = $imageResponse->header('Content-Type') ?? 'image/jpeg';
+            $extension = str_contains($contentType, 'png') ? 'png' : 'jpg';
+            $tempFile = tempnam(sys_get_temp_dir(), 'yt_img_') . '.' . $extension;
+            file_put_contents($tempFile, $imageContent);
+
+            $url = rtrim($baseUrl, '/') . '/' . ltrim($path, '/');
+
+            $pending = Http::withToken($token)
+                ->withoutVerifying()
+                ->timeout(30)
+                ->withHeaders(['Accept' => 'application/json'])
+                ->attach('image', file_get_contents($tempFile), 'image.' . $extension);
+
+            // Add extra form fields
+            foreach ($extraData as $key => $value) {
+                $pending = $pending->attach($key, is_array($value) ? json_encode($value) : (string) $value);
+            }
+
+            $response = $pending->{strtolower($method)}($url);
+
+            // Clean up temp file
+            @unlink($tempFile);
+
+            return $response;
+        } catch (\Exception $e) {
+            Log::warning("Image upload failed", ['path' => $path, 'url' => $imageUrl, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Create a track with image uploaded as multipart file.
+     * Downloads the image from URL and sends it with track data as multipart/form-data.
+     */
+    protected function createTrackWithImage(string $baseUrl, string $token, array $trackData, string $imageUrl): ?\Illuminate\Http\Client\Response
+    {
+        try {
+            // Download the image
+            $imageResponse = Http::timeout(15)->withoutVerifying()->get($imageUrl);
+            if (!$imageResponse->successful()) {
+                Log::warning("Failed to download track image", ['url' => $imageUrl, 'status' => $imageResponse->status()]);
+                // Fallback: try without image
+                return $this->makePlatformRequest($baseUrl, $token, 'POST', 'tracks', $trackData);
+            }
+
+            $imageContent = $imageResponse->body();
+            $contentType = $imageResponse->header('Content-Type') ?? 'image/jpeg';
+            $extension = str_contains($contentType, 'png') ? 'png' : 'jpg';
+            $tempFile = tempnam(sys_get_temp_dir(), 'track_img_') . '.' . $extension;
+            file_put_contents($tempFile, $imageContent);
+
+            $url = rtrim($baseUrl, '/') . '/tracks';
+
+            $pending = Http::withToken($token)
+                ->withoutVerifying()
+                ->timeout(60)
+                ->withHeaders(['Accept' => 'application/json'])
+                ->attach('image', file_get_contents($tempFile), 'track_image.' . $extension);
+
+            // Add all track data as form fields
+            foreach ($trackData as $key => $value) {
+                if (is_array($value)) {
+                    // For arrays like artists, send as JSON
+                    foreach ($value as $index => $item) {
+                        $pending = $pending->attach("{$key}[{$index}]", (string) $item);
+                    }
+                } else {
+                    $pending = $pending->attach($key, (string) $value);
+                }
+            }
+
+            $response = $pending->post($url);
+
+            // Log the response to see what the streaming API returns
+            if ($response->successful()) {
+                $responseData = $response->json();
+                Log::info("Streaming API track creation response", [
+                    'track_data' => $responseData,
+                    'has_image_in_response' => isset($responseData['track']['image']) || isset($responseData['data']['track']['image']) || isset($responseData['data']['image']) || isset($responseData['image']),
+                ]);
+            }
+
+            // Clean up temp file
+            @unlink($tempFile);
+
+            return $response;
+        } catch (\Exception $e) {
+            Log::warning("Track creation with image failed", ['error' => $e->getMessage()]);
+            // Fallback: try without image
+            return $this->makePlatformRequest($baseUrl, $token, 'POST', 'tracks', $trackData);
+        }
     }
 
     protected function convertDurationToMs(string $duration): int

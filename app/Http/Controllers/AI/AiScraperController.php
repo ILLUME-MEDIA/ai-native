@@ -22,7 +22,7 @@ class AiScraperController extends Controller
     {
         return response()->json(
             YoutubePlaylist::query()
-                ->select(['id', 'playlist_id', 'playlist_url', 'title', 'manual_image_url', 'last_fetched_at', 'created_at'])
+                ->select(['id', 'playlist_id', 'playlist_url', 'title', 'manual_image_url', 'metadata', 'video_count', 'last_fetched_at', 'created_at'])
                 ->withCount('videos')
                 ->latest()
                 ->limit(100)
@@ -43,14 +43,20 @@ class AiScraperController extends Controller
         }
 
         try {
-            // Large playlists can take time – allow up to 5 minutes
-            set_time_limit(300);
+            // Fetch ALL playlist data immediately (title, thumbnails, ALL videos)
+            // Large playlists can take time – allow up to 15 minutes
+            set_time_limit(900);
 
             $maxResults = (int) ($request->input('max_results', 5000));
             $playlistData = $this->scraperService->fetchPlaylist($playlistId, $maxResults);
             $playlist = $this->scraperService->syncToDatabase($playlistData);
             $this->ensurePlaylistSyncDutyExists($playlist);
-            return response()->json(['message' => 'Playlist added and synced.']);
+
+            // Return the playlist with all data for immediate display
+            return response()->json([
+                'message' => 'Playlist added and synced successfully!',
+                'playlist' => $playlist->fresh()->load('videos')->loadCount('videos'),
+            ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -64,13 +70,13 @@ class AiScraperController extends Controller
     public function sync(YoutubePlaylist $playlist)
     {
         try {
-            // Large re-syncs for big playlists – allow more execution time
-            set_time_limit(300);
+            // Large re-syncs for big playlists – allow more execution time (15 minutes)
+            set_time_limit(900);
             // Allow large re-syncs via API while keeping a sensible upper bound
             $playlistData = $this->scraperService->fetchPlaylist($playlist->playlist_id, 10000);
             $this->scraperService->syncToDatabase($playlistData);
 
-            // Auto-enrich after sync to fill any missing stats
+            // Auto-enrich after sync to fill any missing stats (only YouTube stats, not AI)
             $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
 
             return response()->json([
@@ -84,7 +90,8 @@ class AiScraperController extends Controller
 
     public function enrich(YoutubePlaylist $playlist)
     {
-        set_time_limit(120);
+        // AI enrichment can take long for large playlists - allow 15 minutes
+        set_time_limit(900);
 
         try {
             $result = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);

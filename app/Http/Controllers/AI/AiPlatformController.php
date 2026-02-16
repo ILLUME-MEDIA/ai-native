@@ -12,7 +12,7 @@ class AiPlatformController extends Controller
     {
         return response()->json(
             AiPlatform::query()
-                ->select(['id', 'name', 'type', 'is_active'])
+                ->select(['id', 'name', 'type', 'base_url', 'api_token', 'target_section', 'is_active'])
                 ->orderBy('name')
                 ->get()
         );

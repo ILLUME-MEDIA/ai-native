@@ -17,6 +17,7 @@ const Platforms = () => {
         target_section: '',
         is_active: true
     });
+    const [showApiToken, setShowApiToken] = useState(false);
 
     useEffect(() => {
         fetchPlatforms();
@@ -40,7 +41,7 @@ const Platforms = () => {
                 name: platform.name,
                 type: platform.type,
                 base_url: platform.base_url || '',
-                api_token: '', // Don't show existing token
+                api_token: platform.api_token || '', // Show existing token
                 target_section: platform.target_section || '',
                 is_active: platform.is_active
             });
@@ -55,6 +56,7 @@ const Platforms = () => {
                 is_active: true
             });
         }
+        setShowApiToken(false); // Reset token visibility
         setShowModal(true);
     };
 
@@ -115,7 +117,8 @@ const Platforms = () => {
                                             <tr>
                                                 <th>Name</th>
                                                 <th>Type</th>
-                                                <th>Base URL / Target</th>
+                                                <th>Base URL</th>
+                                                <th>API Token</th>
                                                 <th>Status</th>
                                                 <th>Actions</th>
                                             </tr>
@@ -125,6 +128,9 @@ const Platforms = () => {
                                                 <tr key={platform.id}>
                                                     <td>
                                                         <span className="fw-semibold">{platform.name}</span>
+                                                        {platform.target_section && (
+                                                            <small className="text-muted d-block">Section: {platform.target_section}</small>
+                                                        )}
                                                     </td>
                                                     <td>
                                                         <Badge bg={platform.type === 'streaming' ? 'info' : 'warning'}>
@@ -132,8 +138,15 @@ const Platforms = () => {
                                                         </Badge>
                                                     </td>
                                                     <td>
-                                                        <small className="text-muted d-block">
-                                                            {platform.type === 'streaming' ? platform.base_url : `Section: ${platform.target_section}`}
+                                                        <small className="text-muted">
+                                                            {platform.base_url || '—'}
+                                                        </small>
+                                                    </td>
+                                                    <td>
+                                                        <small className="font-monospace text-muted">
+                                                            {platform.api_token
+                                                                ? `${platform.api_token.substring(0, 8)}${'•'.repeat(20)}`
+                                                                : '—'}
                                                         </small>
                                                     </td>
                                                     <td>
@@ -153,7 +166,7 @@ const Platforms = () => {
                                             ))}
                                             {platforms.length === 0 && (
                                                 <tr>
-                                                    <td colSpan="5" className="text-center py-4">
+                                                    <td colSpan="6" className="text-center py-4">
                                                         <div className="text-muted">No platforms configured. Click "Add Platform" to get started.</div>
                                                     </td>
                                                 </tr>
@@ -219,13 +232,30 @@ const Platforms = () => {
 
                         <Form.Group className="mb-3">
                             <Form.Label>API Token / Key</Form.Label>
-                            <Form.Control
-                                type="password"
-                                placeholder={editPlatform ? "Leave blank to keep current" : "Enter API Token"}
-                                value={formData.api_token}
-                                onChange={(e) => setFormData({ ...formData, api_token: e.target.value })}
-                                required={!editPlatform}
-                            />
+                            <div className="position-relative">
+                                <Form.Control
+                                    type={showApiToken ? "text" : "password"}
+                                    placeholder="Enter API Token"
+                                    value={formData.api_token}
+                                    onChange={(e) => setFormData({ ...formData, api_token: e.target.value })}
+                                    required={!editPlatform}
+                                />
+                                <Button
+                                    variant="link"
+                                    size="sm"
+                                    className="position-absolute end-0 top-50 translate-middle-y text-muted"
+                                    onClick={() => setShowApiToken(!showApiToken)}
+                                    style={{ textDecoration: 'none', padding: '0.25rem 0.75rem' }}
+                                >
+                                    <Icon icon={showApiToken ? "eye-off" : "eye"} />
+                                </Button>
+                            </div>
+                            {editPlatform && formData.api_token && (
+                                <Form.Text className="text-success">
+                                    <Icon icon="check-circle" className="me-1" />
+                                    Current token is shown (you can edit or leave as is)
+                                </Form.Text>
+                            )}
                         </Form.Group>
 
                         <Form.Group className="mb-3">
