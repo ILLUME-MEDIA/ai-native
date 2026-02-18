@@ -7,6 +7,7 @@ use App\Models\SectionEntity;
 use App\Models\YelpAccount;
 use App\Models\YelpJob;
 use App\Models\YelpJobLog;
+use App\Models\YelpRowLog;
 use App\Services\YelpService;
 use App\Services\YelpSyncService;
 use Illuminate\Http\JsonResponse;
@@ -211,6 +212,19 @@ class YelpController extends Controller
     {
         $log->refresh();
         return response()->json($log);
+    }
+
+    /** Get per-row logs for a given job log (paginated, 100/page) */
+    public function logRows(Request $request, YelpJobLog $log): JsonResponse
+    {
+        $query = YelpRowLog::where('log_id', $log->id)->orderBy('id');
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $rows = $query->paginate(100);
+        return response()->json($rows);
     }
 
     /** Signal a running log to stop (sets stop_requested_at) */

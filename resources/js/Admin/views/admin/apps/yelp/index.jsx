@@ -703,10 +703,27 @@ function JobsTab() {
     );
 }
 
+// ─── ROW STATUS helpers ───────────────────────────────────────────────────────
+const ROW_STATUS = {
+    updated:   { cls: 'bg-success-subtle text-success',   label: 'Updated'    },
+    found:     { cls: 'bg-info-subtle text-info',         label: 'Found'      },
+    not_found: { cls: 'bg-secondary-subtle text-secondary', label: 'Not Found' },
+    failed:    { cls: 'bg-danger-subtle text-danger',     label: 'Failed'     },
+    skipped:   { cls: 'bg-warning-subtle text-warning',   label: 'Skipped'    },
+    closed:    { cls: 'bg-danger-subtle text-danger',     label: 'Closed'     },
+};
+const getRowStatus = (s) => ROW_STATUS[s] ?? { cls: 'bg-secondary-subtle text-secondary', label: s };
+
 // ─── LOG DETAIL MODAL ─────────────────────────────────────────────────────────
 function LogDetailModal({ log, onClose }) {
-    const [detail, setDetail] = useState(log);
-    const pollRef             = useRef(null);
+    const [detail, setDetail]       = useState(log);
+    const [activeTab, setActiveTab] = useState('summary');
+    const [rowLogs, setRowLogs]     = useState([]);
+    const [rowLoading, setRowLoading] = useState(false);
+    const [rowPage, setRowPage]     = useState(1);
+    const [rowMeta, setRowMeta]     = useState(null);
+    const [rowStatusFilter, setRowStatusFilter] = useState('');
+    const pollRef                   = useRef(null);
 
     // If log is still running, poll for live updates
     useEffect(() => {
@@ -727,6 +744,23 @@ function LogDetailModal({ log, onClose }) {
         return () => clearInterval(pollRef.current);
     }, [log]);
 
+    // Load row logs when switching to row tab
+    const loadRowLogs = useCallback(async (page = 1, statusFilter = rowStatusFilter) => {
+        setRowLoading(true);
+        try {
+            const params = new URLSearchParams({ page });
+            if (statusFilter) params.append('status', statusFilter);
+            const { data } = await api(`logs/${log.id}/rows?${params}`);
+            setRowLogs(data.data);
+            setRowMeta({ total: data.total, lastPage: data.last_page, currentPage: data.current_page });
+            setRowPage(page);
+        } catch { /* ignore */ } finally { setRowLoading(false); }
+    }, [log.id, rowStatusFilter]);
+
+    useEffect(() => {
+        if (activeTab === 'rows') loadRowLogs(1, rowStatusFilter);
+    }, [activeTab, rowStatusFilter]);
+
     if (!detail) return null;
 
     const si      = getStatus(detail.status);
@@ -738,100 +772,205 @@ function LogDetailModal({ log, onClose }) {
         ? Math.round((new Date(detail.completed_at) - new Date(detail.started_at)) / 1000) : null;
     const duration = secs !== null ? (secs < 60 ? `${secs}s` : `${(secs/60).toFixed(1)}m`) : (isLive ? 'Running…' : '—');
 
-    const rows = [
-        { label: 'Updated',       value: detail.processed_rows || 0, cls: 'text-success',   icon: '✓' },
-        { label: 'Perm. Closed',  value: detail.closed_rows    || 0, cls: 'text-danger',    icon: '🔒' },
-        { label: 'Not Found',     value: detail.not_found_rows || 0, cls: 'text-muted',     icon: '?' },
-        { label: 'Failed',        value: detail.failed_rows    || 0, cls: 'text-danger',    icon: '✗' },
-        { label: 'Skipped',       value: detail.skipped_rows   || 0, cls: 'text-secondary', icon: '—' },
-        { label: 'Total Rows',    value: total,                       cls: 'fw-semibold',   icon: '#' },
+    const statCards = [
+        { label: 'Updated',       value: detail.processed_rows || 0, cls: 'text-success',   icon: '✓', key: 'updated'   },
+        { label: 'Perm. Closed',  value: detail.closed_rows    || 0, cls: 'text-danger',    icon: '🔒', key: 'closed'   },
+        { label: 'Not Found',     value: detail.not_found_rows || 0, cls: 'text-muted',     icon: '?', key: 'not_found' },
+        { label: 'Failed',        value: detail.failed_rows    || 0, cls: 'text-danger',    icon: '✗', key: 'failed'    },
+        { label: 'Skipped',       value: detail.skipped_rows   || 0, cls: 'text-secondary', icon: '—', key: 'skipped'   },
+        { label: 'Total Rows',    value: total,                       cls: 'fw-semibold',   icon: '#', key: ''          },
     ];
 
     return (
-        <Modal show onHide={onClose} centered size="lg">
+        <Modal show onHide={onClose} centered size="xl">
             <ModalHeader closeButton>
                 <ModalTitle as="h5">
                     Log Detail — {detail.job?.name ?? `Job #${detail.job_id}`}
                     {isLive && <Spinner animation="border" size="sm" className="ms-2 text-primary" />}
                 </ModalTitle>
             </ModalHeader>
-            <ModalBody>
-                {/* Status + meta */}
-                <div className="d-flex flex-wrap gap-3 mb-4 align-items-start">
-                    <div>
-                        <small className="text-muted d-block mb-1">Status</small>
-                        <span className={`badge fs-sm ${si.cls}`}>{si.label}</span>
-                    </div>
-                    <div>
-                        <small className="text-muted d-block mb-1">Duration</small>
-                        <strong>{duration}</strong>
-                    </div>
-                    <div>
-                        <small className="text-muted d-block mb-1">Started</small>
-                        <strong>{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}</strong>
-                    </div>
-                    <div>
-                        <small className="text-muted d-block mb-1">Completed</small>
-                        <strong>{detail.completed_at ? new Date(detail.completed_at).toLocaleString() : '—'}</strong>
-                    </div>
-                    {detail.account && (
+            <ModalBody style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+
+                {/* Tab switcher */}
+                <Nav variant="tabs" className="mb-3">
+                    <Nav.Item>
+                        <Nav.Link active={activeTab === 'summary'} onClick={() => setActiveTab('summary')} style={{ cursor: 'pointer' }}>
+                            Summary
+                        </Nav.Link>
+                    </Nav.Item>
+                    <Nav.Item>
+                        <Nav.Link active={activeTab === 'rows'} onClick={() => setActiveTab('rows')} style={{ cursor: 'pointer' }}>
+                            Row Logs {rowMeta ? <span className="badge bg-secondary ms-1">{rowMeta.total.toLocaleString()}</span> : ''}
+                        </Nav.Link>
+                    </Nav.Item>
+                </Nav>
+
+                {activeTab === 'summary' && (<>
+                    {/* Status + meta */}
+                    <div className="d-flex flex-wrap gap-3 mb-4 align-items-start">
                         <div>
-                            <small className="text-muted d-block mb-1">API Account</small>
-                            <strong>{detail.account.name}</strong>
+                            <small className="text-muted d-block mb-1">Status</small>
+                            <span className={`badge fs-sm ${si.cls}`}>{si.label}</span>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Duration</small>
+                            <strong>{duration}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Started</small>
+                            <strong>{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Completed</small>
+                            <strong>{detail.completed_at ? new Date(detail.completed_at).toLocaleString() : '—'}</strong>
+                        </div>
+                        {detail.account && (
+                            <div>
+                                <small className="text-muted d-block mb-1">API Account</small>
+                                <strong>{detail.account.name}</strong>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Progress bar */}
+                    {total > 0 && (
+                        <div className="mb-4">
+                            <div className="d-flex justify-content-between mb-1">
+                                <small className="fw-semibold">Progress</small>
+                                <small className="fw-semibold">{done} / {total} rows ({pct}%)</small>
+                            </div>
+                            <ProgressBar now={pct} animated={isLive}
+                                variant={isLive ? 'primary' : (detail.status === 'failed' ? 'danger' : 'success')}
+                                style={{ height: 10, borderRadius: 6 }} />
                         </div>
                     )}
-                </div>
 
-                {/* Progress bar */}
-                {total > 0 && (
+                    {/* Row breakdown — click a card to filter row logs */}
                     <div className="mb-4">
-                        <div className="d-flex justify-content-between mb-1">
-                            <small className="fw-semibold">Progress</small>
-                            <small className="fw-semibold">{done} / {total} rows ({pct}%)</small>
-                        </div>
-                        <ProgressBar now={pct} animated={isLive}
-                            variant={isLive ? 'primary' : (detail.status === 'failed' ? 'danger' : 'success')}
-                            style={{ height: 10, borderRadius: 6 }} />
-                    </div>
-                )}
-
-                {/* Row breakdown */}
-                <div className="mb-4">
-                    <h6 className="mb-2">Row Breakdown</h6>
-                    <Row className="g-2">
-                        {rows.map(({ label, value, cls, icon }) => (
-                            <Col xs={6} md={4} key={label}>
-                                <div className="p-3 rounded border text-center">
-                                    <div className={`fs-4 fw-bold ${cls}`}>{value.toLocaleString()}</div>
-                                    <small className="text-muted">{icon} {label}</small>
-                                </div>
-                            </Col>
-                        ))}
-                    </Row>
-                </div>
-
-                {/* New columns added */}
-                {detail.new_columns_added?.length > 0 && (
-                    <div className="mb-4">
-                        <h6 className="mb-2">Auto-Created Columns</h6>
-                        <div className="d-flex flex-wrap gap-2">
-                            {detail.new_columns_added.map(c => (
-                                <span key={c} className="badge bg-warning-subtle text-warning fs-sm">+ {c}</span>
+                        <h6 className="mb-2">Row Breakdown <small className="text-muted fw-normal">(click to filter row logs)</small></h6>
+                        <Row className="g-2">
+                            {statCards.map(({ label, value, cls, icon, key }) => (
+                                <Col xs={6} md={4} key={label}>
+                                    <div className={`p-3 rounded border text-center ${key ? 'cursor-pointer' : ''}`}
+                                        style={{ cursor: key ? 'pointer' : 'default' }}
+                                        onClick={() => { if (key) { setRowStatusFilter(key); setActiveTab('rows'); } }}>
+                                        <div className={`fs-4 fw-bold ${cls}`}>{value.toLocaleString()}</div>
+                                        <small className="text-muted">{icon} {label}</small>
+                                    </div>
+                                </Col>
                             ))}
-                        </div>
+                        </Row>
                     </div>
-                )}
 
-                {/* Error */}
-                {detail.error_message && (
-                    <div>
-                        <h6 className="mb-2 text-danger">Error</h6>
-                        <pre className="p-3 rounded mb-0"
-                            style={{ background: '#1e1e2e', color: '#f38ba8', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                            {detail.error_message}
-                        </pre>
+                    {/* New columns added */}
+                    {detail.new_columns_added?.length > 0 && (
+                        <div className="mb-4">
+                            <h6 className="mb-2">Auto-Created Columns</h6>
+                            <div className="d-flex flex-wrap gap-2">
+                                {detail.new_columns_added.map(c => (
+                                    <span key={c} className="badge bg-warning-subtle text-warning fs-sm">+ {c}</span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Error */}
+                    {detail.error_message && (
+                        <div>
+                            <h6 className="mb-2 text-danger">Error</h6>
+                            <pre className="p-3 rounded mb-0"
+                                style={{ background: '#1e1e2e', color: '#f38ba8', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                {detail.error_message}
+                            </pre>
+                        </div>
+                    )}
+                </>)}
+
+                {activeTab === 'rows' && (<>
+                    {/* Filter bar */}
+                    <div className="d-flex align-items-center gap-2 mb-3">
+                        <Form.Select size="sm" style={{ width: 160 }} value={rowStatusFilter}
+                            onChange={e => setRowStatusFilter(e.target.value)}>
+                            <option value="">All statuses</option>
+                            {Object.entries(ROW_STATUS).map(([k, v]) => (
+                                <option key={k} value={k}>{v.label}</option>
+                            ))}
+                        </Form.Select>
+                        <button className="btn btn-light btn-sm btn-icon" title="Refresh" onClick={() => loadRowLogs(rowPage)}>
+                            <Icon icon="refresh" className="fs-lg" />
+                        </button>
+                        {rowMeta && <small className="text-muted">{rowMeta.total.toLocaleString()} entries</small>}
                     </div>
-                )}
+
+                    {rowLoading ? (
+                        <div className="text-center py-4"><Spinner animation="border" size="sm" /></div>
+                    ) : rowLogs.length === 0 ? (
+                        <div className="text-center text-muted py-4">No row logs yet. Run a job first.</div>
+                    ) : (<>
+                        <div className="table-responsive">
+                            <table className="table table-sm table-hover mb-0 align-middle" style={{ fontSize: 13 }}>
+                                <thead className="table-light">
+                                    <tr>
+                                        <th>Row ID</th>
+                                        <th>Status</th>
+                                        <th>Search Term Sent</th>
+                                        <th>Location Sent</th>
+                                        <th>Yelp Result</th>
+                                        <th>Rating</th>
+                                        <th>Note</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rowLogs.map(r => {
+                                        const rs = getRowStatus(r.status);
+                                        return (
+                                            <tr key={r.id}>
+                                                <td className="font-monospace text-muted">#{r.row_id ?? '—'}</td>
+                                                <td><span className={`badge ${rs.cls}`}>{rs.label}</span></td>
+                                                <td>
+                                                    {r.search_term
+                                                        ? <span className="text-body">{r.search_term}</span>
+                                                        : <span className="text-danger fst-italic">empty</span>}
+                                                </td>
+                                                <td>
+                                                    {r.search_location
+                                                        ? <span className="text-muted">{r.search_location}</span>
+                                                        : <span className="text-warning fst-italic">none</span>}
+                                                </td>
+                                                <td>
+                                                    {r.yelp_name ? (
+                                                        <div>
+                                                            <span className="text-body fw-semibold">{r.yelp_name}</span>
+                                                            {r.yelp_city && <small className="text-muted d-block">{r.yelp_city}</small>}
+                                                        </div>
+                                                    ) : <span className="text-muted">—</span>}
+                                                </td>
+                                                <td>{r.yelp_rating ?? '—'}</td>
+                                                <td>
+                                                    {r.error && <small className="text-danger">{r.error}</small>}
+                                                    {r.yelp_is_closed && <span className="badge bg-danger-subtle text-danger">Perm. Closed</span>}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Pagination */}
+                        {rowMeta && rowMeta.lastPage > 1 && (
+                            <div className="d-flex align-items-center justify-content-between mt-3">
+                                <small className="text-muted">Page {rowMeta.currentPage} of {rowMeta.lastPage}</small>
+                                <div className="d-flex gap-1">
+                                    <button className="btn btn-light btn-sm" disabled={rowMeta.currentPage <= 1}
+                                        onClick={() => loadRowLogs(rowMeta.currentPage - 1)}>‹ Prev</button>
+                                    <button className="btn btn-light btn-sm" disabled={rowMeta.currentPage >= rowMeta.lastPage}
+                                        onClick={() => loadRowLogs(rowMeta.currentPage + 1)}>Next ›</button>
+                                </div>
+                            </div>
+                        )}
+                    </>)}
+                </>)}
             </ModalBody>
             <ModalFooter>
                 <button className="btn btn-light" onClick={onClose}>Close</button>

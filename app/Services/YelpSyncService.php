@@ -7,6 +7,7 @@ use App\Models\SectionField;
 use App\Models\YelpAccount;
 use App\Models\YelpJob;
 use App\Models\YelpJobLog;
+use App\Models\YelpRowLog;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Schema\Blueprint;
@@ -49,6 +50,9 @@ class YelpSyncService
     public function run(YelpJob $job, YelpJobLog $log): void
     {
         $log->update(['status' => 'running', 'started_at' => now()]);
+
+        // Auto-cleanup: delete row logs older than 2 days to keep DB lean
+        YelpRowLog::whereHas('log', fn ($q) => $q->where('started_at', '<', now()->subDays(2)))->delete();
 
         $entity = $job->entity;
         if (!$entity) {
@@ -163,6 +167,12 @@ class YelpSyncService
                     if (!$term) {
                         $skipped++;
                         if ($rowId) $lastProcessedId = $rowId;
+                        YelpRowLog::create([
+                            'log_id'      => $log->id,
+                            'row_id'      => $rowId,
+                            'status'      => 'skipped',
+                            'error'       => 'Search term column is empty or not mapped',
+                        ]);
                         if (($skipped % 10) === 0) {
                             $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                         }
@@ -182,6 +192,13 @@ class YelpSyncService
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
                             $lastProcessedId = $rowId;
                         }
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'not_found',
+                        ]);
                         $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                         usleep(300000);
                         continue;
@@ -199,6 +216,16 @@ class YelpSyncService
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
                             $lastProcessedId = $rowId;
                         }
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'failed',
+                            'yelp_id'         => $match['id'] ?? null,
+                            'yelp_name'       => $match['name'] ?? null,
+                            'error'           => 'Details fetch returned null',
+                        ]);
                         $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                         usleep(300000);
                         continue;
@@ -217,6 +244,18 @@ class YelpSyncService
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
                             $lastProcessedId = $rowId;
                         }
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'closed',
+                            'yelp_id'         => $details['id'] ?? null,
+                            'yelp_name'       => $details['name'] ?? null,
+                            'yelp_city'       => $details['location']['city'] ?? null,
+                            'yelp_rating'     => $details['rating'] ?? null,
+                            'yelp_is_closed'  => true,
+                        ]);
                         $closedRows++;
                         $processed++;
                         $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
@@ -233,6 +272,18 @@ class YelpSyncService
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
                             $lastProcessedId = $rowId;
                         }
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'found',
+                            'yelp_id'         => $details['id'] ?? null,
+                            'yelp_name'       => $details['name'] ?? null,
+                            'yelp_city'       => $details['location']['city'] ?? null,
+                            'yelp_rating'     => $details['rating'] ?? null,
+                            'yelp_is_closed'  => false,
+                        ]);
                         $processed++;
                         $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                         usleep(300000);
@@ -257,11 +308,36 @@ class YelpSyncService
                         DB::table($tableName)->where('id', $rowId)->update($updates);
                         $lastProcessedId = $rowId;
                         $processed++;
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'updated',
+                            'yelp_id'         => $details['id'] ?? null,
+                            'yelp_name'       => $details['name'] ?? null,
+                            'yelp_city'       => $details['location']['city'] ?? null,
+                            'yelp_rating'     => $details['rating'] ?? null,
+                            'yelp_is_closed'  => false,
+                        ]);
                     } else {
                         if ($rowId) {
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
                             $lastProcessedId = $rowId;
                         }
+                        YelpRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'status'          => 'found',
+                            'yelp_id'         => $details['id'] ?? null,
+                            'yelp_name'       => $details['name'] ?? null,
+                            'yelp_city'       => $details['location']['city'] ?? null,
+                            'yelp_rating'     => $details['rating'] ?? null,
+                            'yelp_is_closed'  => false,
+                            'error'           => 'No column mappings matched',
+                        ]);
                         $skipped++;
                     }
 
