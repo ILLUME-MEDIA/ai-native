@@ -113,6 +113,19 @@ class FieldController extends Controller
             'mcp_writable' => ['sometimes', 'boolean'],
         ]);
 
+        // Agar column_name change hua hai to database column bhi rename karo
+        if (isset($data['column_name']) && $data['column_name'] !== $field->column_name) {
+            $tableName  = $resolved->table_name;
+            $oldColumn  = $field->column_name;
+            $newColumn  = $data['column_name'];
+
+            if (Schema::hasTable($tableName) && Schema::hasColumn($tableName, $oldColumn)) {
+                Schema::table($tableName, function (\Illuminate\Database\Schema\Blueprint $table) use ($oldColumn, $newColumn) {
+                    $table->renameColumn($oldColumn, $newColumn);
+                });
+            }
+        }
+
         $field->fill($data);
         $field->save();
 

@@ -1,0 +1,8 @@
+# OTP Settings
+OTP_EXPIRES_MINUTES=10
+OTP_LENGTH=6
+OTP_MAX_ATTEMPTS=5
+OTP_RESEND_COOLDOWN=60
+
+# Sanctum token lifetime in days (issued after successful OTP verify)
+OTP_TOKEN_EXPIRES_DAYS=30

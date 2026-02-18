@@ -533,6 +533,16 @@ export const menuItems = [{
     slug: "pages:ai-scrapers",
     label: "YouTube Scrapers"
   }, {
+    icon: "star",
+    url: "/apps/yelp",
+    slug: "pages:yelp",
+    label: "Yelp Integration"
+  }, {
+    icon: "mail-check",
+    url: "/apps/otp-auth",
+    slug: "pages:otp-auth",
+    label: "OTP Auth"
+  }, {
     icon: "sparkles",
     url: "/ai/skills",
     slug: "pages:ai-skills",

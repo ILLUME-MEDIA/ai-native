@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\SectionBuilder\EntityController;
 use App\Http\Controllers\SectionBuilder\FieldController;
 use App\Http\Controllers\SectionBuilder\CombinedEntityController;
+use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
 use App\Http\Controllers\PublicApi\CaseStudyController;
@@ -53,6 +55,32 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/section-builder/entities/{entity}/fields/reorder', [FieldController::class, 'reorder'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.reorder');
+
+    // ── Yelp Integration ────────────────────────────────────────────────────
+    Route::prefix('yelp')->group(function () {
+        // Meta
+        Route::get('fields',    [YelpController::class, 'yelpFields']);
+        Route::get('entities',  [YelpController::class, 'entities']);
+
+        // Accounts
+        Route::get('accounts',                      [YelpController::class, 'accountsIndex']);
+        Route::post('accounts',                     [YelpController::class, 'accountsStore']);
+        Route::post('accounts/verify',              [YelpController::class, 'accountsVerify']);
+        Route::patch('accounts/{account}',          [YelpController::class, 'accountsUpdate']);
+        Route::delete('accounts/{account}',         [YelpController::class, 'accountsDestroy']);
+
+        // Jobs
+        Route::get('jobs',                          [YelpController::class, 'jobsIndex']);
+        Route::post('jobs',                         [YelpController::class, 'jobsStore']);
+        Route::patch('jobs/{job}',                  [YelpController::class, 'jobsUpdate']);
+        Route::delete('jobs/{job}',                 [YelpController::class, 'jobsDestroy']);
+        Route::post('jobs/{job}/run',               [YelpController::class, 'jobsRun']);
+
+        // Logs
+        Route::get('logs',                          [YelpController::class, 'logsIndex']);
+        Route::get('logs/{log}',                    [YelpController::class, 'logProgress']);
+        Route::post('logs/{log}/stop',              [YelpController::class, 'logStop']);
+    });
 
     //
 
@@ -205,4 +233,27 @@ Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
 // Public Case Studies API (for marketing site / portfolio)
 Route::get('/case-studies', [CaseStudyController::class, 'index']);
 Route::get('/case-studies/{slug}', [CaseStudyController::class, 'show']);
+
+// ============================================================
+// OTP Auth — All routes fully public (no auth required)
+// Used by admin SPA + any external site.
+// ============================================================
+Route::prefix('otp-auth')->middleware('throttle:60,1')->group(function () {
+    Route::post('send',             [OtpAuthController::class, 'send'])      ->name('auth.otp.send');
+    Route::post('verify',           [OtpAuthController::class, 'verify'])    ->name('auth.otp.verify');
+    Route::post('resend',           [OtpAuthController::class, 'resend'])    ->name('auth.otp.resend');
+    Route::post('complete-profile', [OtpAuthController::class, 'completeProfile'])->name('auth.otp.complete-profile');
+    Route::get('settings',          [OtpAuthController::class, 'settingsGet'])   ->name('otp-auth.settings.get');
+    Route::put('settings',          [OtpAuthController::class, 'settingsUpdate'])->name('otp-auth.settings.update');
+    Route::get('tables',            [OtpAuthController::class, 'tablesIndex'])   ->name('otp-auth.tables');
+    Route::get('logs',              [OtpAuthController::class, 'logsIndex'])     ->name('otp-auth.logs');
+});
+
+// Backward-compat aliases (old prefix)
+Route::prefix('auth/otp')->middleware('throttle:60,1')->group(function () {
+    Route::post('send',             [OtpAuthController::class, 'send']);
+    Route::post('verify',           [OtpAuthController::class, 'verify']);
+    Route::post('resend',           [OtpAuthController::class, 'resend']);
+    Route::post('complete-profile', [OtpAuthController::class, 'completeProfile']);
+});
 

@@ -27,7 +27,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'mcp.check' => \App\Http\Middleware\CheckMcpPermissions::class,
-            'mcp.auth' => \App\Http\Middleware\McpOrSanctumAuth::class,
+            'mcp.auth'  => \App\Http\Middleware\McpOrSanctumAuth::class,
+            'otp.admin' => \App\Http\Middleware\OtpAdminAuth::class,
         ]);
 
         //

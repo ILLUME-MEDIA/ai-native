@@ -14,3 +14,10 @@ Schedule::command('ai:duties:execute')
     ->withoutOverlapping()
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/ai-duties.log'));
+
+// Schedule Yelp sync jobs every minute (checks next_run_at per job)
+Schedule::command('yelp:run-jobs')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/yelp-sync.log'));

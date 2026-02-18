@@ -297,6 +297,12 @@ export const routes = [
     path: '/apps/todo',
     Component: lazy(() => import('@admin/views/admin/apps/todo'))
   }, {
+    path: '/apps/yelp',
+    Component: lazy(() => import('@admin/views/admin/apps/yelp'))
+  }, {
+    path: '/apps/otp-auth',
+    Component: lazy(() => import('@admin/views/admin/apps/otp-auth'))
+  }, {
     path: '/ai/endpoints',
     Component: lazy(() => import('@admin/views/admin/ai-agent/Endpoints'))
   }, {
