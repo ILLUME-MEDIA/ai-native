@@ -154,8 +154,8 @@ class YelpController extends Controller
     }
 
     /**
-     * Run a job immediately (synchronous).
-     * For large tables the request will be slow – consider moving to a queue later.
+     * Run a job in the background (dispatched after HTTP response).
+     * Returns immediately with the log record so the frontend can start polling.
      */
     public function jobsRun(YelpJob $job): JsonResponse
     {
@@ -173,16 +173,18 @@ class YelpController extends Controller
             'started_at' => now(),
         ]);
 
-        try {
-            (new YelpSyncService())->run($job, $log);
-        } catch (\Throwable $e) {
-            $log->update([
-                'status'        => 'failed',
-                'error_message' => $e->getMessage(),
-                'completed_at'  => now(),
-            ]);
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
+        // Run after the HTTP response is sent — no queue worker required.
+        dispatch(function () use ($job, $log) {
+            try {
+                (new YelpSyncService())->run($job, $log);
+            } catch (\Throwable $e) {
+                $log->update([
+                    'status'        => 'failed',
+                    'error_message' => $e->getMessage(),
+                    'completed_at'  => now(),
+                ]);
+            }
+        })->afterResponse();
 
         return response()->json($log->fresh());
     }

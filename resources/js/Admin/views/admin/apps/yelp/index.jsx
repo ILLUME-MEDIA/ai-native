@@ -703,12 +703,150 @@ function JobsTab() {
     );
 }
 
+// ─── LOG DETAIL MODAL ─────────────────────────────────────────────────────────
+function LogDetailModal({ log, onClose }) {
+    const [detail, setDetail] = useState(log);
+    const pollRef             = useRef(null);
+
+    // If log is still running, poll for live updates
+    useEffect(() => {
+        if (!log) return;
+        setDetail(log);
+        const isLive = ['running', 'pending'].includes(log.status);
+        if (isLive) {
+            pollRef.current = setInterval(async () => {
+                try {
+                    const { data } = await api(`logs/${log.id}`);
+                    setDetail(data);
+                    if (!['running', 'pending'].includes(data.status)) {
+                        clearInterval(pollRef.current);
+                    }
+                } catch { /* ignore */ }
+            }, 2000);
+        }
+        return () => clearInterval(pollRef.current);
+    }, [log]);
+
+    if (!detail) return null;
+
+    const si      = getStatus(detail.status);
+    const total   = detail.total_rows || 0;
+    const done    = (detail.processed_rows||0)+(detail.skipped_rows||0)+(detail.not_found_rows||0)+(detail.closed_rows||0);
+    const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+    const isLive  = ['running', 'pending'].includes(detail.status);
+    const secs    = detail.started_at && detail.completed_at
+        ? Math.round((new Date(detail.completed_at) - new Date(detail.started_at)) / 1000) : null;
+    const duration = secs !== null ? (secs < 60 ? `${secs}s` : `${(secs/60).toFixed(1)}m`) : (isLive ? 'Running…' : '—');
+
+    const rows = [
+        { label: 'Updated',       value: detail.processed_rows || 0, cls: 'text-success',   icon: '✓' },
+        { label: 'Perm. Closed',  value: detail.closed_rows    || 0, cls: 'text-danger',    icon: '🔒' },
+        { label: 'Not Found',     value: detail.not_found_rows || 0, cls: 'text-muted',     icon: '?' },
+        { label: 'Failed',        value: detail.failed_rows    || 0, cls: 'text-danger',    icon: '✗' },
+        { label: 'Skipped',       value: detail.skipped_rows   || 0, cls: 'text-secondary', icon: '—' },
+        { label: 'Total Rows',    value: total,                       cls: 'fw-semibold',   icon: '#' },
+    ];
+
+    return (
+        <Modal show onHide={onClose} centered size="lg">
+            <ModalHeader closeButton>
+                <ModalTitle as="h5">
+                    Log Detail — {detail.job?.name ?? `Job #${detail.job_id}`}
+                    {isLive && <Spinner animation="border" size="sm" className="ms-2 text-primary" />}
+                </ModalTitle>
+            </ModalHeader>
+            <ModalBody>
+                {/* Status + meta */}
+                <div className="d-flex flex-wrap gap-3 mb-4 align-items-start">
+                    <div>
+                        <small className="text-muted d-block mb-1">Status</small>
+                        <span className={`badge fs-sm ${si.cls}`}>{si.label}</span>
+                    </div>
+                    <div>
+                        <small className="text-muted d-block mb-1">Duration</small>
+                        <strong>{duration}</strong>
+                    </div>
+                    <div>
+                        <small className="text-muted d-block mb-1">Started</small>
+                        <strong>{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}</strong>
+                    </div>
+                    <div>
+                        <small className="text-muted d-block mb-1">Completed</small>
+                        <strong>{detail.completed_at ? new Date(detail.completed_at).toLocaleString() : '—'}</strong>
+                    </div>
+                    {detail.account && (
+                        <div>
+                            <small className="text-muted d-block mb-1">API Account</small>
+                            <strong>{detail.account.name}</strong>
+                        </div>
+                    )}
+                </div>
+
+                {/* Progress bar */}
+                {total > 0 && (
+                    <div className="mb-4">
+                        <div className="d-flex justify-content-between mb-1">
+                            <small className="fw-semibold">Progress</small>
+                            <small className="fw-semibold">{done} / {total} rows ({pct}%)</small>
+                        </div>
+                        <ProgressBar now={pct} animated={isLive}
+                            variant={isLive ? 'primary' : (detail.status === 'failed' ? 'danger' : 'success')}
+                            style={{ height: 10, borderRadius: 6 }} />
+                    </div>
+                )}
+
+                {/* Row breakdown */}
+                <div className="mb-4">
+                    <h6 className="mb-2">Row Breakdown</h6>
+                    <Row className="g-2">
+                        {rows.map(({ label, value, cls, icon }) => (
+                            <Col xs={6} md={4} key={label}>
+                                <div className="p-3 rounded border text-center">
+                                    <div className={`fs-4 fw-bold ${cls}`}>{value.toLocaleString()}</div>
+                                    <small className="text-muted">{icon} {label}</small>
+                                </div>
+                            </Col>
+                        ))}
+                    </Row>
+                </div>
+
+                {/* New columns added */}
+                {detail.new_columns_added?.length > 0 && (
+                    <div className="mb-4">
+                        <h6 className="mb-2">Auto-Created Columns</h6>
+                        <div className="d-flex flex-wrap gap-2">
+                            {detail.new_columns_added.map(c => (
+                                <span key={c} className="badge bg-warning-subtle text-warning fs-sm">+ {c}</span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Error */}
+                {detail.error_message && (
+                    <div>
+                        <h6 className="mb-2 text-danger">Error</h6>
+                        <pre className="p-3 rounded mb-0"
+                            style={{ background: '#1e1e2e', color: '#f38ba8', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                            {detail.error_message}
+                        </pre>
+                    </div>
+                )}
+            </ModalBody>
+            <ModalFooter>
+                <button className="btn btn-light" onClick={onClose}>Close</button>
+            </ModalFooter>
+        </Modal>
+    );
+}
+
 // ─── LOGS TAB ─────────────────────────────────────────────────────────────────
 function LogsTab() {
     const [logs, setLogs]           = useState([]);
     const [jobs, setJobs]           = useState([]);
     const [loading, setLoading]     = useState(true);
     const [jobFilter, setJobFilter] = useState('');
+    const [detailLog, setDetailLog] = useState(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -724,6 +862,7 @@ function LogsTab() {
     useEffect(() => { load(); }, [load]);
 
     return (
+        <>
         <Card>
             <CardHeader className="border-light justify-content-between">
                 <h5 className="card-title mb-0">Run Logs</h5>
@@ -758,6 +897,7 @@ function LogsTab() {
                                 <th>Row Breakdown</th>
                                 <th>Duration</th>
                                 <th>Started</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -774,7 +914,11 @@ function LogsTab() {
                                         <td>
                                             <strong>{log.job?.name ?? `Job #${log.job_id}`}</strong>
                                             {log.account && <small className="text-muted d-block">via {log.account.name}</small>}
-                                            {log.error_message && <small className="text-danger d-block">{log.error_message}</small>}
+                                            {log.error_message && (
+                                                <small className="text-danger d-block text-truncate" style={{ maxWidth: 200 }} title={log.error_message}>
+                                                    {log.error_message}
+                                                </small>
+                                            )}
                                             {log.new_columns_added?.length > 0 && (
                                                 <div className="d-flex flex-wrap gap-1 mt-1">
                                                     {log.new_columns_added.map(c => (
@@ -806,6 +950,12 @@ function LogsTab() {
                                         </td>
                                         <td>{duration}</td>
                                         <td><small>{log.started_at ? new Date(log.started_at).toLocaleString() : '—'}</small></td>
+                                        <td>
+                                            <button className="btn btn-soft-info btn-sm btn-icon" title="View Details"
+                                                onClick={() => setDetailLog(log)}>
+                                                <Icon icon="eye" className="fs-lg" />
+                                            </button>
+                                        </td>
                                     </tr>
                                 );
                             })}
@@ -814,6 +964,9 @@ function LogsTab() {
                 </div>
             )}
         </Card>
+
+        {detailLog && <LogDetailModal log={detailLog} onClose={() => setDetailLog(null)} />}
+        </>
     );
 }
 
