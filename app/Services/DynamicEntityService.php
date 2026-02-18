@@ -4,10 +4,12 @@ namespace App\Services;
 
 use App\Models\SectionEntity;
 use App\Models\SectionField;
+use App\Models\SectionRelation;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -238,7 +240,14 @@ class DynamicEntityService
 
         $perPage = (int) $request->input('per_page', 15);
 
-        return $model->paginate($perPage);
+        $paginator = $model->paginate($perPage);
+
+        // Enrich each record with belongsTo relation data
+        $paginator->setCollection(
+            $this->enrichCollection($paginator->getCollection(), $entity)
+        );
+
+        return $paginator;
     }
 
     public function show(SectionEntity $entity, int|string $id, array $context = [])
@@ -250,7 +259,12 @@ class DynamicEntityService
         /** @var Builder $model */
         $model = $this->makeBaseQuery($entity, $context);
 
-        return $model->findOrFail($id);
+        $record = $model->findOrFail($id);
+
+        // Enrich with belongsTo data + hasMany/hasOne children
+        $this->enrichRecord($record, $entity, includeChildren: true);
+
+        return $record;
     }
 
     public function store(SectionEntity $entity, array $payload, array $context = [])
@@ -264,7 +278,10 @@ class DynamicEntityService
         $fillable = $this->writableFields($entity, $context);
         $data = Arr::only($payload, $fillable);
 
-        return $modelClass->newQuery()->create($data);
+        $record = $modelClass->newQuery()->create($data);
+        $this->enrichRecord($record, $entity);
+
+        return $record;
     }
 
     public function update(SectionEntity $entity, int|string $id, array $payload, array $context = [])
@@ -281,6 +298,8 @@ class DynamicEntityService
 
         $record->fill($data);
         $record->save();
+
+        $this->enrichRecord($record, $entity);
 
         return $record;
     }
@@ -396,6 +415,173 @@ class DynamicEntityService
         return $instance;
     }
 
+    // ─── Relation Enrichment ─────────────────────────────────────────────────
+
+    /**
+     * Bulk-enrich a collection of records with belongsTo relation data.
+     * One query per relation field (not N+1).
+     */
+    protected function enrichCollection(Collection $records, SectionEntity $entity): Collection
+    {
+        if ($records->isEmpty()) {
+            return $records;
+        }
+
+        $entity->loadMissing('fields.relatedEntity');
+
+        $belongsToFields = $entity->fields->filter(
+            fn($f) => $f->related_entity_id && $f->relatedEntity && $f->relation_type === 'belongsTo'
+        );
+
+        if ($belongsToFields->isEmpty()) {
+            return $records;
+        }
+
+        // Build a lookup map per FK field: [fkValue => relatedRecord]
+        $lookup = [];
+        foreach ($belongsToFields as $field) {
+            $fkValues = $records->pluck($field->column_name)->filter()->unique()->values()->all();
+            if (empty($fkValues)) {
+                continue;
+            }
+
+            $relatedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($relatedTable)) {
+                continue;
+            }
+
+            $lookup[$field->column_name] = DB::table($relatedTable)
+                ->whereIn('id', $fkValues)
+                ->get()
+                ->keyBy('id');
+        }
+
+        // Attach relation data to each record
+        return $records->map(function ($record) use ($belongsToFields, $lookup) {
+            foreach ($belongsToFields as $field) {
+                $fkValue = $record->{$field->column_name} ?? null;
+                if ($fkValue !== null && isset($lookup[$field->column_name][$fkValue])) {
+                    $related = (array) $lookup[$field->column_name][$fkValue];
+                    $record->setAttribute($field->column_name . '_relation', $related);
+                }
+            }
+            return $record;
+        });
+    }
+
+    /**
+     * Enrich a single record with relation data.
+     *
+     * $includeChildren = true → also fetch hasMany / hasOne children
+     * (used for show() so the full record is returned with nested data)
+     */
+    protected function enrichRecord($record, SectionEntity $entity, bool $includeChildren = false): void
+    {
+        $entity->loadMissing('fields.relatedEntity');
+
+        // ── belongsTo fields ──────────────────────────────────────────────
+        foreach ($entity->fields as $field) {
+            if (! $field->related_entity_id || ! $field->relatedEntity) {
+                continue;
+            }
+
+            if ($field->relation_type === 'belongsTo') {
+                $fkValue = $record->{$field->column_name} ?? null;
+                if ($fkValue === null) {
+                    continue;
+                }
+
+                $relatedTable = $field->relatedEntity->table_name;
+                if (! Schema::hasTable($relatedTable)) {
+                    continue;
+                }
+
+                $related = DB::table($relatedTable)->find($fkValue);
+                $record->setAttribute(
+                    $field->column_name . '_relation',
+                    $related ? (array) $related : null
+                );
+            }
+        }
+
+        if (! $includeChildren) {
+            return;
+        }
+
+        // ── hasMany / hasOne via section_relations table ──────────────────
+        $sectionRelations = SectionRelation::where('parent_entity_id', $entity->id)
+            ->whereIn('relation_type', ['hasMany', 'hasOne'])
+            ->with('childEntity')
+            ->get();
+
+        foreach ($sectionRelations as $rel) {
+            if (! $rel->childEntity) {
+                continue;
+            }
+
+            $childTable = $rel->childEntity->table_name;
+            if (! Schema::hasTable($childTable)) {
+                continue;
+            }
+
+            $foreignKey = $rel->foreign_key ?: Str::singular($entity->table_name) . '_id';
+            $localKey   = $rel->local_key   ?: 'id';
+            $localValue = $record->{$localKey} ?? null;
+
+            if ($localValue === null) {
+                continue;
+            }
+
+            if ($rel->relation_type === 'hasMany') {
+                $children = DB::table($childTable)->where($foreignKey, $localValue)->get();
+                $record->setAttribute(
+                    Str::camel($childTable),
+                    $children->map(fn($r) => (array) $r)->values()->all()
+                );
+            } elseif ($rel->relation_type === 'hasOne') {
+                $child = DB::table($childTable)->where($foreignKey, $localValue)->first();
+                $record->setAttribute(
+                    Str::camel(Str::singular($childTable)),
+                    $child ? (array) $child : null
+                );
+            }
+        }
+
+        // ── hasMany / hasOne fields directly on section_fields ────────────
+        foreach ($entity->fields as $field) {
+            if (! $field->related_entity_id || ! $field->relatedEntity) {
+                continue;
+            }
+            if (! in_array($field->relation_type, ['hasMany', 'hasOne'], true)) {
+                continue;
+            }
+
+            $relatedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($relatedTable)) {
+                continue;
+            }
+
+            $foreignKey = Str::singular($entity->table_name) . '_id';
+            $localValue = $record->id ?? null;
+            if ($localValue === null) {
+                continue;
+            }
+
+            if ($field->relation_type === 'hasMany') {
+                $children = DB::table($relatedTable)->where($foreignKey, $localValue)->get();
+                $record->setAttribute(
+                    $field->column_name,
+                    $children->map(fn($r) => (array) $r)->values()->all()
+                );
+            } elseif ($field->relation_type === 'hasOne') {
+                $child = DB::table($relatedTable)->where($foreignKey, $localValue)->first();
+                $record->setAttribute($field->column_name, $child ? (array) $child : null);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
      * Determine which fields can be written in the current context.
      */
@@ -406,6 +592,11 @@ class DynamicEntityService
         if (Arr::get($context, 'actor') === 'mcp') {
             $fields = $fields->where('mcp_writable', true);
         }
+
+        // hasMany / hasOne relation fields have no column in the main table — exclude them
+        $fields = $fields->filter(
+            fn($f) => ! in_array($f->relation_type, ['hasMany', 'hasOne'], true)
+        );
 
         return $fields->pluck('column_name')->all();
     }
