@@ -319,6 +319,10 @@ class YelpSyncService
             return;
         }
 
+        // Disable strict mode for this session so that existing columns with
+        // legacy defaults (e.g. start_date '0000-00-00') don't block ALTER TABLE.
+        DB::statement("SET SESSION sql_mode = ''");
+
         Schema::table($tableName, function (Blueprint $table) {
             $table->boolean('yelp_verified')->default(0)->after('id');
         });
