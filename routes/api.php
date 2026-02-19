@@ -15,6 +15,7 @@ use App\Http\Controllers\Ecommerce\CartController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
+use App\Http\Controllers\Ecommerce\DataSourceController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -112,6 +113,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Media Upload (image / audio)
         Route::post('upload', [MediaUploadController::class, 'upload']);
+
+        // Data Source Hub (multi-source import/sync)
+        Route::get('data-sources',                          [DataSourceController::class, 'index']);
+        Route::post('data-sources',                         [DataSourceController::class, 'store']);
+        Route::get('data-sources/{dataSource}',             [DataSourceController::class, 'show']);
+        Route::patch('data-sources/{dataSource}',           [DataSourceController::class, 'update']);
+        Route::delete('data-sources/{dataSource}',          [DataSourceController::class, 'destroy']);
+        Route::post('data-sources/{dataSource}/sync',       [DataSourceController::class, 'sync']);
+        Route::get('data-sources/{dataSource}/logs',        [DataSourceController::class, 'logs']);
     });
 
     // ── Yelp Integration ────────────────────────────────────────────────────

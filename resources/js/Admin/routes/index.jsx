@@ -153,6 +153,9 @@ export const routes = [
     path: '/apps/ecommerce/sellers',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/sellers/sellers'))
   }, {
+    path: '/apps/ecommerce/data-sources',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/data-sources'))
+  }, {
     path: '/apps/ecommerce/settings',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/settings'))
   }, {

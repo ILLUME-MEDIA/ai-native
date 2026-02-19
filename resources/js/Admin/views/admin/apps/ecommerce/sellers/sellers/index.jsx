@@ -1,17 +1,21 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
+import DataTable from '@admin/components/table/DataTable';
+import TablePagination from '@admin/components/table/TablePagination';
+import DeleteConfirmationModal from '@admin/components/table/DeleteConfirmationModal';
 import MediaUpload from '../../_components/MediaUpload';
 import axios from 'axios';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
+import { createColumnHelper, getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
-  Col, Form, FormControl, FormGroup, FormLabel, FormSelect,
-  Modal, Row, Spinner, Table
+  Alert, Button, Card, CardBody, CardFooter, CardHeader,
+  Col, Form, FormControl, FormLabel, FormSelect,
+  Modal, Row, Spinner
 } from 'react-bootstrap';
 
-const TYPE_COLORS  = { restaurant: 'danger', store: 'primary', service: 'success' };
-const TYPE_BADGES  = { restaurant: 'bg-danger-subtle text-danger', store: 'bg-primary-subtle text-primary', service: 'bg-success-subtle text-success' };
+const TYPE_COLORS = { restaurant: 'danger', store: 'primary', service: 'success' };
+const TYPE_BADGES = { restaurant: 'bg-danger-subtle text-danger', store: 'bg-primary-subtle text-primary', service: 'bg-success-subtle text-success' };
 const TYPE_ICONS  = { restaurant: 'tools-kitchen-2', store: 'building-store', service: 'briefcase' };
 
 const emptyForm = {
@@ -36,22 +40,25 @@ const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sun
 const COMPLIANCE_OPTIONS = ['Verbal confirmation','Halal sign visible','Certified','Unverified','Not Halal'];
 const PRICE_OPTIONS = [{ v:'1', l:'$ (Cheap)' },{ v:'2', l:'$$ (Moderate)' },{ v:'3', l:'$$$ (Expensive)' },{ v:'4', l:'$$$$ (Very Expensive)' }];
 
+const columnHelper = createColumnHelper();
+
 export default function SellersPage() {
-  const [businesses, setBusinesses]   = useState([]);
-  const [categories, setCategories]   = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [search, setSearch]           = useState('');
-  const [typeFilter, setTypeFilter]   = useState('');
-  const [pagination, setPagination]   = useState({});
-  const [page, setPage]               = useState(1);
-  const [showModal, setShowModal]     = useState(false);
-  const [editBiz, setEditBiz]         = useState(null);
-  const [form, setForm]               = useState(emptyForm);
-  const [saving, setSaving]           = useState(false);
-  const [toast, setToast]             = useState(null);
-  const [deleteId, setDeleteId]       = useState(null);
-  const [slugLocked, setSlugLocked]   = useState(false);
-  const [modalTab, setModalTab]       = useState('basic');
+  const [businesses, setBusinesses] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [search, setSearch]         = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [pagination, setPagination] = useState({});
+  const [page, setPage]             = useState(1);
+  const [showModal, setShowModal]   = useState(false);
+  const [editBiz, setEditBiz]       = useState(null);
+  const [form, setForm]             = useState(emptyForm);
+  const [saving, setSaving]         = useState(false);
+  const [toast, setToast]           = useState(null);
+  const [deleteId, setDeleteId]     = useState(null);
+  const [slugLocked, setSlugLocked] = useState(false);
+  const [modalTab, setModalTab]     = useState('basic');
+  const [sorting, setSorting]       = useState([]);
 
   const toSlug = (str) => str.toLowerCase().trim()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -116,8 +123,8 @@ export default function SellersPage() {
        .finally(() => setSaving(false));
   };
 
-  const handleDelete = (id) => {
-    axios.delete(`/api/ecommerce/businesses/${id}`)
+  const handleDelete = () => {
+    axios.delete(`/api/ecommerce/businesses/${deleteId}`)
       .then(() => { showToast('Deleted'); load(); })
       .catch(() => showToast('Delete failed', 'danger'))
       .finally(() => setDeleteId(null));
@@ -131,7 +138,121 @@ export default function SellersPage() {
 
   const handleSearchKey = (e) => { if (e.key === 'Enter') { setPage(1); load(); } };
 
-  const totalPages = pagination.last_page || 1;
+  const totalPages  = pagination.last_page || 1;
+  const totalItems  = pagination.total || 0;
+  const start       = totalItems === 0 ? 0 : (page - 1) * 15 + 1;
+  const end         = Math.min(page * 15, totalItems);
+
+  // ── TanStack columns ──────────────────────────────────────────
+  const columns = [
+    columnHelper.accessor('name', {
+      header: 'Business',
+      cell: ({ row }) => {
+        const biz = row.original;
+        return (
+          <div className="d-flex align-items-center gap-2">
+            {biz.logo ? (
+              <img src={biz.logo} alt={biz.name} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 8 }} />
+            ) : (
+              <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center" style={{ width: 40, height: 40 }}>
+                <Icon icon="store" size={18} className="text-primary" />
+              </div>
+            )}
+            <div>
+              <Link to={`/apps/ecommerce/seller-details?id=${biz.id}`} className="fw-semibold text-dark text-decoration-none">
+                {biz.name}
+              </Link>
+              <small className="d-block text-muted">{biz.category?.name || '—'}</small>
+            </div>
+          </div>
+        );
+      },
+    }),
+    columnHelper.accessor(row => row.category?.type, {
+      id: 'type',
+      header: 'Type',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const type = row.original.category?.type;
+        return (
+          <span className={`badge text-capitalize ${TYPE_BADGES[type] || 'bg-secondary-subtle text-secondary'}`}>
+            {type || '—'}
+          </span>
+        );
+      },
+    }),
+    columnHelper.accessor(row => [row.city, row.state].filter(Boolean).join(', '), {
+      id: 'location',
+      header: 'Location',
+      enableSorting: false,
+      cell: ({ getValue }) => <small>{getValue() || '—'}</small>,
+    }),
+    columnHelper.accessor('phone', {
+      header: 'Contact',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <>
+          <small className="d-block">{row.original.phone || '—'}</small>
+          <small className="text-muted">{row.original.email || '—'}</small>
+        </>
+      ),
+    }),
+    columnHelper.accessor('rating', {
+      header: 'Rating',
+      cell: ({ getValue }) => {
+        const r = getValue();
+        return r ? (
+          <span className="d-flex align-items-center gap-1">
+            <Icon icon="star-filled" size={13} className="text-warning" />
+            <small>{Number(r).toFixed(1)}</small>
+          </span>
+        ) : <small className="text-muted">—</small>;
+      },
+    }),
+    columnHelper.accessor('is_active', {
+      header: 'Active',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const biz = row.original;
+        return (
+          <div className="form-check form-switch mb-0" style={{ cursor: 'pointer' }} onClick={() => toggleActive(biz)}>
+            <input className="form-check-input" type="checkbox" checked={!!biz.is_active} onChange={() => {}} style={{ cursor: 'pointer' }} />
+          </div>
+        );
+      },
+    }),
+    {
+      id: 'actions',
+      header: 'Actions',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const biz = row.original;
+        return (
+          <div className="d-flex gap-1">
+            <Link to={`/apps/ecommerce/seller-details?id=${biz.id}`}>
+              <Button size="sm" variant="outline-info"><Icon icon="eye" size={14} /></Button>
+            </Link>
+            <Button size="sm" variant="outline-primary" onClick={() => openEdit(biz)}>
+              <Icon icon="pencil" size={14} />
+            </Button>
+            <Button size="sm" variant="outline-danger" onClick={() => setDeleteId(biz.id)}>
+              <Icon icon="trash" size={14} />
+            </Button>
+          </div>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data: businesses,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    manualPagination: true,
+  });
 
   return (
     <>
@@ -192,104 +313,28 @@ export default function SellersPage() {
         <CardBody className="p-0">
           {loading ? (
             <div className="text-center py-5"><Spinner /></div>
-          ) : businesses.length === 0 ? (
-            <div className="text-center py-5 text-muted">
-              <Icon icon="building-store" size={40} className="mb-2 opacity-50" />
-              <p>No businesses found.</p>
-            </div>
           ) : (
-            <Table responsive hover className="mb-0">
-              <thead className="table-light">
-                <tr>
-                  <th>Business</th>
-                  <th>Type</th>
-                  <th>Location</th>
-                  <th>Contact</th>
-                  <th>Active</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {businesses.map(biz => (
-                  <tr key={biz.id}>
-                    <td>
-                      <div className="d-flex align-items-center gap-2">
-                        {biz.logo ? (
-                          <img src={biz.logo} alt={biz.name} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 8 }} />
-                        ) : (
-                          <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center" style={{ width: 40, height: 40 }}>
-                            <Icon icon="store" size={18} className="text-primary" />
-                          </div>
-                        )}
-                        <div>
-                          <Link to={`/apps/ecommerce/seller-details?id=${biz.id}`} className="fw-semibold text-dark text-decoration-none">
-                            {biz.name}
-                          </Link>
-                          <small className="d-block text-muted">{biz.category?.name || '—'}</small>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`badge text-capitalize ${TYPE_BADGES[biz.category?.type] || 'bg-secondary-subtle text-secondary'}`}>
-                        {biz.category?.type || '—'}
-                      </span>
-                    </td>
-                    <td>
-                      <small>{[biz.city, biz.state].filter(Boolean).join(', ') || '—'}</small>
-                    </td>
-                    <td>
-                      <small className="d-block">{biz.phone || '—'}</small>
-                      <small className="text-muted">{biz.email || '—'}</small>
-                    </td>
-                    <td>
-                      <div
-                        className={`form-check form-switch mb-0`}
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => toggleActive(biz)}
-                      >
-                        <input
-                          className="form-check-input"
-                          type="checkbox"
-                          checked={!!biz.is_active}
-                          onChange={() => {}}
-                          style={{ cursor: 'pointer' }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <div className="d-flex gap-1">
-                        <Link to={`/apps/ecommerce/seller-details?id=${biz.id}`}>
-                          <Button size="sm" variant="outline-info">
-                            <Icon icon="eye" size={14} />
-                          </Button>
-                        </Link>
-                        <Button size="sm" variant="outline-primary" onClick={() => openEdit(biz)}>
-                          <Icon icon="pencil" size={14} />
-                        </Button>
-                        <Button size="sm" variant="outline-danger" onClick={() => setDeleteId(biz.id)}>
-                          <Icon icon="trash" size={14} />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <DataTable table={table} emptyMessage="No businesses found." />
           )}
         </CardBody>
 
         {totalPages > 1 && (
-          <div className="d-flex justify-content-between align-items-center p-3 border-top">
-            <small className="text-muted">Page {pagination.current_page} of {totalPages}</small>
-            <div className="d-flex gap-1">
-              <Button size="sm" variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-                <Icon icon="chevron-left" size={14} />
-              </Button>
-              <Button size="sm" variant="outline-secondary" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
-                <Icon icon="chevron-right" size={14} />
-              </Button>
-            </div>
-          </div>
+          <CardFooter className="border-0">
+            <TablePagination
+              totalItems={totalItems}
+              start={start}
+              end={end}
+              itemsName="businesses"
+              showInfo
+              previousPage={() => setPage(p => p - 1)}
+              canPreviousPage={page > 1}
+              pageCount={totalPages}
+              pageIndex={page - 1}
+              setPageIndex={(idx) => setPage(idx + 1)}
+              nextPage={() => setPage(p => p + 1)}
+              canNextPage={page < totalPages}
+            />
+          </CardFooter>
         )}
       </Card>
 
@@ -470,14 +515,12 @@ export default function SellersPage() {
       </Modal>
 
       {/* Delete Confirm */}
-      <Modal show={!!deleteId} onHide={() => setDeleteId(null)} centered size="sm">
-        <Modal.Header closeButton><Modal.Title>Delete Business</Modal.Title></Modal.Header>
-        <Modal.Body>Are you sure you want to delete this business?</Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setDeleteId(null)}>Cancel</Button>
-          <Button variant="danger" onClick={() => handleDelete(deleteId)}>Delete</Button>
-        </Modal.Footer>
-      </Modal>
+      <DeleteConfirmationModal
+        show={!!deleteId}
+        onHide={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        itemName="business"
+      />
     </>
   );
 }
