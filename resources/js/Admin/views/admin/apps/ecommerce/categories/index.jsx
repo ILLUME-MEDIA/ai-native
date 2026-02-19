@@ -1,7 +1,28 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+
+const COMMON_ICONS = [
+    // Food & Restaurant
+    'tools-kitchen-2','tools-kitchen','salad','burger','pizza','coffee','cup','bottle',
+    'fish','meat','soup','cake','ice-cream','bread','carrot','egg','milk','cheese',
+    'apple','candy','bowl-chopsticks','grill','lemon','mushroom','cookie',
+    // Shopping & Store
+    'building-store','shopping-cart','shopping-bag','basket','package','tag',
+    'barcode','receipt','cash','credit-card','coin','wallet','gift','box',
+    'truck-delivery','shirt','hanger','diamond','crown',
+    // Services
+    'briefcase','tool','tools','hammer','scissors','paint','brush','phone',
+    'headset','heart','star','shield','lock','key','sparkles','wand',
+    'clock','calendar','map-pin','navigation',
+    // General
+    'home','building','car','plane','train','bike','camera','music','movie',
+    'device-tv','device-laptop','device-mobile','books','school','barbell','swimming',
+    'ball-football','beach','trees','flower','paw','baby-carriage','user','users',
+    'chart-bar','chart-line','bell','info-circle','help','settings','world',
+    'sun','moon','cloud','umbrella','bolt','flame','droplet','leaf',
+];
 import {
     Alert, Badge, Card, CardBody, CardHeader, Col,
     Form, Modal, ModalBody, ModalFooter, ModalHeader, ModalTitle,
@@ -29,6 +50,24 @@ export default function CategoriesPage() {
     const [saving, setSaving]         = useState(false);
     const [error, setError]           = useState('');
     const [form, setForm] = useState({ name: '', type: 'restaurant', icon: '', description: '', is_active: true, sort_order: 0 });
+    const [showIconPicker, setShowIconPicker] = useState(false);
+    const [iconSearch, setIconSearch]         = useState('');
+    const iconPickerRef = useRef(null);
+
+    // Close picker on outside click
+    useEffect(() => {
+        const handler = (e) => {
+            if (iconPickerRef.current && !iconPickerRef.current.contains(e.target)) {
+                setShowIconPicker(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    const filteredIcons = iconSearch.trim()
+        ? COMMON_ICONS.filter(ic => ic.includes(iconSearch.toLowerCase().trim()))
+        : COMMON_ICONS;
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -41,11 +80,11 @@ export default function CategoriesPage() {
 
     const openAdd = () => {
         setForm({ name: '', type: 'restaurant', icon: '', description: '', is_active: true, sort_order: 0 });
-        setError(''); setEditTarget(null); setShowModal(true);
+        setError(''); setEditTarget(null); setShowModal(true); setShowIconPicker(false); setIconSearch('');
     };
     const openEdit = (c) => {
         setForm({ name: c.name, type: c.type, icon: c.icon || '', description: c.description || '', is_active: c.is_active, sort_order: c.sort_order || 0 });
-        setError(''); setEditTarget(c); setShowModal(true);
+        setError(''); setEditTarget(c); setShowModal(true); setShowIconPicker(false); setIconSearch('');
     };
     const save = async (e) => {
         e.preventDefault(); setSaving(true); setError('');
@@ -166,9 +205,55 @@ export default function CategoriesPage() {
                                     ))}
                                 </div>
                             </Col>
-                            <Col xs={6}>
-                                <Form.Label>Icon <small className="text-muted">(Tabler name)</small></Form.Label>
-                                <Form.Control value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="e.g. tools-kitchen-2" />
+                            <Col xs={12}>
+                                <Form.Label>Icon</Form.Label>
+                                <div className="position-relative" ref={iconPickerRef}>
+                                    <div className="d-flex align-items-center gap-2">
+                                        {/* Preview */}
+                                        <span className="d-flex align-items-center justify-content-center rounded border bg-light flex-shrink-0"
+                                            style={{ width: 38, height: 38 }}>
+                                            <Icon icon={form.icon || 'package'} style={{ fontSize: 22 }} />
+                                        </span>
+                                        {/* Search input */}
+                                        <Form.Control
+                                            value={iconSearch}
+                                            onChange={e => setIconSearch(e.target.value)}
+                                            onFocus={() => setShowIconPicker(true)}
+                                            placeholder={form.icon ? form.icon : 'Search icon… (e.g. pizza)'}
+                                        />
+                                        {form.icon && (
+                                            <button type="button" className="btn btn-sm btn-light flex-shrink-0"
+                                                onClick={() => { setForm(f => ({ ...f, icon: '' })); setIconSearch(''); }}
+                                                title="Clear icon">
+                                                <Icon icon="x" />
+                                            </button>
+                                        )}
+                                    </div>
+                                    {showIconPicker && (
+                                        <div className="border rounded shadow-sm bg-white p-2 mt-1"
+                                            style={{ position: 'absolute', zIndex: 1050, width: '100%', maxHeight: 220, overflowY: 'auto' }}>
+                                            {filteredIcons.length === 0 ? (
+                                                <small className="text-muted px-1">No icons found.</small>
+                                            ) : (
+                                                <div className="d-flex flex-wrap gap-1">
+                                                    {filteredIcons.map(ic => (
+                                                        <button key={ic} type="button"
+                                                            title={ic}
+                                                            className={`btn btn-sm p-1 ${form.icon === ic ? 'btn-primary' : 'btn-light'}`}
+                                                            style={{ width: 36, height: 36 }}
+                                                            onClick={() => {
+                                                                setForm(f => ({ ...f, icon: ic }));
+                                                                setShowIconPicker(false);
+                                                                setIconSearch('');
+                                                            }}>
+                                                            <Icon icon={ic} style={{ fontSize: 18 }} />
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </Col>
                             <Col xs={6}>
                                 <Form.Label>Sort Order</Form.Label>

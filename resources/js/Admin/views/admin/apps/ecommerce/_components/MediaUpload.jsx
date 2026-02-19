@@ -13,6 +13,7 @@ import { Form, Spinner } from 'react-bootstrap';
  *   folder   string       upload sub-folder (businesses|menu-items|discovery-users)
  *   label    string       optional label text
  *   required bool
+ *   aspect   'square'|'wide'  preview shape, default 'square'
  */
 export default function MediaUpload({
     value = '',
@@ -21,16 +22,17 @@ export default function MediaUpload({
     folder = 'ecommerce',
     label,
     required = false,
+    aspect = 'square',
 }) {
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
-    const [mode, setMode] = useState('url');
+    const [urlMode, setUrlMode] = useState(false);
+    const [dragging, setDragging] = useState(false);
     const fileRef = useRef();
 
     const accept = type === 'audio' ? 'audio/*' : 'image/*';
 
-    const handleFile = async (e) => {
-        const file = e.target.files?.[0];
+    const doUpload = async (file) => {
         if (!file) return;
         setUploading(true);
         setUploadError('');
@@ -42,7 +44,7 @@ export default function MediaUpload({
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
             onChange(data.url);
-            setMode('url');
+            setUrlMode(false);
         } catch (err) {
             setUploadError(err.response?.data?.message || 'Upload failed');
         } finally {
@@ -51,79 +53,140 @@ export default function MediaUpload({
         }
     };
 
+    const handleFile = (e) => doUpload(e.target.files?.[0]);
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setDragging(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith('image/')) doUpload(file);
+    };
+
+    const previewHeight = aspect === 'wide' ? 120 : 110;
+
+    if (type === 'audio') {
+        return (
+            <div>
+                {label && <Form.Label>{label} {required && <span className="text-danger">*</span>}</Form.Label>}
+                {value && <audio controls src={value} className="w-100 mb-2" style={{ height: 36 }} />}
+                <div className="d-flex gap-2">
+                    <Form.Control type="url" value={value} onChange={e => onChange(e.target.value)} placeholder="https://example.com/audio.mp3" />
+                    {value && <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => onChange('')}><Icon icon="trash" /></button>}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div>
             {label && (
-                <Form.Label>
+                <Form.Label className="mb-1">
                     {label} {required && <span className="text-danger">*</span>}
                 </Form.Label>
             )}
 
-            {/* Preview */}
-            {value && type === 'image' && (
-                <div className="mb-2">
-                    <img
-                        src={value} alt=""
-                        style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid #dee2e6' }}
-                    />
-                </div>
-            )}
-            {value && type === 'audio' && (
-                <audio controls src={value} className="w-100 mb-2" style={{ height: 36 }} />
-            )}
+            {/* Drop / Preview zone */}
+            <div
+                onClick={() => !value && !uploading && fileRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={handleDrop}
+                style={{
+                    height: previewHeight,
+                    border: `2px dashed ${dragging ? '#0d6efd' : (value ? 'transparent' : '#dee2e6')}`,
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    cursor: value ? 'default' : 'pointer',
+                    background: dragging ? '#e8f0fe' : (value ? '#000' : '#f8f9fa'),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    transition: 'border-color .15s, background .15s',
+                }}
+            >
+                {uploading && (
+                    <div className="text-center text-muted">
+                        <Spinner animation="border" size="sm" className="mb-1" />
+                        <div style={{ fontSize: 12 }}>Uploading…</div>
+                    </div>
+                )}
 
-            {/* Mode toggle */}
-            <div className="d-flex gap-1 mb-2">
-                <button
-                    type="button"
-                    className={`btn btn-sm ${mode === 'url' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                    onClick={() => setMode('url')}
-                >
-                    <Icon icon="link" className="me-1" />URL
-                </button>
-                <button
-                    type="button"
-                    className={`btn btn-sm ${mode === 'file' ? 'btn-primary' : 'btn-outline-secondary'}`}
-                    onClick={() => setMode('file')}
-                >
-                    <Icon icon="upload" className="me-1" />Upload
-                </button>
-                {value && (
-                    <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger ms-auto"
-                        onClick={() => onChange('')}
-                        title="Remove"
-                    >
-                        <Icon icon="trash" />
-                    </button>
+                {!uploading && value && (
+                    <>
+                        <img
+                            src={value}
+                            alt=""
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                        {/* Hover overlay with actions */}
+                        <div style={{
+                            position: 'absolute', inset: 0,
+                            background: 'rgba(0,0,0,0.45)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                            opacity: 0, transition: 'opacity .2s',
+                        }}
+                            className="media-upload-overlay"
+                            onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                            onMouseLeave={e => e.currentTarget.style.opacity = 0}
+                        >
+                            <button type="button" className="btn btn-sm btn-light"
+                                onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
+                                title="Change image">
+                                <Icon icon="camera" style={{ fontSize: 15 }} />
+                            </button>
+                            <button type="button" className="btn btn-sm btn-light"
+                                onClick={e => { e.stopPropagation(); setUrlMode(v => !v); }}
+                                title="Paste URL">
+                                <Icon icon="link" style={{ fontSize: 15 }} />
+                            </button>
+                            <button type="button" className="btn btn-sm btn-danger"
+                                onClick={e => { e.stopPropagation(); onChange(''); }}
+                                title="Remove">
+                                <Icon icon="trash" style={{ fontSize: 15 }} />
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {!uploading && !value && (
+                    <div className="text-center text-muted px-2" style={{ userSelect: 'none' }}>
+                        <Icon icon="cloud-upload" style={{ fontSize: 28, opacity: 0.4 }} />
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                            {dragging ? 'Drop to upload' : 'Click or drag to upload'}
+                        </div>
+                    </div>
                 )}
             </div>
 
-            {mode === 'url' ? (
-                <Form.Control
-                    type="url"
-                    value={value}
-                    onChange={e => onChange(e.target.value)}
-                    placeholder={type === 'audio' ? 'https://example.com/audio.mp3' : 'https://example.com/image.jpg'}
-                />
-            ) : (
-                <div>
+            {uploadError && <small className="text-danger mt-1 d-block">{uploadError}</small>}
+
+            {/* URL input bar (shown when no image or urlMode toggled) */}
+            {(!value || urlMode) && (
+                <div className="d-flex gap-1 mt-2">
                     <Form.Control
-                        ref={fileRef}
-                        type="file"
-                        accept={accept}
-                        onChange={handleFile}
-                        disabled={uploading}
+                        type="url"
+                        size="sm"
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder="https://example.com/image.jpg"
                     />
-                    {uploading && (
-                        <small className="text-muted mt-1 d-block">
-                            <Spinner animation="border" size="sm" className="me-1" />Uploading…
-                        </small>
+                    <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0"
+                        onClick={() => fileRef.current?.click()}
+                        title="Upload file">
+                        <Icon icon="upload" style={{ fontSize: 14 }} />
+                    </button>
+                    {value && urlMode && (
+                        <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0"
+                            onClick={() => setUrlMode(false)}>
+                            <Icon icon="x" style={{ fontSize: 14 }} />
+                        </button>
                     )}
-                    {uploadError && <small className="text-danger mt-1 d-block">{uploadError}</small>}
                 </div>
             )}
+
+            {/* Hidden file input */}
+            <input ref={fileRef} type="file" accept={accept} className="d-none" onChange={handleFile} />
         </div>
     );
 }

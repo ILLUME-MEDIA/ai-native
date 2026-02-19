@@ -27,10 +27,12 @@ class MediaUploadController extends Controller
         $ext    = strtolower($file->getClientOriginalExtension());
         $name   = Str::uuid() . '.' . $ext;
 
-        $path = $file->storeAs("public/ecommerce/{$folder}", $name);
+        // Store on the 'public' disk so files land in storage/app/public/
+        // and are accessible via the public/storage symlink.
+        $path = $file->storeAs("ecommerce/{$folder}", $name, 'public');
 
         return response()->json([
-            'url'  => Storage::url($path),
+            'url'  => Storage::disk('public')->url($path),
             'path' => $path,
         ]);
     }
