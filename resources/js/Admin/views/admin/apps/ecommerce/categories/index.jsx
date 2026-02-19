@@ -16,9 +16,9 @@ const TYPE_BADGE = {
     service:    'bg-info-subtle text-info',
 };
 const TYPES = [
-    { value: 'restaurant', label: 'Restaurant', icon: '🍽️' },
-    { value: 'store',      label: 'Store',      icon: '🛒' },
-    { value: 'service',    label: 'Service',    icon: '🛠️' },
+    { value: 'restaurant', label: 'Restaurant', icon: 'tools-kitchen-2' },
+    { value: 'store',      label: 'Store',      icon: 'building-store' },
+    { value: 'service',    label: 'Service',    icon: 'briefcase' },
 ];
 
 export default function CategoriesPage() {
@@ -114,7 +114,7 @@ export default function CategoriesPage() {
                                     <tr key={cat.id}>
                                         <td>
                                             <div className="d-flex align-items-center gap-2">
-                                                <span style={{ fontSize: 22 }}>{cat.icon || '📦'}</span>
+                                                <Icon icon={cat.icon || 'package'} style={{ fontSize: 22 }} />
                                                 <div>
                                                     <strong>{cat.name}</strong>
                                                     {cat.description && <small className="text-muted d-block">{cat.description}</small>}
@@ -161,14 +161,14 @@ export default function CategoriesPage() {
                                         <button key={t.value} type="button"
                                             className={`btn btn-sm flex-fill ${form.type === t.value ? 'btn-primary' : 'btn-light'}`}
                                             onClick={() => setForm(f => ({ ...f, type: t.value }))}>
-                                            {t.icon} {t.label}
+                                            <Icon icon={t.icon} className="me-1" /> {t.label}
                                         </button>
                                     ))}
                                 </div>
                             </Col>
                             <Col xs={6}>
-                                <Form.Label>Icon (emoji)</Form.Label>
-                                <Form.Control value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🍕" />
+                                <Form.Label>Icon <small className="text-muted">(Tabler name)</small></Form.Label>
+                                <Form.Control value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="e.g. tools-kitchen-2" />
                             </Col>
                             <Col xs={6}>
                                 <Form.Label>Sort Order</Form.Label>

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class DiscoveryUser extends Model
@@ -10,8 +11,7 @@ class DiscoveryUser extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'name', 'email', 'photo', 'bio', 'phone',
-        'lat', 'lng', 'address', 'city', 'state', 'zip', 'country', 'country_code', 'location_from_gps',
+        'name', 'email', 'photo', 'audio', 'bio', 'phone',
         'ip_address', 'isp', 'connection_type', 'downlink', 'rtt',
         'browser', 'browser_version', 'user_agent', 'language', 'languages',
         'timezone', 'cookies_enabled', 'do_not_track', 'referrer',
@@ -22,12 +22,14 @@ class DiscoveryUser extends Model
     ];
 
     protected $casts = [
-        'lat' => 'float',
-        'lng' => 'float',
-        'location_from_gps' => 'boolean',
         'cookies_enabled' => 'boolean',
-        'do_not_track' => 'boolean',
-        'pixel_ratio' => 'float',
-        'last_seen_at' => 'datetime',
+        'do_not_track'    => 'boolean',
+        'pixel_ratio'     => 'float',
+        'last_seen_at'    => 'datetime',
     ];
+
+    public function location(): HasOne
+    {
+        return $this->hasOne(DiscoveryUserLocation::class);
+    }
 }

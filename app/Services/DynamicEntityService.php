@@ -79,6 +79,42 @@ class DynamicEntityService
     }
     
     /**
+     * Public method: sync section_fields with the real database schema.
+     * - Removes field records whose columns no longer exist in the table.
+     * - Adds field records for columns that are new (not yet tracked).
+     * Called on every entity show() so the editor always reflects reality.
+     */
+    public function syncFieldsWithSchema(SectionEntity $entity): void
+    {
+        $tableName = $entity->table_name;
+
+        if (!Schema::hasTable($tableName)) {
+            return;
+        }
+
+        try {
+            $actualColumns = Schema::getColumnListing($tableName);
+
+            // 1. Remove fields for columns that no longer exist in the real table
+            $entity->fields()
+                ->whereNotIn('column_name', $actualColumns)
+                ->delete();
+
+            // 2. Reload fields so autoSyncFieldsForEntity sees the updated set
+            $entity->unsetRelation('fields');
+            $entity->load('fields');
+
+            // 3. Add fields for any new columns not yet tracked
+            $this->autoSyncFieldsForEntity($entity, $tableName);
+
+            // 4. Final reload to ensure fresh data is on the model
+            $entity->unsetRelation('fields');
+        } catch (\Exception $e) {
+            \Log::warning("syncFieldsWithSchema failed for {$tableName}: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Auto-sync table columns as SectionField records.
      */
     protected function autoSyncFieldsForEntity(SectionEntity $entity, string $tableName): void

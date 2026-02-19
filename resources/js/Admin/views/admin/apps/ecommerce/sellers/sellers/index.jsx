@@ -1,5 +1,6 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
+import MediaUpload from '../../_components/MediaUpload';
 import axios from 'axios';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
@@ -314,16 +315,20 @@ export default function SellersPage() {
               </FormGroup>
             </Col>
             <Col md={6}>
-              <FormGroup>
-                <FormLabel>Logo URL</FormLabel>
-                <FormControl value={form.logo} onChange={e => setForm(f => ({ ...f, logo: e.target.value }))} placeholder="https://..." />
-              </FormGroup>
+              <MediaUpload
+                label="Logo"
+                value={form.logo}
+                onChange={url => setForm(f => ({ ...f, logo: url }))}
+                folder="businesses"
+              />
             </Col>
             <Col md={6}>
-              <FormGroup>
-                <FormLabel>Cover Image URL</FormLabel>
-                <FormControl value={form.cover_image} onChange={e => setForm(f => ({ ...f, cover_image: e.target.value }))} placeholder="https://..." />
-              </FormGroup>
+              <MediaUpload
+                label="Cover Image"
+                value={form.cover_image}
+                onChange={url => setForm(f => ({ ...f, cover_image: url }))}
+                folder="businesses"
+              />
             </Col>
             <Col md={12}>
               <Form.Check

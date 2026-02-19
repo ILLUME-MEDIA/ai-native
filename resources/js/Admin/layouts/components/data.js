@@ -19,6 +19,7 @@ export const menuItems = [{
   label: "Apps",
   isTitle: true,
   children: [{
+    icon: "shopping-cart",
     slug: "ecommerce",
     label: "Ecommerce",
     children: [{

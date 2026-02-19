@@ -1,5 +1,6 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
+import MediaUpload from '../../_components/MediaUpload';
 import axios from 'axios';
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -223,8 +224,12 @@ export default function MenuItemsPage() {
                                 <Form.Control as="textarea" rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
                             </Col>
                             <Col xs={12}>
-                                <Form.Label>Image URL</Form.Label>
-                                <Form.Control value={form.image} onChange={e => setForm(f => ({ ...f, image: e.target.value }))} placeholder="https://..." />
+                                <MediaUpload
+                                    label="Image"
+                                    value={form.image}
+                                    onChange={url => setForm(f => ({ ...f, image: url }))}
+                                    folder="menu-items"
+                                />
                             </Col>
                             <Col xs={12}>
                                 <Form.Check type="switch" id="itemAvail" label="Available" checked={form.is_available} onChange={e => setForm(f => ({ ...f, is_available: e.target.checked }))} />

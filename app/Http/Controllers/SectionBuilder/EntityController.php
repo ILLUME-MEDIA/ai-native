@@ -30,37 +30,44 @@ class EntityController extends Controller
     }
     
     /**
-     * Auto-sync missing database tables to Section Editor.
+     * Auto-sync missing database tables to Section Editor,
+     * and sync fields for ALL existing entities so dropped/added columns
+     * are reflected immediately without opening each entity.
      */
     protected function autoSyncMissingTables(): void
     {
         try {
             $connection = \Illuminate\Support\Facades\DB::connection();
-            $database = $connection->getDatabaseName();
-            
+            $database   = $connection->getDatabaseName();
+
             $tables = \Illuminate\Support\Facades\DB::select(
                 "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
                 [$database]
             );
-            
-            $systemTables = ['migrations', 'failed_jobs', 'password_reset_tokens', 'personal_access_tokens', 'sessions'];
-            
+
+            $systemTables = [
+                'migrations', 'failed_jobs', 'password_reset_tokens',
+                'personal_access_tokens', 'sessions',
+            ];
+
             foreach ($tables as $table) {
                 $tableName = $table->TABLE_NAME;
-                
-                // Skip system tables
+
                 if (in_array($tableName, $systemTables)) {
                     continue;
                 }
-                
-                // Check if entity already exists
-                if (!SectionEntity::where('table_name', $tableName)->exists()) {
-                    // Auto-create entity using service method
+
+                $entity = SectionEntity::where('table_name', $tableName)->first();
+
+                if (!$entity) {
+                    // New table → auto-create entity + fields
                     $this->entityService->resolveEntity($tableName);
+                } else {
+                    // Existing entity → sync fields with real schema
+                    $this->entityService->syncFieldsWithSchema($entity);
                 }
             }
         } catch (\Exception $e) {
-            // Silently fail - don't break the index if sync fails
             \Log::warning("Auto-sync failed: " . $e->getMessage());
         }
     }
@@ -85,7 +92,12 @@ class EntityController extends Controller
     public function show($entity)
     {
         $resolved = $this->resolveEntity($entity);
-        $resolved->load(['fields' => fn ($q) => $q->with('relatedEntity:id,name,table_name,slug')]);
+
+        // Sync stored fields with the real DB schema every time the entity is loaded.
+        // This removes fields for dropped columns and adds fields for new columns.
+        $this->entityService->syncFieldsWithSchema($resolved);
+
+        $resolved->load(['fields' => fn ($q) => $q->orderBy('sort_order')->with('relatedEntity:id,name,table_name,slug')]);
         return response()->json($resolved);
     }
 

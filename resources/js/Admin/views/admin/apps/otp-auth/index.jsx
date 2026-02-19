@@ -362,7 +362,7 @@ function SettingsTab({ onSaved }) {
                                 <span className="text-muted small ms-2">— Use from any website / app</span>
                             </CardHeader>
                             <CardBody>
-                                <ApiReference allowedTables={allowed} />
+                                <ApiReference allowedTables={allowed} tables={tables} />
                             </CardBody>
                         </Card>
                     </Col>
@@ -373,60 +373,72 @@ function SettingsTab({ onSaved }) {
 }
 
 // ─── API REFERENCE ────────────────────────────────────────────────────────────
-function ApiReference({ allowedTables = [] }) {
-    const base  = `${window.location.origin}/api/otp-auth`;
-    const table = allowedTables[0] || 'users';
+const SYS_COLS = new Set([
+    'id', 'email', 'password', 'remember_token',
+    'created_at', 'updated_at', 'email_verified_at', 'deleted_at',
+]);
+
+function ApiReference({ allowedTables = [], tables = [] }) {
+    const base = `${window.location.origin}/api/otp-auth`;
+    const [selTable, setSelTable] = useState(allowedTables[0] || '');
+
+    useEffect(() => {
+        if (allowedTables.length > 0 && !allowedTables.includes(selTable)) {
+            setSelTable(allowedTables[0]);
+        }
+    }, [allowedTables]); // eslint-disable-line
+
+    const table    = selTable || allowedTables[0] || 'users';
+    const tableRow = tables.find(t => t.table === table);
+    const userCols = (tableRow?.columns || []).filter(c => !SYS_COLS.has(c));
+
+    // Dynamic bodies built from real columns
+    const createDataInner = userCols.length
+        ? userCols.map(c => `    "${c}": ""`).join(',\n')
+        : '    "name": "New User"';
+
+    const profileFields = userCols.length
+        ? '\n' + userCols.map(c => `  "${c}": ""`).join(',\n')
+        : '';
 
     const eps = [
         {
             method: 'POST', path: '/send',
             desc: 'Step 1 — Send OTP to email',
-            body: `{\n  "email": "user@example.com",\n  "table": "${table}"   // optional\n}`,
+            body: `{\n  "email": "user@example.com",\n  "table": "${table}"\n}`,
             resp: `{ "success": true, "expires_in_minutes": 10 }`,
         },
         {
             method: 'POST', path: '/verify',
-            desc: 'Step 2 — Verify OTP (all options optional)',
+            desc: 'Step 2 — Verify OTP',
             body:
 `{
   "email": "user@example.com",
   "otp": "1234",
+  "table": "${table}",
 
   // ── Optional controls ──────────────────────
-  "table": "${table}",          // which table to check
-  "check_email": true,          // false = skip table check, just verify OTP
+  "check_email": true,          // false = skip table check
   "on_found": "token",          // "token" | "message"
   "on_not_found": "profile",    // "message"|"profile"|"token"|"create"
-  "found_message": "Welcome!",  // custom msg when email found
+  "found_message": "Welcome!",
   "not_found_message": "Complete your profile",
-  "skip_token": false,          // true = no token in response
+  "skip_token": false,
   "create_data": {              // used when on_not_found="create"
-    "name": "New User",
-    "phone": "03001234567"
+${createDataInner}
   }
 }`,
             resp:
-`// Email FOUND + on_found="token" (default):
-{ "status": "authenticated", "token": "...", "user": {...},
-  "message": "Welcome!" }
+`// Found + on_found="token":
+{ "status": "authenticated", "token": "...", "user": {...} }
 
-// Email FOUND + on_found="message":
-{ "status": "authenticated", "user": {...}, "message": "Welcome!" }
+// Not found + on_not_found="profile":
+{ "status": "profile_incomplete", "otp_token": "..." }
 
-// Email NOT FOUND + on_not_found="message":
-{ "status": "not_found", "message": "Email not found." }
-
-// Email NOT FOUND + on_not_found="profile" (default):
-{ "status": "profile_incomplete", "otp_token": "...",
-  "message": "Complete your profile" }
-
-// Email NOT FOUND + on_not_found="token":
-{ "status": "authenticated", "token": "..." }
-
-// Email NOT FOUND + on_not_found="create":
+// Not found + on_not_found="create":
 { "status": "created", "token": "...", "user": {...} }
 
-// check_email=false (just verify OTP):
+// check_email=false:
 { "status": "otp_verified", "otp_token": "...", "email": "..." }`,
         },
         {
@@ -440,11 +452,9 @@ function ApiReference({ allowedTables = [] }) {
             desc: 'Register user after profile_incomplete',
             body:
 `{
-  "otp_token": "...",      // from verify response
+  "otp_token": "...",
   "email": "user@example.com",
-  "name": "John Doe",
-  "table": "${table}",
-  // ...any extra fields for the table
+  "table": "${table}",${profileFields}
 }`,
             resp: `{ "status": "registered", "token": "...", "user": {...} }`,
         },
@@ -452,12 +462,51 @@ function ApiReference({ allowedTables = [] }) {
 
     return (
         <>
-            <p className="small text-muted mb-2">
-                Base: <code>{base}</code>
-                {allowedTables.length > 0 && (
-                    <> &nbsp;·&nbsp; Allowed: {allowedTables.map(t => <code key={t} className="me-1">{t}</code>)}</>
+            {/* Header: base URL + table selector */}
+            <div className="d-flex flex-wrap align-items-center gap-3 mb-3">
+                <div>
+                    <span className="text-muted small me-1">Base:</span>
+                    <code className="small">{base}</code>
+                </div>
+                {allowedTables.length > 1 && (
+                    <Form.Select size="sm" style={{ width: 'auto' }}
+                        value={selTable} onChange={e => setSelTable(e.target.value)}>
+                        {allowedTables.map(t => <option key={t} value={t}>{t}</option>)}
+                    </Form.Select>
                 )}
-            </p>
+                <div className="d-flex gap-1 flex-wrap ms-auto">
+                    {allowedTables.map(t => (
+                        <Badge key={t} bg={t === table ? 'primary' : 'secondary'}
+                            className="fw-normal" style={{ cursor: allowedTables.length > 1 ? 'pointer' : 'default' }}
+                            onClick={() => allowedTables.length > 1 && setSelTable(t)}>
+                            {t}
+                        </Badge>
+                    ))}
+                </div>
+            </div>
+
+            {/* Column reference for selected table */}
+            {userCols.length > 0 && (
+                <div className="mb-3 p-2 rounded border bg-light">
+                    <div className="small fw-semibold mb-1">
+                        <code>{table}</code>
+                        <span className="text-muted ms-1">— {userCols.length} writable field{userCols.length !== 1 ? 's' : ''}:</span>
+                    </div>
+                    <div className="d-flex flex-wrap gap-1">
+                        {userCols.map(c => (
+                            <code key={c} className="px-1 rounded" style={{ fontSize: 11, background: '#e8f4ff', color: '#0055cc' }}>
+                                {c}
+                            </code>
+                        ))}
+                    </div>
+                </div>
+            )}
+            {userCols.length === 0 && tableRow && (
+                <div className="mb-3 p-2 rounded border bg-light small text-muted">
+                    <code>{table}</code> has no extra fields beyond email — only email is needed to register.
+                </div>
+            )}
+
             {eps.map((ep, i) => (
                 <div key={i} className="mb-3 pb-3 border-bottom">
                     <div className="d-flex align-items-center gap-2 mb-1">
@@ -468,11 +517,11 @@ function ApiReference({ allowedTables = [] }) {
                     <Row className="g-1">
                         <Col md={6}>
                             <div className="text-muted" style={{ fontSize: 10 }}>REQUEST</div>
-                            <pre className="bg-light p-2 rounded mb-0" style={{ fontSize: 10, maxHeight: 200, overflow: 'auto' }}>{ep.body}</pre>
+                            <pre className="bg-light p-2 rounded mb-0" style={{ fontSize: 10, maxHeight: 220, overflow: 'auto' }}>{ep.body}</pre>
                         </Col>
                         <Col md={6}>
                             <div className="text-muted" style={{ fontSize: 10 }}>RESPONSE</div>
-                            <pre className="bg-light p-2 rounded mb-0" style={{ fontSize: 10, maxHeight: 200, overflow: 'auto' }}>{ep.resp}</pre>
+                            <pre className="bg-light p-2 rounded mb-0" style={{ fontSize: 10, maxHeight: 220, overflow: 'auto' }}>{ep.resp}</pre>
                         </Col>
                     </Row>
                 </div>
@@ -481,9 +530,27 @@ function ApiReference({ allowedTables = [] }) {
     );
 }
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const SYSTEM_COLS = SYS_COLS; // same set, reuse
+
+const colInputType = (col) => {
+    if (col.includes('email'))                                         return 'email';
+    if (col.includes('phone') || col.includes('mobile'))               return 'tel';
+    if (col.includes('url') || col.includes('website') || col.includes('link')) return 'url';
+    if (col.includes('age') || col.includes('count') || col.includes('amount') ||
+        col.includes('price') || col.includes('qty') || col.includes('number'))  return 'number';
+    return 'text';
+};
+const colIsTextarea = (col) =>
+    col.includes('description') || col.includes('bio') || col.includes('notes') ||
+    col.includes('message')    || col.includes('address') || col.includes('content') || col.includes('body');
+
+const colLabel = (col) =>
+    col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
 // ─── TEST TAB ─────────────────────────────────────────────────────────────────
 function TestTab({ settingsVersion }) {
-    const [step, setStep]               = useState(1);
+    const [step, setStep]               = useState(1); // 1=send, 2=verify, 3=complete-profile
     const [email, setEmail]             = useState('');
     const [table, setTable]             = useState('');
     const [otp, setOtp]                 = useState('');
@@ -493,6 +560,13 @@ function TestTab({ settingsVersion }) {
     const [error, setError]             = useState('');
     const [countdown, setCountdown]     = useState(0);
     const [showOptions, setShowOptions] = useState(false);
+
+    // Dynamic columns for the selected table (exclude system cols)
+    const [tableColumns, setTableColumns] = useState([]);
+
+    // Complete-profile form state (keyed by col name)
+    const [profileForm, setProfileForm]   = useState({});
+    const [profileToken, setProfileToken] = useState('');
 
     // Verify options state
     const [checkEmail, setCheckEmail]           = useState(true);
@@ -505,6 +579,14 @@ function TestTab({ settingsVersion }) {
     const [createDataError, setCreateDataError] = useState('');
 
     const [tableOptionsMap, setTableOptionsMap] = useState({});
+
+    // Build column list + reset profileForm when table changes
+    const applyTableColumns = useCallback((tbl, allTables) => {
+        const row = allTables.find(t => t.table === tbl);
+        const cols = (row?.columns || []).filter(c => !SYSTEM_COLS.has(c));
+        setTableColumns(cols);
+        setProfileForm(Object.fromEntries(cols.map(c => [c, ''])));
+    }, []);
 
     useEffect(() => {
         Promise.all([api('settings'), api('tables')])
@@ -520,6 +602,7 @@ function TestTab({ settingsVersion }) {
                         const current = filtered.find(r => r.table === prev);
                         const target  = current ? prev : filtered[0].table;
                         applyTableOpts(optsMap, target);
+                        applyTableColumns(target, filtered);
                         return target;
                     });
                 }
@@ -541,6 +624,7 @@ function TestTab({ settingsVersion }) {
     const handleTableChange = (tbl) => {
         setTable(tbl);
         applyTableOpts(tableOptionsMap, tbl);
+        applyTableColumns(tbl, tables);
     };
 
     useEffect(() => {
@@ -592,7 +676,13 @@ function TestTab({ settingsVersion }) {
         setLoading(true); setError(''); setResult(null);
         try {
             const r = await api('verify', { method: 'post', data: payload });
-            setResult({ type: 'verify', data: r.data });
+            const data = r.data;
+            setResult({ type: 'verify', data });
+            // If profile_incomplete or otp_verified → show complete-profile form
+            if (data.status === 'profile_incomplete' || data.status === 'otp_verified') {
+                setProfileToken(data.otp_token || '');
+                setStep(3);
+            }
         } catch (e) {
             setError(e.response?.data?.message || 'Verification failed.');
         }
@@ -602,6 +692,22 @@ function TestTab({ settingsVersion }) {
     const reset = () => {
         setStep(1); setOtp(''); setResult(null);
         setError(''); setCountdown(0); setShowOptions(false);
+        setProfileToken(''); setProfileForm({});
+    };
+
+    const completeProfile = async (e) => {
+        e.preventDefault();
+        setLoading(true); setError('');
+        try {
+            const r = await api('complete-profile', {
+                method: 'post',
+                data: { otp_token: profileToken, email, table, ...profileForm },
+            });
+            setResult({ type: 'complete-profile', data: r.data });
+        } catch (err) {
+            setError(err.response?.data?.message || 'Profile completion failed.');
+        }
+        setLoading(false);
     };
 
     // Build live preview of the exact payload that will be sent
@@ -832,6 +938,56 @@ function TestTab({ settingsVersion }) {
                             </Form>
                         )}
 
+                        {step === 3 && (
+                            <Form onSubmit={completeProfile}>
+                                <Alert variant="warning" className="py-2 small">
+                                    <strong>{email}</strong> not found in <code>{table}</code>. Complete the profile to register.
+                                </Alert>
+
+                                {tableColumns.length === 0 ? (
+                                    <Alert variant="info" className="small">
+                                        No additional fields required for <code>{table}</code>.
+                                        Submit to register with email only.
+                                    </Alert>
+                                ) : (
+                                    <Row className="g-2 mb-3">
+                                        {tableColumns.map(col => (
+                                            <Col key={col} md={colIsTextarea(col) ? 12 : 6}>
+                                                <Form.Group>
+                                                    <Form.Label className="small fw-medium mb-1">
+                                                        {colLabel(col)}
+                                                    </Form.Label>
+                                                    {colIsTextarea(col) ? (
+                                                        <Form.Control
+                                                            as="textarea" rows={2} size="sm"
+                                                            value={profileForm[col] || ''}
+                                                            onChange={e => setProfileForm(f => ({ ...f, [col]: e.target.value }))}
+                                                            placeholder={colLabel(col)}
+                                                        />
+                                                    ) : (
+                                                        <Form.Control
+                                                            type={colInputType(col)} size="sm"
+                                                            value={profileForm[col] || ''}
+                                                            onChange={e => setProfileForm(f => ({ ...f, [col]: e.target.value }))}
+                                                            placeholder={colLabel(col)}
+                                                        />
+                                                    )}
+                                                </Form.Group>
+                                            </Col>
+                                        ))}
+                                    </Row>
+                                )}
+
+                                <div className="d-flex gap-2">
+                                    <Button type="submit" className="flex-fill" disabled={loading}>
+                                        {loading && <Spinner size="sm" className="me-1" />}
+                                        Complete Profile & Register
+                                    </Button>
+                                    <Button variant="outline-danger" onClick={reset}>Reset</Button>
+                                </div>
+                            </Form>
+                        )}
+
                         {result && (
                             <div className="mt-4">
                                 <div className="d-flex align-items-center gap-2 mb-2">
@@ -851,19 +1007,24 @@ function TestTab({ settingsVersion }) {
                                         No token returned — message only response.
                                     </Alert>
                                 )}
-                                {result.data.status === 'profile_incomplete' && (
+                                {result.data.status === 'profile_incomplete' && step !== 3 && (
                                     <Alert variant="warning" className="py-2 small mb-2">
-                                        <strong>{email}</strong> not found. Use <code>otp_token</code> to call <code>/complete-profile</code>.
+                                        <strong>{email}</strong> not found. Fill the form above to complete registration.
                                     </Alert>
                                 )}
-                                {result.data.status === 'otp_verified' && (
+                                {result.data.status === 'otp_verified' && step !== 3 && (
                                     <Alert variant="info" className="py-2 small mb-2">
-                                        OTP verified (table check skipped). Use <code>otp_token</code> for next step.
+                                        OTP verified (table check skipped). Fill the form above to complete registration.
                                     </Alert>
                                 )}
                                 {result.data.status === 'created' && (
                                     <Alert variant="success" className="py-2 small mb-2">
                                         User auto-created in <code>{table}</code> and token issued.
+                                    </Alert>
+                                )}
+                                {result.data.status === 'registered' && (
+                                    <Alert variant="success" className="py-2 small mb-2">
+                                        Profile completed! User registered in <code>{table}</code> and token issued.
                                     </Alert>
                                 )}
                                 <pre className="bg-light p-3 rounded small" style={{ maxHeight: 280, overflow: 'auto' }}>

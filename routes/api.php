@@ -14,6 +14,7 @@ use App\Http\Controllers\Ecommerce\MenuController;
 use App\Http\Controllers\Ecommerce\CartController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
+use App\Http\Controllers\Ecommerce\MediaUploadController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -104,9 +105,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('orders/{order}/status',       [OrderController::class, 'updateStatus']);
 
         // Discovery Users (Customers)
-        Route::get('discovery-users',               [DiscoveryUserController::class, 'index']);
-        Route::get('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'show']);
+        Route::get('discovery-users',                    [DiscoveryUserController::class, 'index']);
+        Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show']);
+        Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']);
         Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy']);
+
+        // Media Upload (image / audio)
+        Route::post('upload', [MediaUploadController::class, 'upload']);
     });
 
     // ── Yelp Integration ────────────────────────────────────────────────────

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\DiscoveryUser;
+use App\Models\DiscoveryUserLocation;
 use App\Models\OtpVerification;
 use App\Services\ResendService;
 use Illuminate\Http\JsonResponse;
@@ -122,6 +124,7 @@ class OtpAuthController extends Controller
             'not_found_message' => ['sometimes', 'string'],
             'create_data'       => ['sometimes', 'array'],
             'skip_token'        => ['sometimes', 'boolean'],
+            'device_info'       => ['sometimes', 'array'],
         ]);
 
         $email     = strtolower(trim($request->email));
@@ -198,6 +201,11 @@ class OtpAuthController extends Controller
 
         // ── OTP Verified ─────────────────────────────────────────────────────
         $otpRecord->update(['verified_at' => now()]);
+
+        // ── Capture device fingerprint into discovery_users ───────────────────
+        if ($request->filled('device_info')) {
+            $this->captureDiscoveryUser($email, $request->input('device_info', []), $request);
+        }
 
         // ── Skip email check — just confirm OTP is valid ─────────────────────
         if (! $checkEmail) {
@@ -665,5 +673,88 @@ class OtpAuthController extends Controller
             'exp'   => now()->addDays($days)->timestamp,
             'type'  => 'otp_auth',
         ]);
+    }
+
+    /**
+     * Create or update a DiscoveryUser record when a device sends device_info
+     * during OTP verification. Location fields are stored in the related
+     * discovery_user_locations table.
+     */
+    private function captureDiscoveryUser(string $email, array $info, Request $request): void
+    {
+        try {
+            // Device-level fields stored on discovery_users
+            $deviceFields = [
+                'email'                => $email,
+                'ip_address'           => $info['ip_address']           ?? $request->ip(),
+                'isp'                  => $info['isp']                  ?? null,
+                'connection_type'      => $info['connection_type']       ?? null,
+                'downlink'             => $info['downlink']              ?? null,
+                'rtt'                  => $info['rtt']                   ?? null,
+                'browser'              => $info['browser']               ?? null,
+                'browser_version'      => $info['browser_version']       ?? null,
+                'user_agent'           => $info['user_agent']            ?? $request->userAgent(),
+                'language'             => $info['language']              ?? null,
+                'languages'            => $info['languages']             ?? null,
+                'timezone'             => $info['timezone']              ?? null,
+                'cookies_enabled'      => $info['cookies_enabled']       ?? null,
+                'do_not_track'         => $info['do_not_track']          ?? null,
+                'referrer'             => $info['referrer']              ?? null,
+                'device_type'          => $info['device_type']           ?? null,
+                'os'                   => $info['os']                    ?? null,
+                'os_version'           => $info['os_version']            ?? null,
+                'platform'             => $info['platform']              ?? null,
+                'hardware_concurrency' => $info['hardware_concurrency']  ?? null,
+                'device_memory'        => $info['device_memory']         ?? null,
+                'screen_width'         => $info['screen_width']          ?? null,
+                'screen_height'        => $info['screen_height']         ?? null,
+                'pixel_ratio'          => $info['pixel_ratio']           ?? null,
+                'color_depth'          => $info['color_depth']           ?? null,
+                'fingerprint'          => $info['fingerprint']           ?? null,
+                'webgl_renderer'       => $info['webgl_renderer']        ?? null,
+                'webgl_vendor'         => $info['webgl_vendor']          ?? null,
+                'last_seen_at'         => now(),
+            ];
+
+            // Strip null values to avoid overwriting existing data with null
+            $deviceFields = array_filter($deviceFields, fn($v) => $v !== null);
+
+            // Find by fingerprint first, then email, then create
+            $user = null;
+            if (! empty($info['fingerprint'])) {
+                $user = DiscoveryUser::where('fingerprint', $info['fingerprint'])->first();
+            }
+            if (! $user && $email) {
+                $user = DiscoveryUser::where('email', $email)->first();
+            }
+
+            if ($user) {
+                $user->update($deviceFields);
+            } else {
+                $user = DiscoveryUser::create($deviceFields);
+            }
+
+            // Location fields stored in discovery_user_locations
+            $locationFields = array_filter([
+                'lat'               => $info['lat']               ?? null,
+                'lng'               => $info['lng']               ?? null,
+                'address'           => $info['address']           ?? null,
+                'city'              => $info['city']              ?? null,
+                'state'             => $info['state']             ?? null,
+                'zip'               => $info['zip']               ?? null,
+                'country'           => $info['country']           ?? null,
+                'country_code'      => $info['country_code']      ?? null,
+                'location_from_gps' => $info['location_from_gps'] ?? false,
+            ], fn($v) => $v !== null);
+
+            if (! empty($locationFields)) {
+                DiscoveryUserLocation::updateOrCreate(
+                    ['discovery_user_id' => $user->id],
+                    $locationFields
+                );
+            }
+        } catch (\Throwable) {
+            // Never fail the OTP flow due to analytics capture errors
+        }
     }
 }
