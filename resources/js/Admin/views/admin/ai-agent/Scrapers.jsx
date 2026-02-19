@@ -116,7 +116,9 @@ const Scrapers = () => {
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
     const [enriching, setEnriching] = useState(false);
+    const [enrichingIds, setEnrichingIds] = useState(new Set()); // tracks which playlist IDs are enriching
     const [resetting, setResetting] = useState(false);
+    const enrichPollRef = useRef(null);
 
     /* ─── Videos DataTable state ─── */
     const [videos, setVideos] = useState([]);
@@ -240,6 +242,26 @@ const Scrapers = () => {
         loadVideos(1);
     };
 
+    /* ─── Start polling to refresh videos while enrichment is in background ─── */
+    const startEnrichPolling = (playlistId) => {
+        setEnrichingIds(prev => new Set([...prev, playlistId]));
+
+        // Clear any existing poll
+        if (enrichPollRef.current) clearInterval(enrichPollRef.current);
+
+        let ticks = 0;
+        enrichPollRef.current = setInterval(async () => {
+            ticks++;
+            loadVideos(1); // refresh video list to show updated stats/tags
+
+            // Stop polling after 3 minutes (18 × 10s) regardless
+            if (ticks >= 18) {
+                clearInterval(enrichPollRef.current);
+                setEnrichingIds(prev => { const n = new Set(prev); n.delete(playlistId); return n; });
+            }
+        }, 10000); // poll every 10 seconds
+    };
+
     /* ─── Search with debounce ─── */
     const handleSearchChange = (val) => {
         setSearch(val);
@@ -307,15 +329,18 @@ const Scrapers = () => {
             setMaxResults('');
             setShowModal(false);
 
-            // If backend returns the playlist object, add it to the list immediately
+            // Add playlist to list immediately — no need to wait for enrichment
             if (response.data.playlist) {
                 setPlaylists(prev => [response.data.playlist, ...prev]);
+                // Start background polling so stats/tags appear as they arrive
+                if (response.data.enriching) {
+                    startEnrichPolling(response.data.playlist.playlist_id);
+                }
             } else {
-                // Fallback: refresh all if no playlist returned
                 refreshAll();
             }
 
-            alert(response.data.message || 'Playlist added successfully with all videos and thumbnails!');
+            alert(response.data.message || 'Playlist added successfully!');
         } catch (error) {
             alert('Failed to add playlist: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -326,10 +351,14 @@ const Scrapers = () => {
     const handleSync = async (id) => {
         setSyncing(true);
         try {
+            const pl = playlists.find(p => p.id === id);
             const res = await axios.post(`/api/ai/scrapers/${id}/sync`);
-            const enriched = res.data.enriched ?? 0;
             refreshAll();
-            alert(`Sync complete. ${enriched > 0 ? `Enriched ${enriched} videos with YouTube metadata.` : 'Videos synced.'}`);
+            // Start polling so enriched data populates in background
+            if (res.data.enriching && pl?.playlist_id) {
+                startEnrichPolling(pl.playlist_id);
+            }
+            alert(res.data.message || 'Sync complete. Enrichment is running in background.');
         } catch (error) {
             alert('Sync failed: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -338,11 +367,15 @@ const Scrapers = () => {
     };
 
     const handleEnrich = async (id) => {
+        const pl = playlists.find(p => p.id === id);
         setEnriching(true);
         try {
             const res = await axios.post(`/api/ai/scrapers/${id}/enrich`);
-            alert(res.data.message || 'Enrichment complete.');
-            loadVideos();
+            // Job is queued — start polling so UI updates as data arrives
+            if (pl?.playlist_id) {
+                startEnrichPolling(pl.playlist_id);
+            }
+            alert(res.data.message || 'Enrichment queued! Stats & tags will update in background.');
         } catch (error) {
             alert('Enrich failed: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -570,8 +603,8 @@ const Scrapers = () => {
             setShowManualSelectorModal(false);
             setShowMetadataModal(true); // Reopen metadata modal
 
-            // Refresh videos
-            loadPlaylistVideos(currentPage);
+            // Refresh videos (reload page 1 to reflect updates)
+            loadVideos(1);
         } catch (error) {
             console.error('Error applying manual selections:', error);
             alert('Failed to apply manual selections: ' + (error.response?.data?.error || error.message));
@@ -589,32 +622,42 @@ const Scrapers = () => {
             return;
         }
 
-        if (!videos || videos.length === 0) {
-            alert('No videos in this playlist');
-            return;
-        }
-
         const availableGenres = platformGenres[selectedPlatform] || [];
         if (availableGenres.length === 0) {
             alert('No genres available for this platform');
             return;
         }
 
+        // Fetch ALL playlist videos (not just current page)
+        let allPlaylistVideos = [];
+        try {
+            const res = await axios.get(`/api/ai/scrapers/${selectedPlaylist.id}`);
+            allPlaylistVideos = res.data.videos || [];
+        } catch (err) {
+            alert('Failed to load playlist videos: ' + (err.response?.data?.error || err.message));
+            return;
+        }
+
+        if (allPlaylistVideos.length === 0) {
+            alert('No videos in this playlist');
+            return;
+        }
+
         // Confirm before starting
-        if (!confirm(`AI will analyze ${videos.length} videos and assign appropriate genres from ${selectedPlatform} platform. Continue?`)) {
+        if (!confirm(`AI will analyze ${allPlaylistVideos.length} videos and assign appropriate genres from ${selectedPlatform} platform. Continue?`)) {
             return;
         }
 
         // Close manual selector and show progress
         setShowManualSelectorModal(false);
         setGenerating(true);
-        setGenerationProgress({ current: 0, total: videos.length });
+        setGenerationProgress({ current: 0, total: allPlaylistVideos.length });
 
         try {
             let updated = 0;
-            for (let i = 0; i < videos.length; i++) {
-                const video = videos[i];
-                setGenerationProgress({ current: i + 1, total: videos.length });
+            for (let i = 0; i < allPlaylistVideos.length; i++) {
+                const video = allPlaylistVideos[i];
+                setGenerationProgress({ current: i + 1, total: allPlaylistVideos.length });
 
                 // Smart genre matching based on title and description
                 const videoText = `${video.title} ${video.description || ''}`.toLowerCase();
@@ -649,7 +692,7 @@ const Scrapers = () => {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            alert(`✅ AI Genre Assignment Complete!\n\nUpdated ${updated} out of ${videos.length} videos with ${selectedPlatform} genres.`);
+            alert(`✅ AI Genre Assignment Complete!\n\nUpdated ${updated} out of ${allPlaylistVideos.length} videos with ${selectedPlatform} genres.`);
             loadVideos();
         } catch (error) {
             console.error('Error in AI genre assignment:', error);
@@ -906,9 +949,12 @@ const Scrapers = () => {
                                                 <td><Badge bg="info">{pl.videos_count} videos</Badge></td>
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
-                                                    <Button variant="soft-success" size="sm" className="me-1" onClick={() => handleEnrich(pl.id)} disabled={enriching}
+                                                    <Button variant="soft-success" size="sm" className="me-1" onClick={() => handleEnrich(pl.id)} disabled={enriching || enrichingIds.has(pl.playlist_id)}
                                                         title="Fetch views, likes, comments, HD info from YouTube API">
-                                                        <Icon icon="bar-chart" className="icon-xs" /> {enriching ? 'Enriching...' : 'Enrich'}
+                                                        {enrichingIds.has(pl.playlist_id)
+                                                            ? <><Spinner size="sm" className="me-1" />Processing...</>
+                                                            : <><Icon icon="bar-chart" className="icon-xs" /> {enriching ? 'Queuing...' : 'Enrich'}</>
+                                                        }
                                                     </Button>
                                                     <Button variant="soft-secondary" size="sm" className="me-1"
                                                         onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>

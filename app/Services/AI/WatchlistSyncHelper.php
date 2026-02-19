@@ -399,14 +399,15 @@ class WatchlistSyncHelper
 
         foreach ($genreNames as $genreName) {
             try {
-                // Check if genre exists
+                $found = false;
+
+                // Step 1: Check if genre already exists (search)
                 $searchResponse = $this->makeRequest('GET', 'title-tags/genre', ['query' => $genreName, 'perPage' => 50]);
 
                 if ($searchResponse->successful()) {
                     $data = $searchResponse->json();
                     $genres = $data['pagination']['data'] ?? $data['data'] ?? [];
 
-                    $found = false;
                     foreach ($genres as $genre) {
                         if (trim(strtolower($genre['name'] ?? '')) === trim(strtolower($genreName))) {
                             $validGenres[] = $genreName;
@@ -415,21 +416,33 @@ class WatchlistSyncHelper
                             break;
                         }
                     }
+                } else {
+                    Log::warning("Genre search failed (will attempt creation anyway)", [
+                        'genre'  => $genreName,
+                        'status' => $searchResponse->status(),
+                    ]);
+                }
 
-                    if (!$found) {
-                        // Create genre
-                        $createResponse = $this->makeRequest('POST', 'title-tags/genre', [
-                            'name' => $genreName,
-                            'display_name' => $genreName,
-                        ]);
+                // Step 2: If not found (or search failed), create the genre
+                if (!$found) {
+                    $createResponse = $this->makeRequest('POST', 'title-tags/genre', [
+                        'name'         => $genreName,
+                        'display_name' => $genreName,
+                    ]);
 
-                        if ($createResponse->successful()) {
+                    if ($createResponse->successful()) {
+                        $validGenres[] = $genreName;
+                        Log::info("Successfully created genre on watchlist", ['genre' => $genreName]);
+                    } else {
+                        // 422 means it likely already exists (unique constraint) — still treat as valid
+                        if ($createResponse->status() === 422) {
                             $validGenres[] = $genreName;
-                            Log::info("Successfully created genre on watchlist", ['genre' => $genreName]);
+                            Log::info("Genre already exists (422 on create) — treating as valid", ['genre' => $genreName]);
                         } else {
                             Log::warning("Failed to create genre (skipping)", [
-                                'genre' => $genreName,
+                                'genre'  => $genreName,
                                 'status' => $createResponse->status(),
+                                'body'   => substr((string) $createResponse->body(), 0, 200),
                             ]);
                         }
                     }
@@ -443,34 +456,159 @@ class WatchlistSyncHelper
     }
 
     /**
-     * Attempt to attach genres/tags to a title via PUT.
-     * Fails gracefully — not all watchlist APIs accept these fields.
+     * Attach a single genre tag to a title via POST titles/{id}/tags/genre.
+     */
+    public function attachGenreToTitle(int $titleId, string $genreName): bool
+    {
+        try {
+            $response = $this->makeRequest('POST', "titles/{$titleId}/tags/genre", [
+                'tag_name' => $genreName,
+            ]);
+
+            if ($response->successful()) {
+                Log::info("Attached genre tag to title", [
+                    'title_id' => $titleId,
+                    'genre'    => $genreName,
+                ]);
+                return true;
+            }
+
+            Log::warning("Failed to attach genre tag to title", [
+                'title_id' => $titleId,
+                'genre'    => $genreName,
+                'status'   => $response->status(),
+                'response' => substr((string) $response->body(), 0, 300),
+            ]);
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning("Error attaching genre to title: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Ensure keywords exist on the platform, creating them if necessary.
+     * Streaming "tags" map to watchlist "keywords".
+     * Returns array of keyword names that successfully exist/were created.
+     */
+    public function ensureKeywordsExist(array $keywordNames): array
+    {
+        $validKeywords = [];
+
+        foreach ($keywordNames as $keywordName) {
+            try {
+                $found = false;
+
+                // Step 1: Check if keyword already exists (search)
+                $searchResponse = $this->makeRequest('GET', 'title-tags/keyword', ['query' => $keywordName, 'perPage' => 50]);
+
+                if ($searchResponse->successful()) {
+                    $data = $searchResponse->json();
+                    $keywords = $data['pagination']['data'] ?? $data['data'] ?? [];
+
+                    foreach ($keywords as $kw) {
+                        if (trim(strtolower($kw['name'] ?? '')) === trim(strtolower($keywordName))) {
+                            $validKeywords[] = $keywordName;
+                            $found = true;
+                            Log::info("Keyword already exists on watchlist", ['keyword' => $keywordName]);
+                            break;
+                        }
+                    }
+                } else {
+                    Log::warning("Keyword search failed (will attempt creation anyway)", [
+                        'keyword' => $keywordName,
+                        'status'  => $searchResponse->status(),
+                    ]);
+                }
+
+                // Step 2: If not found (or search failed), create the keyword
+                if (!$found) {
+                    $createResponse = $this->makeRequest('POST', 'title-tags/keyword', [
+                        'name'         => $keywordName,
+                        'display_name' => strtolower($keywordName),
+                    ]);
+
+                    if ($createResponse->successful()) {
+                        $validKeywords[] = $keywordName;
+                        Log::info("Successfully created keyword on watchlist", ['keyword' => $keywordName]);
+                    } else {
+                        // 422 means it already exists (unique constraint) — still treat as valid
+                        if ($createResponse->status() === 422) {
+                            $validKeywords[] = $keywordName;
+                            Log::info("Keyword already exists (422 on create) — treating as valid", ['keyword' => $keywordName]);
+                        } else {
+                            Log::warning("Failed to create keyword (skipping)", [
+                                'keyword' => $keywordName,
+                                'status'  => $createResponse->status(),
+                                'body'    => substr((string) $createResponse->body(), 0, 200),
+                            ]);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Error ensuring keyword exists: {$keywordName} - " . $e->getMessage());
+            }
+        }
+
+        return $validKeywords;
+    }
+
+    /**
+     * Attach a single keyword to a title via POST titles/{id}/tags/keyword.
+     */
+    public function attachKeywordToTitle(int $titleId, string $keywordName): bool
+    {
+        try {
+            $response = $this->makeRequest('POST', "titles/{$titleId}/tags/keyword", [
+                'tag_name' => $keywordName,
+            ]);
+
+            if ($response->successful()) {
+                Log::info("Attached keyword tag to title", [
+                    'title_id' => $titleId,
+                    'keyword'  => $keywordName,
+                ]);
+                return true;
+            }
+
+            Log::warning("Failed to attach keyword tag to title", [
+                'title_id' => $titleId,
+                'keyword'  => $keywordName,
+                'status'   => $response->status(),
+                'response' => substr((string) $response->body(), 0, 300),
+            ]);
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning("Error attaching keyword to title: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Attach genres and keywords (tags) to a title.
+     * - genres → POST title-tags/genre  then POST titles/{id}/tags/genre
+     * - tags   → POST title-tags/keyword then POST titles/{id}/tags/keyword
      */
     public function updateTitleTags(int $titleId, array $payload): void
     {
         try {
-            // Ensure genres exist first before attaching
+            // === Genres ===
             if (!empty($payload['genres'])) {
                 $validGenres = $this->ensureGenresExist($payload['genres']);
-                $payload['genres'] = $validGenres;
+                foreach ($validGenres as $genreName) {
+                    $this->attachGenreToTitle($titleId, $genreName);
+                }
             }
 
-            $response = $this->makeRequest('PUT', "titles/{$titleId}", $payload);
-            if ($response->successful()) {
-                Log::info("Updated title with genres/tags", [
-                    'title_id' => $titleId,
-                    'genres'   => count($payload['genres'] ?? []),
-                    'tags'     => count($payload['tags'] ?? []),
-                ]);
-            } else {
-                Log::warning("Failed to update title with genres/tags (non-fatal)", [
-                    'title_id' => $titleId,
-                    'status'   => $response->status(),
-                    'response' => substr((string) $response->body(), 0, 300),
-                ]);
+            // === Tags → Keywords (streaming tags map to watchlist keywords) ===
+            if (!empty($payload['tags'])) {
+                $validKeywords = $this->ensureKeywordsExist($payload['tags']);
+                foreach ($validKeywords as $keywordName) {
+                    $this->attachKeywordToTitle($titleId, $keywordName);
+                }
             }
         } catch (\Throwable $e) {
-            Log::warning("Error updating title tags: " . $e->getMessage());
+            Log::warning("Error updating title tags/keywords: " . $e->getMessage());
         }
     }
 

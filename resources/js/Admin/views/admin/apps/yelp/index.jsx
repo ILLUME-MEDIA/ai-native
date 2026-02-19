@@ -310,9 +310,16 @@ function JobsTab() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
-        setJobs(j.data); setEntities(e.data); setYelpFields(yf.data);
-        setLoading(false);
+        try {
+            const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
+            setJobs(j.data ?? []);
+            setEntities(e.data ?? []);
+            setYelpFields(yf.data ?? {});
+        } catch (err) {
+            console.error('Yelp page load error:', err);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
