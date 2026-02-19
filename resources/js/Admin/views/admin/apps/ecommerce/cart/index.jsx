@@ -57,7 +57,7 @@ export default function CartPage() {
   const loadCart = useCallback(() => {
     setLoadingCart(true);
     api('get', '/api/ecommerce/cart')
-      .then(r => setCartItems(r.data))
+      .then(r => setCartItems(r.data.items || []))
       .finally(() => setLoadingCart(false));
   }, []);
 
