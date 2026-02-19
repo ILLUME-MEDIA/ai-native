@@ -2,6 +2,7 @@ import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
 import { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router';
 import {
     Card, CardBody, CardHeader, Col,
     Collapse, Form, Row, Spinner,
@@ -26,6 +27,7 @@ const STATUS_LABEL = {
 };
 
 export default function OrdersPage() {
+    const navigate = useNavigate();
     const [orders, setOrders]         = useState([]);
     const [loading, setLoading]       = useState(true);
     const [statusFilter, setStatusFilter] = useState('');
@@ -97,6 +99,10 @@ export default function OrdersPage() {
                         </Form.Select>
                         <button className="btn btn-light btn-sm btn-icon" onClick={() => load(page)} title="Refresh">
                             <Icon icon="refresh" className="fs-lg" />
+                        </button>
+                        <button className="btn btn-primary btn-sm" onClick={() => navigate('/apps/ecommerce/order-add')}>
+                            <Icon icon="plus" className="me-1" />
+                            Add Order
                         </button>
                     </div>
                 </CardHeader>
@@ -180,6 +186,16 @@ export default function OrdersPage() {
                                                                         <small className="text-muted">Notes: {order.notes}</small>
                                                                     </div>
                                                                 )}
+                                                                <div className="mt-3">
+                                                                    <Link
+                                                                        to={`/apps/ecommerce/order-details?id=${order.id}`}
+                                                                        className="btn btn-sm btn-outline-primary"
+                                                                        onClick={e => e.stopPropagation()}
+                                                                    >
+                                                                        <Icon icon="eye" className="me-1" />
+                                                                        View Full Details
+                                                                    </Link>
+                                                                </div>
                                                             </Col>
                                                         </Row>
                                                     </div>
