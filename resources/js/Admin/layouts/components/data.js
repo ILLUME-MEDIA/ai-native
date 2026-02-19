@@ -22,10 +22,6 @@ export const menuItems = [{
     slug: "ecommerce",
     label: "Ecommerce",
     children: [{
-      url: "/apps/sections",
-      slug: "pages:apps-sections-list",
-      label: "Section Builder"
-    }, {
       slug: "products",
       label: "Products",
       children: [{
@@ -508,6 +504,11 @@ export const menuItems = [{
   label: "AI Agents",
   isTitle: true,
   children: [ {
+    url: "/apps/sections",
+    icon: "layout-grid",
+    slug: "pages:apps-sections-list",
+    label: "Section Builder"
+  }, {
     url: "/apps/code-editor",
     icon: "code",
     slug: "pages:apps-code-editor",

@@ -8,6 +8,12 @@ use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
 use App\Http\Controllers\PublicApi\CaseStudyController;
+use App\Http\Controllers\Ecommerce\BusinessCategoryController;
+use App\Http\Controllers\Ecommerce\BusinessController;
+use App\Http\Controllers\Ecommerce\MenuController;
+use App\Http\Controllers\Ecommerce\CartController;
+use App\Http\Controllers\Ecommerce\OrderController;
+use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -55,6 +61,53 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/section-builder/entities/{entity}/fields/reorder', [FieldController::class, 'reorder'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.reorder');
+
+    // ── Ecommerce / Order Flow ───────────────────────────────────────────────
+    Route::prefix('ecommerce')->group(function () {
+        // Business Categories
+        Route::get('categories',                    [BusinessCategoryController::class, 'index']);
+        Route::post('categories',                   [BusinessCategoryController::class, 'store']);
+        Route::patch('categories/{category}',       [BusinessCategoryController::class, 'update']);
+        Route::delete('categories/{category}',      [BusinessCategoryController::class, 'destroy']);
+
+        // Businesses
+        Route::get('businesses',                    [BusinessController::class, 'index']);
+        Route::post('businesses',                   [BusinessController::class, 'store']);
+        Route::get('businesses/{business}',         [BusinessController::class, 'show']);
+        Route::patch('businesses/{business}',       [BusinessController::class, 'update']);
+        Route::delete('businesses/{business}',      [BusinessController::class, 'destroy']);
+
+        // Menu categories per business
+        Route::get('businesses/{business}/menu-categories',               [MenuController::class, 'categories']);
+        Route::post('businesses/{business}/menu-categories',              [MenuController::class, 'storeCategory']);
+        Route::patch('businesses/{business}/menu-categories/{category}',  [MenuController::class, 'updateCategory']);
+        Route::delete('businesses/{business}/menu-categories/{category}', [MenuController::class, 'destroyCategory']);
+
+        // Menu items
+        Route::get('menu-items',                                    [MenuController::class, 'allItems']);
+        Route::get('businesses/{business}/menu-items',              [MenuController::class, 'items']);
+        Route::post('businesses/{business}/menu-items',             [MenuController::class, 'storeItem']);
+        Route::patch('businesses/{business}/menu-items/{item}',     [MenuController::class, 'updateItem']);
+        Route::delete('businesses/{business}/menu-items/{item}',    [MenuController::class, 'destroyItem']);
+
+        // Cart
+        Route::get('cart',              [CartController::class, 'index']);
+        Route::post('cart',             [CartController::class, 'store']);
+        Route::patch('cart/{cartItem}', [CartController::class, 'update']);
+        Route::delete('cart/clear',     [CartController::class, 'clear']);
+        Route::delete('cart/{cartItem}',[CartController::class, 'destroy']);
+
+        // Orders
+        Route::get('orders',                        [OrderController::class, 'index']);
+        Route::post('orders',                       [OrderController::class, 'store']);
+        Route::get('orders/{order}',                [OrderController::class, 'show']);
+        Route::patch('orders/{order}/status',       [OrderController::class, 'updateStatus']);
+
+        // Discovery Users (Customers)
+        Route::get('discovery-users',               [DiscoveryUserController::class, 'index']);
+        Route::get('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'show']);
+        Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy']);
+    });
 
     // ── Yelp Integration ────────────────────────────────────────────────────
     Route::prefix('yelp')->group(function () {

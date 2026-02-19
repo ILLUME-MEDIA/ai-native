@@ -1,0 +1,110 @@
+<?php
+
+namespace App\Http\Controllers\Ecommerce;
+
+use App\Http\Controllers\Controller;
+use App\Models\CartItem;
+use App\Models\Order;
+use App\Models\OrderItem;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+class OrderController extends Controller
+{
+    protected function sessionId(Request $request): string
+    {
+        return $request->header('X-Session-Id')
+            ?? (session()->isStarted() ? session()->getId() : Str::uuid());
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $q = Order::with(['business', 'items'])->orderByDesc('id');
+        if ($request->filled('business_id')) $q->where('business_id', $request->business_id);
+        if ($request->filled('status'))      $q->where('status', $request->status);
+        if ($request->filled('session_id'))  $q->where('session_id', $request->session_id);
+        return response()->json($q->paginate(20));
+    }
+
+    public function show(Order $order): JsonResponse
+    {
+        return response()->json($order->load(['business', 'items']));
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'business_id'      => 'required|exists:businesses,id',
+            'customer_name'    => 'nullable|string|max:200',
+            'customer_phone'   => 'nullable|string|max:30',
+            'customer_email'   => 'nullable|email|max:200',
+            'delivery_address' => 'nullable|string',
+            'notes'            => 'nullable|string',
+            'order_type'          => 'in:delivery,pickup,dine_in',
+            'item_delivery_type'  => 'in:pickup,delivery',
+            'delivery_vendor'     => 'nullable|string|max:100',
+            'tax_rate'            => 'numeric|min:0|max:100',
+        ]);
+
+        $sid       = $this->sessionId($request);
+        $cartItems = CartItem::where('session_id', $sid)
+            ->where('business_id', $data['business_id'])
+            ->with('menuItem')
+            ->get();
+
+        if ($cartItems->isEmpty()) {
+            return response()->json(['message' => 'Cart is empty for this business.'], 422);
+        }
+
+        $subtotal = round($cartItems->sum(fn ($ci) => ($ci->menuItem->price ?? 0) * $ci->quantity), 2);
+        $taxRate  = (float) ($data['tax_rate'] ?? 0);
+        $tax      = round($subtotal * ($taxRate / 100), 2);
+        $total    = round($subtotal + $tax, 2);
+
+        $order = Order::create([
+            'order_number'     => 'ORD-' . strtoupper(Str::random(8)),
+            'business_id'      => $data['business_id'],
+            'session_id'       => $sid,
+            'user_id'          => auth()->id(),
+            'status'           => 'pending',
+            'subtotal'         => $subtotal,
+            'tax'              => $tax,
+            'delivery_fee'     => 0,
+            'total'            => $total,
+            'customer_name'    => $data['customer_name'] ?? null,
+            'customer_phone'   => $data['customer_phone'] ?? null,
+            'customer_email'   => $data['customer_email'] ?? null,
+            'delivery_address' => $data['delivery_address'] ?? null,
+            'notes'               => $data['notes'] ?? null,
+            'order_type'          => $data['order_type'] ?? 'delivery',
+            'item_delivery_type'  => $data['item_delivery_type'] ?? 'delivery',
+            'delivery_vendor'     => $data['delivery_vendor'] ?? null,
+        ]);
+
+        foreach ($cartItems as $ci) {
+            OrderItem::create([
+                'order_id'     => $order->id,
+                'menu_item_id' => $ci->menu_item_id,
+                'name'         => $ci->menuItem->name,
+                'price'        => $ci->menuItem->price,
+                'quantity'     => $ci->quantity,
+                'subtotal'     => round($ci->menuItem->price * $ci->quantity, 2),
+                'notes'        => $ci->notes,
+            ]);
+        }
+
+        CartItem::where('session_id', $sid)->where('business_id', $data['business_id'])->delete();
+
+        return response()->json($order->load(['business', 'items']), 201);
+    }
+
+    public function updateStatus(Request $request, Order $order): JsonResponse
+    {
+        $data = $request->validate([
+            'status' => 'required|in:pending,confirmed,preparing,ready,out_for_delivery,delivered,cancelled',
+        ]);
+        $order->update($data);
+        return response()->json($order->load(['business', 'items']));
+    }
+}
