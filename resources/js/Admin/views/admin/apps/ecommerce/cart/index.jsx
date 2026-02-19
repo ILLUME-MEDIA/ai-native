@@ -2,7 +2,7 @@ import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
   Col, Form, Row, Spinner, Table
