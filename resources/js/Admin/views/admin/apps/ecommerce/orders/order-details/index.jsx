@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
-  Col, Form, FormSelect, Modal, Row, Spinner, Table
+  Col, Form, FormSelect, Row, Spinner, Table
 } from 'react-bootstrap';
 
 const STATUS_FLOW = ['pending','confirmed','preparing','ready','out_for_delivery','delivered','cancelled'];
@@ -29,17 +29,27 @@ export default function OrderDetailsPage() {
   const navigate = useNavigate();
   const orderId = searchParams.get('id');
 
-  const [order, setOrder]     = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
+  const [order, setOrder]         = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [updating, setUpdating]   = useState(false);
   const [newStatus, setNewStatus] = useState('');
-  const [showDelete, setShowDelete] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toast, setToast]         = useState(null);
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [loadingRecent, setLoadingRecent] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  // Load recent orders when no ID provided
+  useEffect(() => {
+    if (orderId) return;
+    setLoadingRecent(true);
+    axios.get('/api/ecommerce/orders?per_page=10')
+      .then(r => setRecentOrders(r.data.data || []))
+      .finally(() => setLoadingRecent(false));
+  }, [orderId]);
 
   const load = () => {
     if (!orderId) return;
@@ -61,11 +71,70 @@ export default function OrderDetailsPage() {
       .finally(() => setUpdating(false));
   };
 
+  // No ID — show recent orders picker
   if (!orderId) {
     return (
       <>
         <PageBreadcrumb title="Order Details" subtitle="Ecommerce" />
-        <Alert variant="warning">No order selected. <Link to="/apps/ecommerce/orders">← Back to Orders</Link></Alert>
+        <Row className="justify-content-center">
+          <Col lg={8}>
+            <Card>
+              <CardHeader className="d-flex justify-content-between align-items-center">
+                <CardTitle as="h5" className="mb-0">
+                  <Icon name="shopping-bag" size={16} className="me-2" />
+                  Recent Orders — Click to View Details
+                </CardTitle>
+                <Button variant="primary" size="sm" onClick={() => navigate('/apps/ecommerce/order-add')}>
+                  <Icon name="plus" size={14} className="me-1" />
+                  Create Order
+                </Button>
+              </CardHeader>
+              <CardBody className="p-0">
+                {loadingRecent ? (
+                  <div className="text-center py-5"><Spinner /></div>
+                ) : recentOrders.length === 0 ? (
+                  <div className="text-center py-5 text-muted">
+                    <Icon name="shopping-bag" size={40} className="mb-2 opacity-50" />
+                    <p>No orders yet.</p>
+                    <Button variant="primary" onClick={() => navigate('/apps/ecommerce/order-add')}>Create First Order</Button>
+                  </div>
+                ) : (
+                  <Table responsive hover className="mb-0">
+                    <thead className="table-light">
+                      <tr><th>Order #</th><th>Customer</th><th>Business</th><th>Total</th><th>Status</th><th>Date</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {recentOrders.map(o => (
+                        <tr key={o.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/apps/ecommerce/order-details?id=${o.id}`)}>
+                          <td><strong className="font-monospace">{o.order_number}</strong></td>
+                          <td>{o.customer_name || '—'}</td>
+                          <td><small className="text-muted">{o.business?.name || '—'}</small></td>
+                          <td className="fw-bold text-success">${parseFloat(o.total).toFixed(2)}</td>
+                          <td>
+                            <Badge bg={STATUS_BADGE[o.status] || 'secondary'} className="text-capitalize">
+                              {STATUS_LABEL[o.status] || o.status}
+                            </Badge>
+                          </td>
+                          <td><small className="text-muted">{new Date(o.created_at).toLocaleDateString()}</small></td>
+                          <td>
+                            <Icon name="chevron-right" size={14} className="text-muted" />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                )}
+              </CardBody>
+              {recentOrders.length > 0 && (
+                <div className="p-3 border-top text-center">
+                  <Button variant="outline-secondary" size="sm" onClick={() => navigate('/apps/ecommerce/orders')}>
+                    View All Orders
+                  </Button>
+                </div>
+              )}
+            </Card>
+          </Col>
+        </Row>
       </>
     );
   }
