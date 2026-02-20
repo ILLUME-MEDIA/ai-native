@@ -1,0 +1,1813 @@
+openapi: 3.0.3
+info:
+  title: MyApps Ecommerce API
+  version: "1.0.0"
+  description: |
+    Complete API for the MyApps platform.
+
+    ## Authentication
+
+    Two methods are supported:
+
+    ### 1. Bearer Token (Admin / Sanctum)
+    ```
+    Authorization: Bearer <sanctum-token>
+    ```
+    Get a token via `POST /api/auth/token` below.
+
+    ### 2. Site API Key (external site integration)
+    Required for the **public** `POST /api/register-business` endpoint.
+    ```
+    Authorization: Bearer sk_site_t7Q2Ls9HcD4Xp1Bv
+    ```
+    Use your `SITE_API_KEY` from the `.env` file.
+
+servers:
+  - url: http://127.0.0.1:8000/api
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+    description: Get a Bearer token for API access (admin Sanctum login)
+  - name: OTP Auth
+    description: |
+      Passwordless OTP authentication for customers / external sites.
+      Works with any DB table that has an `email` column.
+      Flow: **send OTP → verify OTP → get token → use token to call profile**
+  - name: Business Registration
+    description: Public Get Started form + admin approval workflow
+  - name: Businesses
+    description: Business CRUD (admin)
+  - name: Business Categories
+    description: Category management
+  - name: Menu
+    description: Menu categories and items
+  - name: Cart
+    description: Shopping cart
+  - name: Orders
+    description: Order management
+  - name: Discovery Users
+    description: Customer management
+  - name: Media Upload
+    description: Upload images, videos, audio
+  - name: Data Source Hub
+    description: Multi-source data import and sync
+
+paths:
+
+  # ── AUTH ───────────────────────────────────────────────────────────────────
+
+  /auth/token:
+    post:
+      tags:
+        - Auth
+      summary: Login with email+password → get Bearer token
+      description: |
+        Use this to get a Sanctum Bearer token.
+        Copy the `token` value and paste it into the **Authorize** button above.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@example.com
+                password:
+                  type: string
+                  format: password
+                  example: yourpassword
+      responses:
+        "200":
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: Paste into Authorization Bearer field
+                  token_type:
+                    type: string
+                    example: Bearer
+                  user:
+                    $ref: "#/components/schemas/User"
+        "401":
+          description: Invalid credentials
+
+  # ── OTP AUTH ───────────────────────────────────────────────────────────────
+
+  /otp-auth/send:
+    post:
+      tags:
+        - OTP Auth
+      summary: Step 1 — Send OTP to email
+      description: |
+        Generates a 6-digit OTP and sends it via email (Resend service).
+        Rate-limited: one OTP per `resend_cooldown_seconds` (default 60s).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: customer@example.com
+                table:
+                  type: string
+                  default: users
+                  description: DB table to check email in (must be in allowed_tables)
+                  example: discovery_users
+            example:
+              email: customer@example.com
+              table: discovery_users
+      responses:
+        "200":
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: OTP sent successfully. Check your email.
+                  expires_in_minutes:
+                    type: integer
+                    example: 10
+        "422":
+          description: Invalid table
+        "429":
+          description: Rate limited — wait before requesting another OTP
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                  wait_seconds:
+                    type: integer
+                    example: 45
+
+  /otp-auth/resend:
+    post:
+      tags:
+        - OTP Auth
+      summary: Step 1b — Resend OTP (same as send, respects cooldown)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: customer@example.com
+                table:
+                  type: string
+                  example: discovery_users
+      responses:
+        "200":
+          description: OTP resent
+        "429":
+          description: Too soon — cooldown not expired
+
+  /otp-auth/verify:
+    post:
+      tags:
+        - OTP Auth
+      summary: Step 2 — Verify OTP → get auth token
+      description: |
+        Verifies the OTP and returns an auth token based on the configured behavior.
+
+        ### Response `status` values:
+        | status | meaning |
+        |--------|---------|
+        | `authenticated` | Email found in table — token returned |
+        | `profile_incomplete` | Email not found — `otp_token` returned for `/complete-profile` |
+        | `not_found` | Email not found — message only (no token) |
+        | `created` | New record auto-created — token returned |
+        | `otp_verified` | OTP valid but email check was skipped |
+
+        ### Token returned
+        The `token` in the response is a **Laravel encrypted string**.
+        Store it client-side and send as `Authorization: Bearer <token>` on subsequent calls.
+        Use `GET /otp-auth/profile` to fetch the user profile with this token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtpVerifyRequest"
+            example:
+              email: customer@example.com
+              otp: "123456"
+              table: discovery_users
+              check_email: true
+              on_found: token
+              on_not_found: profile
+      responses:
+        "200":
+          description: OTP verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpVerifyResponse"
+        "201":
+          description: New user created (on_not_found = create)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpVerifyResponse"
+        "404":
+          description: No OTP record found for this email
+        "422":
+          description: Invalid or expired OTP
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    enum:
+                      - otp_expired
+                      - otp_invalid
+                  attempts_remaining:
+                    type: integer
+        "429":
+          description: Max OTP attempts exceeded
+
+  /otp-auth/complete-profile:
+    post:
+      tags:
+        - OTP Auth
+      summary: Step 3 — Complete profile (when verify returns profile_incomplete)
+      description: |
+        Called after verify returns `status: profile_incomplete`.
+        Sends the `otp_token` from the verify response along with profile data.
+        Creates the user record and returns a full auth token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - otp_token
+                - email
+              properties:
+                otp_token:
+                  type: string
+                  description: The encrypted otp_token returned by /verify
+                email:
+                  type: string
+                  format: email
+                name:
+                  type: string
+                  example: John Doe
+                phone:
+                  type: string
+                  example: "+1-555-0100"
+                table:
+                  type: string
+                  default: users
+                  example: discovery_users
+            example:
+              otp_token: "eyJpdiI6..."
+              email: customer@example.com
+              name: John Doe
+              phone: "+1-555-0100"
+              table: discovery_users
+      responses:
+        "201":
+          description: Profile created — auth token returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    example: registered
+                  message:
+                    type: string
+                    example: Profile completed successfully.
+                  token:
+                    type: string
+                    description: Encrypted auth token — use as Bearer token
+                  user:
+                    type: object
+        "200":
+          description: Email already existed — token returned (race condition safe)
+        "401":
+          description: Invalid or expired otp_token
+
+  /otp-auth/profile:
+    get:
+      tags:
+        - OTP Auth
+      summary: Get authenticated user profile
+      description: |
+        Returns the profile of the currently logged-in OTP user.
+        Requires the encrypted Bearer token returned by `/verify` or `/complete-profile`.
+
+        **Header:** `Authorization: Bearer <encrypted_otp_token>`
+
+        Optionally pass `?table=` to specify which DB table to look up the user in.
+        Defaults to the table stored in the token payload.
+      security:
+        - otpBearerAuth: []
+      parameters:
+        - in: query
+          name: table
+          schema:
+            type: string
+          description: Override table from token (must be in allowed_tables)
+          example: discovery_users
+      responses:
+        "200":
+          description: User profile returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user:
+                    type: object
+                    description: All columns from the user's table row (password removed)
+                  table:
+                    type: string
+                    example: discovery_users
+        "401":
+          description: Missing, invalid, or expired OTP token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    enum:
+                      - token_missing
+                      - invalid_token
+                      - token_expired
+        "404":
+          description: User no longer exists in the table
+
+  /otp-auth/settings:
+    get:
+      tags:
+        - OTP Auth
+      summary: Get OTP settings (admin)
+      description: Returns OTP configuration and Resend email status.
+      responses:
+        "200":
+          description: Current OTP settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpSettings"
+    put:
+      tags:
+        - OTP Auth
+      summary: Update OTP settings (admin)
+      description: |
+        Updates which tables are allowed for OTP email checks
+        and per-table verify behavior options.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - allowed_tables
+              properties:
+                allowed_tables:
+                  type: array
+                  items:
+                    type: string
+                  example:
+                    - users
+                    - discovery_users
+                table_options:
+                  type: object
+                  description: Per-table defaults for verify behavior
+                  additionalProperties:
+                    $ref: "#/components/schemas/OtpTableOptions"
+            example:
+              allowed_tables:
+                - discovery_users
+              table_options:
+                discovery_users:
+                  check_email: true
+                  on_found: token
+                  on_not_found: profile
+      responses:
+        "200":
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  allowed_tables:
+                    type: array
+                    items:
+                      type: string
+                  table_options:
+                    type: object
+
+  /otp-auth/tables:
+    get:
+      tags:
+        - OTP Auth
+      summary: List DB tables available for OTP auth
+      description: Returns all database tables (with `has_email` flag) for use in OTP settings.
+      responses:
+        "200":
+          description: Table list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    table:
+                      type: string
+                    has_email:
+                      type: boolean
+                    columns:
+                      type: array
+                      items:
+                        type: string
+
+  /otp-auth/logs:
+    get:
+      tags:
+        - OTP Auth
+      summary: Get OTP verification logs (admin)
+      description: Paginated list of recent OTP verification records.
+      parameters:
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            default: 25
+      responses:
+        "200":
+          description: Paginated OTP logs
+
+  # ── BUSINESS REGISTRATION (Public) ────────────────────────────────────────
+
+  /register-business:
+    post:
+      tags:
+        - Business Registration
+      summary: Submit Get Started registration
+      description: |
+        **Public endpoint** — requires `SITE_API_KEY` as Bearer token.
+
+        ```
+        Authorization: Bearer sk_site_t7Q2Ls9HcD4Xp1Bv
+        ```
+
+        Submits a new business registration. Status starts as **pending** until admin approves.
+      security:
+        - siteApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessRegistrationSubmit"
+            example:
+              business_name: My Halal Restaurant
+              address: 123 Main St
+              address_2: Suite 4
+              city: New York
+              state: NY
+              zip: "10001"
+              country: US
+              contact_name: John Doe
+              contact_email: john@myrestaurant.com
+              contact_phone: "+1-555-0100"
+              website_url: https://myrestaurant.com
+              menu_url: https://myrestaurant.com/menu
+              external_site_url: https://muzzhub.com/restaurant/my-halal-restaurant
+              monday_open: "09:00"
+              monday_close: "22:00"
+              tuesday_open: "09:00"
+              tuesday_close: "22:00"
+              wednesday_open: "09:00"
+              wednesday_close: "22:00"
+              thursday_open: "09:00"
+              thursday_close: "22:00"
+              friday_open: "09:00"
+              friday_close: "23:00"
+              saturday_open: "10:00"
+              saturday_close: "23:00"
+              sunday_open: "10:00"
+              sunday_close: "21:00"
+              bio: Best halal food in the city. Fresh ingredients daily.
+              image_url: https://cdn.example.com/uploads/restaurant.jpg
+              audio_url: ""
+              agreement_accepted: true
+              signature_name: John Doe
+              signature_data: "data:image/png;base64,iVBORw0KGgoAAAANS..."
+              target_source: muzzhub
+      responses:
+        "201":
+          description: Registration submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Registration submitted. We will review and contact you soon.
+                  id:
+                    type: integer
+                    example: 42
+        "401":
+          description: Missing or invalid SITE_API_KEY
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: Too many requests (throttled — 30 per minute)
+
+  # ── BUSINESS REGISTRATIONS (Admin) ────────────────────────────────────────
+
+  /ecommerce/registrations:
+    get:
+      tags:
+        - Business Registration
+      summary: List registrations (admin)
+      parameters:
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum:
+              - pending
+              - approved
+              - rejected
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedRegistrations"
+
+  /ecommerce/registrations/{id}:
+    get:
+      tags:
+        - Business Registration
+      summary: Get registration detail (admin)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Registration detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessRegistration"
+    delete:
+      tags:
+        - Business Registration
+      summary: Delete registration (admin)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  /ecommerce/registrations/{id}/approve:
+    post:
+      tags:
+        - Business Registration
+      summary: Approve registration → creates live Business (admin)
+      description: |
+        Approves the registration and automatically creates a **Business** record.
+        The business becomes live immediately (`is_active: true`).
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: integer
+                  description: Business category (defaults to first category if omitted)
+                  example: 1
+                external_site_url:
+                  type: string
+                  format: uri
+                  description: URL on external site where this business appears
+                  example: https://muzzhub.com/restaurant/my-halal-restaurant
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  business_id:
+                    type: integer
+                  external_site_url:
+                    type: string
+        "409":
+          description: Already approved
+
+  /ecommerce/registrations/{id}/reject:
+    post:
+      tags:
+        - Business Registration
+      summary: Reject registration (admin)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: Incomplete information provided.
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+        "409":
+          description: Already rejected
+
+  # ── BUSINESSES ────────────────────────────────────────────────────────────
+
+  /ecommerce/businesses:
+    get:
+      tags:
+        - Businesses
+      summary: List businesses
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated businesses
+    post:
+      tags:
+        - Businesses
+      summary: Create a business
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessInput"
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/businesses/{id}:
+    get:
+      tags:
+        - Businesses
+      summary: Get business detail
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Business detail
+    patch:
+      tags:
+        - Businesses
+      summary: Update business
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessInput"
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Businesses
+      summary: Delete business
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── BUSINESS CATEGORIES ───────────────────────────────────────────────────
+
+  /ecommerce/categories:
+    get:
+      tags:
+        - Business Categories
+      summary: List categories
+      responses:
+        "200":
+          description: List of categories
+    post:
+      tags:
+        - Business Categories
+      summary: Create category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: Restaurant
+                slug:
+                  type: string
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/categories/{id}:
+    patch:
+      tags:
+        - Business Categories
+      summary: Update category
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Business Categories
+      summary: Delete category
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── MENU ──────────────────────────────────────────────────────────────────
+
+  /ecommerce/businesses/{businessId}/menu-categories:
+    get:
+      tags:
+        - Menu
+      summary: List menu categories for a business
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of menu categories
+    post:
+      tags:
+        - Menu
+      summary: Create menu category
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: Starters
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/businesses/{businessId}/menu-items:
+    get:
+      tags:
+        - Menu
+      summary: List menu items for a business
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of menu items
+    post:
+      tags:
+        - Menu
+      summary: Create menu item
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - price
+              properties:
+                menu_category_id:
+                  type: integer
+                name:
+                  type: string
+                  example: Chicken Tikka
+                description:
+                  type: string
+                price:
+                  type: number
+                  example: 12.99
+                image:
+                  type: string
+                is_available:
+                  type: boolean
+                  default: true
+      responses:
+        "201":
+          description: Created
+
+  # ── CART ──────────────────────────────────────────────────────────────────
+
+  /ecommerce/cart:
+    get:
+      tags:
+        - Cart
+      summary: Get cart items
+      responses:
+        "200":
+          description: Cart items
+    post:
+      tags:
+        - Cart
+      summary: Add item to cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - menu_item_id
+                - quantity
+              properties:
+                menu_item_id:
+                  type: integer
+                quantity:
+                  type: integer
+                  default: 1
+      responses:
+        "201":
+          description: Added to cart
+
+  /ecommerce/cart/{cartItemId}:
+    patch:
+      tags:
+        - Cart
+      summary: Update cart item quantity
+      parameters:
+        - name: cartItemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quantity:
+                  type: integer
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Cart
+      summary: Remove cart item
+      parameters:
+        - name: cartItemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  /ecommerce/cart/clear:
+    delete:
+      tags:
+        - Cart
+      summary: Clear entire cart
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── ORDERS ────────────────────────────────────────────────────────────────
+
+  /ecommerce/orders:
+    get:
+      tags:
+        - Orders
+      summary: List orders
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - pending
+              - confirmed
+              - preparing
+              - ready
+              - delivered
+              - cancelled
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated orders
+    post:
+      tags:
+        - Orders
+      summary: Place an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - business_id
+              properties:
+                business_id:
+                  type: integer
+                delivery_address:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        "201":
+          description: Order placed
+
+  /ecommerce/orders/{id}:
+    get:
+      tags:
+        - Orders
+      summary: Get order detail
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Order detail
+
+  /ecommerce/orders/{id}/status:
+    patch:
+      tags:
+        - Orders
+      summary: Update order status
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - pending
+                    - confirmed
+                    - preparing
+                    - ready
+                    - delivered
+                    - cancelled
+      responses:
+        "200":
+          description: Status updated
+
+  # ── DISCOVERY USERS ───────────────────────────────────────────────────────
+
+  /ecommerce/discovery-users:
+    get:
+      tags:
+        - Discovery Users
+      summary: List discovery users
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated users
+
+  /ecommerce/discovery-users/{id}:
+    get:
+      tags:
+        - Discovery Users
+      summary: Get user detail
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: User detail
+    patch:
+      tags:
+        - Discovery Users
+      summary: Update discovery user
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Discovery Users
+      summary: Delete discovery user
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── MEDIA UPLOAD ──────────────────────────────────────────────────────────
+
+  /ecommerce/upload:
+    post:
+      tags:
+        - Media Upload
+      summary: Upload image, video or audio (max 20MB)
+      description: |
+        Upload any file. Returns a public URL you can use in
+        `image_url`, `audio_url`, or menu item `image` fields.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload (max 20MB)
+                folder:
+                  type: string
+                  enum:
+                    - businesses
+                    - menu-items
+                    - discovery-users
+                    - ecommerce
+                  default: ecommerce
+      responses:
+        "200":
+          description: Upload successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    example: http://127.0.0.1:8000/storage/ecommerce/businesses/abc123.jpg
+                  path:
+                    type: string
+                    example: ecommerce/businesses/abc123.jpg
+
+  # ── DATA SOURCE HUB ───────────────────────────────────────────────────────
+
+  /ecommerce/data-sources:
+    get:
+      tags:
+        - Data Source Hub
+      summary: List data sources
+      responses:
+        "200":
+          description: List of data sources
+    post:
+      tags:
+        - Data Source Hub
+      summary: Create data source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataSourceInput"
+            examples:
+              local_table:
+                summary: Local DB Table (e.g. muzzhub)
+                value:
+                  name: Muzzhub
+                  type: local_table
+                  is_active: true
+                  config:
+                    table: muzzhub
+                    field_map:
+                      title: name
+                      address: address
+              rest_api:
+                summary: REST API source
+                value:
+                  name: Pakistan Hub API
+                  type: api
+                  is_active: true
+                  config:
+                    base_url: https://pakistanhub.com
+                    endpoint: /api/businesses
+                    auth_type: bearer
+                    token: your-api-token
+                    per_page: 50
+                    data_key: data
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/data-sources/{id}:
+    get:
+      tags:
+        - Data Source Hub
+      summary: Get data source detail
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Data source detail with logs
+    patch:
+      tags:
+        - Data Source Hub
+      summary: Update data source
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataSourceInput"
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Data Source Hub
+      summary: Delete data source
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  /ecommerce/data-sources/{id}/sync:
+    post:
+      tags:
+        - Data Source Hub
+      summary: Trigger sync for a data source
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  imported:
+                    type: integer
+                  skipped:
+                    type: integer
+                  failed:
+                    type: integer
+                  duration_ms:
+                    type: integer
+        "409":
+          description: Sync already in progress
+
+  /ecommerce/data-sources/{id}/logs:
+    get:
+      tags:
+        - Data Source Hub
+      summary: Get last 20 sync logs
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Sync logs
+
+# ── COMPONENTS ────────────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: SanctumToken
+      description: |
+        Laravel Sanctum token. Get it via `POST /api/auth/token`.
+    siteApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Site API key (`SITE_API_KEY` from .env).
+        Use this for public endpoints like `POST /api/register-business`.
+    otpBearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Encrypted OTP auth token returned by `POST /otp-auth/verify` or `POST /otp-auth/complete-profile`.
+        This is NOT a Sanctum token — it is a Laravel `encrypt()` string.
+        Store it client-side and send as `Authorization: Bearer <token>` to `GET /otp-auth/profile`.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Record ID
+
+  responses:
+    MessageOk:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MessageResponse"
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+              errors:
+                type: object
+
+  schemas:
+
+    # ── OTP AUTH ────────────────────────────────────────────────────────────
+
+    OtpVerifyRequest:
+      type: object
+      required:
+        - email
+        - otp
+      properties:
+        email:
+          type: string
+          format: email
+          example: customer@example.com
+        otp:
+          type: string
+          minLength: 4
+          maxLength: 10
+          example: "123456"
+        table:
+          type: string
+          description: DB table to check email in
+          default: users
+          example: discovery_users
+        check_email:
+          type: boolean
+          default: true
+          description: Whether to check if email exists in the table
+        on_found:
+          type: string
+          enum:
+            - token
+            - message
+          default: token
+          description: What to return when email is found
+        on_not_found:
+          type: string
+          enum:
+            - token
+            - message
+            - profile
+            - create
+          default: profile
+          description: |
+            What to return when email is NOT found:
+            - `token` — issue token anyway (OTP-only auth)
+            - `message` — return message only
+            - `profile` — return otp_token for complete-profile flow
+            - `create` — auto-create user record and return token
+        found_message:
+          type: string
+          description: Custom success message when email is found
+        not_found_message:
+          type: string
+          description: Custom message when email is not found
+        create_data:
+          type: object
+          description: Extra fields to insert when on_not_found=create
+        skip_token:
+          type: boolean
+          default: false
+          description: Return user data without a token (on_found=token ignored)
+        device_info:
+          type: object
+          description: Device/location fingerprint — captured into discovery_users table
+          properties:
+            fingerprint:
+              type: string
+            browser:
+              type: string
+            os:
+              type: string
+            device_type:
+              type: string
+              example: mobile
+            timezone:
+              type: string
+              example: America/New_York
+            lat:
+              type: number
+              format: float
+            lng:
+              type: number
+              format: float
+            city:
+              type: string
+            country:
+              type: string
+            country_code:
+              type: string
+              example: US
+
+    OtpVerifyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        status:
+          type: string
+          enum:
+            - authenticated
+            - profile_incomplete
+            - not_found
+            - created
+            - otp_verified
+        message:
+          type: string
+          example: Welcome back!
+        token:
+          type: string
+          description: Encrypted auth token (present for authenticated/created/otp_verified)
+        otp_token:
+          type: string
+          description: Short-lived session token (present when status=profile_incomplete)
+        email:
+          type: string
+          format: email
+        user:
+          type: object
+          description: User row from DB table (password removed)
+
+    OtpSettings:
+      type: object
+      properties:
+        allowed_tables:
+          type: array
+          items:
+            type: string
+          example:
+            - users
+            - discovery_users
+        table_options:
+          type: object
+          description: Per-table verify behavior overrides
+        resend_configured:
+          type: boolean
+        from_email:
+          type: string
+          format: email
+        from_name:
+          type: string
+        otp_length:
+          type: integer
+          example: 6
+        otp_expires_minutes:
+          type: integer
+          example: 10
+        max_attempts:
+          type: integer
+          example: 5
+        resend_cooldown:
+          type: integer
+          example: 60
+          description: Seconds to wait before resending OTP
+        token_expires_days:
+          type: integer
+          example: 30
+
+    OtpTableOptions:
+      type: object
+      description: Per-table default behavior for OTP verify
+      properties:
+        check_email:
+          type: boolean
+          default: true
+        on_found:
+          type: string
+          enum:
+            - token
+            - message
+        on_not_found:
+          type: string
+          enum:
+            - token
+            - message
+            - profile
+            - create
+        skip_token:
+          type: boolean
+        found_message:
+          type: string
+        not_found_message:
+          type: string
+
+    # ── GENERAL ─────────────────────────────────────────────────────────────
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+
+    BusinessRegistrationSubmit:
+      type: object
+      required:
+        - business_name
+        - contact_name
+        - contact_email
+        - agreement_accepted
+        - signature_name
+      properties:
+        business_name:
+          type: string
+          example: My Halal Restaurant
+        address:
+          type: string
+        address_2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        country:
+          type: string
+          default: US
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+          format: email
+        contact_phone:
+          type: string
+        website_url:
+          type: string
+          format: uri
+        menu_url:
+          type: string
+          format: uri
+        external_site_url:
+          type: string
+          format: uri
+          description: URL on external site where this business should appear after approval
+        monday_open:
+          type: string
+          example: "09:00"
+        monday_close:
+          type: string
+          example: "22:00"
+        tuesday_open:
+          type: string
+        tuesday_close:
+          type: string
+        wednesday_open:
+          type: string
+        wednesday_close:
+          type: string
+        thursday_open:
+          type: string
+        thursday_close:
+          type: string
+        friday_open:
+          type: string
+        friday_close:
+          type: string
+        saturday_open:
+          type: string
+        saturday_close:
+          type: string
+        sunday_open:
+          type: string
+        sunday_close:
+          type: string
+        bio:
+          type: string
+        image_url:
+          type: string
+          description: URL returned by POST /api/ecommerce/upload
+        audio_url:
+          type: string
+          description: URL returned by POST /api/ecommerce/upload
+        agreement_accepted:
+          type: boolean
+          enum:
+            - true
+        signature_name:
+          type: string
+        signature_data:
+          type: string
+          description: Base64-encoded PNG from signature canvas
+        target_source:
+          type: string
+          enum:
+            - businesses
+            - muzzhub
+            - pakistanhub
+          default: businesses
+          description: |
+            Target platform for this registration.
+            - `businesses` — general/main platform
+            - `muzzhub` — MuzzHub US halal restaurant directory
+            - `pakistanhub` — PakistanHub Pakistani restaurant directory
+          example: muzzhub
+
+    BusinessRegistration:
+      allOf:
+        - $ref: "#/components/schemas/BusinessRegistrationSubmit"
+        - type: object
+          properties:
+            id:
+              type: integer
+            status:
+              type: string
+              enum:
+                - pending
+                - approved
+                - rejected
+            target_source:
+              type: string
+              enum:
+                - businesses
+                - muzzhub
+                - pakistanhub
+              description: Target platform this registration is for
+            rejection_reason:
+              type: string
+            business_id:
+              type: integer
+              description: Set after approval — links to the created Business
+            ip_address:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    PaginatedRegistrations:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/BusinessRegistration"
+        total:
+          type: integer
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+
+    BusinessInput:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        category_id:
+          type: integer
+        description:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        website:
+          type: string
+        logo:
+          type: string
+        is_active:
+          type: boolean
+          default: true
+
+    DataSourceInput:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+            - local_table
+            - api
+        config:
+          type: object
+          description: |
+            local_table: `{"table":"muzzhub","field_map":{...}}`
+            api: `{"base_url":"https://...","endpoint":"/api/businesses","auth_type":"bearer","token":"..."}`
+        is_active:
+          type: boolean
+          default: true

@@ -94,7 +94,7 @@ class AiDutyController extends Controller
             $result = $this->dutyService->execute($duty);
             return response()->json($result);
         } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            return response()->json(['status' => 'error', 'error' => $e->getMessage()]);
         }
     }
 }

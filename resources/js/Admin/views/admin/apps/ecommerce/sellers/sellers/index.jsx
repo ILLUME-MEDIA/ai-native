@@ -304,10 +304,18 @@ export default function SellersPage() {
               <option value="service">Service</option>
             </FormSelect>
           </div>
-          <Button variant="primary" onClick={openAdd}>
-            <Icon icon="plus" size={15} className="me-1" />
-            Add Business
-          </Button>
+          <div className="d-flex gap-2">
+            <Link to="/apps/ecommerce/registrations">
+              <Button variant="success">
+                <Icon icon="rocket" size={15} className="me-1" />
+                Get Started Requests
+              </Button>
+            </Link>
+            <Button variant="primary" onClick={openAdd}>
+              <Icon icon="plus" size={15} className="me-1" />
+              Add Business
+            </Button>
+          </div>
         </CardHeader>
 
         <CardBody className="p-0">

@@ -8,6 +8,24 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
+// ── API Documentation (Swagger UI) ─────────────────────────────────────────
+// Access via: /api-docs  (no auth required)
+Route::get('/api-docs', function () {
+    return redirect('/api-docs/index.html');
+})->name('api-docs');
+
+// Serve YAML with correct content-type so Swagger UI can load it cross-origin
+Route::get('/api-docs/openapi.yaml', function () {
+    $path = public_path('api-docs/openapi.yaml');
+    if (!file_exists($path)) {
+        abort(404, 'API docs YAML not found.');
+    }
+    return response()->file($path, [
+        'Content-Type'                => 'application/yaml',
+        'Access-Control-Allow-Origin' => '*',
+    ]);
+})->name('api-docs.yaml');
+
 // Run all migrations. GET /run-migrations (no key required).
 Route::get('/run-migrations', function () {
     try {

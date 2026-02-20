@@ -110,12 +110,16 @@ const Duties = () => {
 
     const handleExecuteNow = async (id) => {
         try {
-            await axios.post(`/api/ai/duties/${id}/execute-now`);
-            alert('Duty execution started signal sent.');
+            const res = await axios.post(`/api/ai/duties/${id}/execute-now`);
+            if (res.data?.status === 'error') {
+                alert('Duty failed: ' + (res.data.error || 'Unknown error'));
+            } else {
+                alert('Duty execution completed.');
+            }
             fetchDuties();
         } catch (error) {
             console.error('Error executing duty:', error);
-            alert('Failed to trigger duty');
+            alert('Failed to trigger duty: ' + (error.response?.data?.error || error.message));
         }
     };
 

@@ -16,6 +16,7 @@ use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
 use App\Http\Controllers\Ecommerce\DataSourceController;
+use App\Http\Controllers\Ecommerce\BusinessRegistrationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -122,6 +123,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('data-sources/{dataSource}',          [DataSourceController::class, 'destroy']);
         Route::post('data-sources/{dataSource}/sync',       [DataSourceController::class, 'sync']);
         Route::get('data-sources/{dataSource}/logs',        [DataSourceController::class, 'logs']);
+
+        // Business Registrations / Get Started (admin management)
+        Route::get('registrations',                                     [BusinessRegistrationController::class, 'index']);
+        Route::get('registrations/{registration}',                      [BusinessRegistrationController::class, 'show']);
+        Route::post('registrations/{registration}/approve',             [BusinessRegistrationController::class, 'approve']);
+        Route::post('registrations/{registration}/reject',              [BusinessRegistrationController::class, 'reject']);
+        Route::delete('registrations/{registration}',                   [BusinessRegistrationController::class, 'destroy']);
     });
 
     // ── Yelp Integration ────────────────────────────────────────────────────
@@ -303,19 +311,27 @@ Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
 Route::get('/case-studies', [CaseStudyController::class, 'index']);
 Route::get('/case-studies/{slug}', [CaseStudyController::class, 'show']);
 
+// Business Registration — requires SITE_API_KEY as Bearer token, throttled
+// External sites must send: Authorization: Bearer <SITE_API_KEY>
+Route::middleware(['site.api.key', 'throttle:30,1'])->post(
+    '/register-business',
+    [BusinessRegistrationController::class, 'submit']
+)->name('business.register');
+
 // ============================================================
 // OTP Auth — All routes fully public (no auth required)
 // Used by admin SPA + any external site.
 // ============================================================
 Route::prefix('otp-auth')->middleware('throttle:60,1')->group(function () {
-    Route::post('send',             [OtpAuthController::class, 'send'])      ->name('auth.otp.send');
-    Route::post('verify',           [OtpAuthController::class, 'verify'])    ->name('auth.otp.verify');
-    Route::post('resend',           [OtpAuthController::class, 'resend'])    ->name('auth.otp.resend');
+    Route::post('send',             [OtpAuthController::class, 'send'])           ->name('auth.otp.send');
+    Route::post('verify',           [OtpAuthController::class, 'verify'])         ->name('auth.otp.verify');
+    Route::post('resend',           [OtpAuthController::class, 'resend'])         ->name('auth.otp.resend');
     Route::post('complete-profile', [OtpAuthController::class, 'completeProfile'])->name('auth.otp.complete-profile');
-    Route::get('settings',          [OtpAuthController::class, 'settingsGet'])   ->name('otp-auth.settings.get');
-    Route::put('settings',          [OtpAuthController::class, 'settingsUpdate'])->name('otp-auth.settings.update');
-    Route::get('tables',            [OtpAuthController::class, 'tablesIndex'])   ->name('otp-auth.tables');
-    Route::get('logs',              [OtpAuthController::class, 'logsIndex'])     ->name('otp-auth.logs');
+    Route::get('profile',           [OtpAuthController::class, 'profile'])        ->name('auth.otp.profile');
+    Route::get('settings',          [OtpAuthController::class, 'settingsGet'])    ->name('otp-auth.settings.get');
+    Route::put('settings',          [OtpAuthController::class, 'settingsUpdate']) ->name('otp-auth.settings.update');
+    Route::get('tables',            [OtpAuthController::class, 'tablesIndex'])    ->name('otp-auth.tables');
+    Route::get('logs',              [OtpAuthController::class, 'logsIndex'])      ->name('otp-auth.logs');
 });
 
 // Backward-compat aliases (old prefix)
@@ -325,4 +341,26 @@ Route::prefix('auth/otp')->middleware('throttle:60,1')->group(function () {
     Route::post('resend',           [OtpAuthController::class, 'resend']);
     Route::post('complete-profile', [OtpAuthController::class, 'completeProfile']);
 });
+
+// ── Admin Token Auth (for API Docs / external integrations) ─────────────────
+// POST /api/auth/token  {email, password}  → returns Sanctum Bearer token
+Route::post('/auth/token', function (\Illuminate\Http\Request $request) {
+    $request->validate([
+        'email'    => 'required|email',
+        'password' => 'required|string',
+    ]);
+
+    if (!\Illuminate\Support\Facades\Auth::attempt($request->only('email', 'password'))) {
+        return response()->json(['message' => 'Invalid credentials.'], 401);
+    }
+
+    $user  = \Illuminate\Support\Facades\Auth::user();
+    $token = $user->createToken('api-docs')->plainTextToken;
+
+    return response()->json([
+        'token'      => $token,
+        'token_type' => 'Bearer',
+        'user'       => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
+    ]);
+})->middleware('throttle:10,1')->name('auth.token');
 

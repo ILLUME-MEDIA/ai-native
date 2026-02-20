@@ -25,7 +25,7 @@ class Business extends Model
         'wednesday_open','wednesday_close','thursday_open','thursday_close',
         'friday_open','friday_close','saturday_open','saturday_close',
         'sunday_open','sunday_close',
-        'is_active',
+        'is_active', 'source',
     ];
 
     protected $casts = [

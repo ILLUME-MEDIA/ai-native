@@ -331,23 +331,58 @@ class AiScraperController extends Controller
     {
         $dutyName = "YouTube: {$playlist->title} → {$platform->name}";
 
-        // Check if duty already exists for this specific combination (no duplicate)
-        $exists = AiDuty::where('metadata->playlist_id', $playlist->playlist_id)
+        // Always fetch the latest album ID from successful pushes so duty stays current
+        $lastAlbumId = YoutubePlatformPush::where('playlist_id', $playlist->playlist_id)
+            ->where('platform_name', $platform->name)
+            ->whereNotNull('platform_album_id')
+            ->where('status', 'success')
+            ->orderByDesc('pushed_at')
+            ->value('platform_album_id');
+
+        // Load last-used genres/tags from playlist metadata
+        $playlistMeta     = $playlist->metadata ?? [];
+        $lastUsedGenres   = $playlistMeta['last_used_genres'] ?? [];
+        $lastUsedTags     = $playlistMeta['last_used_tags']   ?? [];
+
+        // If duty already exists, update its album_id and last-used genres/tags
+        $existingDuty = AiDuty::where('metadata->playlist_id', $playlist->playlist_id)
             ->where('metadata->platform_id', $platform->id)
             ->where('metadata->type', 'platform_push')
-            ->exists();
+            ->first();
 
-        if (!$exists) {
-            $baseUrl = config('app.url');
+        if ($existingDuty) {
+            // Keep existing execution_data, only patch fields that changed
+            $execData = $existingDuty->execution_data ?? [];
+            $changed  = false;
 
-            // Try to reuse the last known album ID for this playlist + platform so that
-            // future automated pushes keep adding tracks into the same album.
-            $lastAlbumId = YoutubePlatformPush::where('playlist_id', $playlist->playlist_id)
-                ->where('platform_name', $platform->name)
-                ->whereNotNull('platform_album_id')
-                ->where('status', 'success')
-                ->orderByDesc('pushed_at')
-                ->value('platform_album_id');
+            if ($lastAlbumId && ($execData['platform_album_id'] ?? null) !== $lastAlbumId) {
+                $execData['platform_album_id'] = $lastAlbumId;
+                $changed = true;
+            }
+            if (!empty($lastUsedGenres) && ($execData['override_genres'] ?? []) !== $lastUsedGenres) {
+                $execData['override_genres'] = $lastUsedGenres;
+                $changed = true;
+            }
+            if (!empty($lastUsedTags) && ($execData['override_tags'] ?? []) !== $lastUsedTags) {
+                $execData['override_tags'] = $lastUsedTags;
+                $changed = true;
+            }
+
+            if ($changed) {
+                $existingDuty->update(['execution_data' => $execData]);
+                \Log::info("Updated existing push duty with latest album_id / genres / tags", [
+                    'duty_id'          => $existingDuty->id,
+                    'platform_album_id' => $lastAlbumId,
+                    'genres'           => $lastUsedGenres,
+                    'tags'             => $lastUsedTags,
+                ]);
+            }
+            return;
+        }
+
+        $baseUrl = config('app.url');
+
+        if (true) {   // kept the same indentation block, was: if (!$exists)
 
             $instructions = "Execute the following steps COMPLETELY:
 
@@ -388,8 +423,11 @@ class AiScraperController extends Controller
      - Body: {
          \"platform_id\": {platform_id},
          \"album_mode\": \"single\",
+         \"existing_album_id\": \"{platform_album_id}\",
          \"limit\": 50
        }
+   - If platform_album_id is present in execution_data, ALWAYS pass it as existing_album_id
+     so new tracks are added to the SAME album (not creating a new album each time)
    - Verify response indicates success
 
 6. **Store results in database**:
@@ -414,14 +452,16 @@ IMPORTANT:
                 'schedule_type' => 'interval',
                 'schedule_value' => 'every_12_hours',
                 'execution_data' => [
-                    'playlist_url' => $playlist->playlist_url,
-                    'platform_name' => $platform->name,
-                    'base_url' => $baseUrl,
-                    'playlist_id' => $playlist->playlist_id,
-                    'playlist_title' => $playlist->title,
-                    'platform_id' => $platform->id,
-                    'tracking_table' => 'youtube_platform_pushes',
+                    'playlist_url'     => $playlist->playlist_url,
+                    'platform_name'    => $platform->name,
+                    'base_url'         => $baseUrl,
+                    'playlist_id'      => $playlist->playlist_id,
+                    'playlist_title'   => $playlist->title,
+                    'platform_id'      => $platform->id,
+                    'tracking_table'   => 'youtube_platform_pushes',
                     'platform_album_id' => $lastAlbumId,
+                    'override_genres'  => $lastUsedGenres,
+                    'override_tags'    => $lastUsedTags,
                 ],
                 'is_active' => true,
                 'metadata' => [
@@ -430,7 +470,7 @@ IMPORTANT:
                     'platform_id' => $platform->id
                 ]
             ]);
-        }
+        } // end if (true) / new duty creation
     }
 
     public function playlistByUrl(Request $request)

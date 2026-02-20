@@ -751,6 +751,24 @@ class YouTubeScraperService
         // Extract streaming URLs from options if provided (when both platforms selected)
         $streamingUrls = $options['streaming_urls'] ?? [];
 
+        // Forward override genres/tags (from duty execution_data or explicit push options)
+        // so watchlist sync can use them directly instead of per-video data
+        if (!empty($options['override_genres'])) {
+            $streamingUrls['override_genres'] = $options['override_genres'];
+        }
+        if (!empty($options['override_tags'])) {
+            $streamingUrls['override_tags'] = $options['override_tags'];
+        }
+
+        // Also use playlist last-used genres/tags as fallback if no per-video data
+        $playlistMeta = $playlist->metadata ?? [];
+        if (empty($streamingUrls['override_genres']) && !empty($playlistMeta['last_used_genres'])) {
+            $streamingUrls['override_genres'] = $playlistMeta['last_used_genres'];
+        }
+        if (empty($streamingUrls['override_tags']) && !empty($playlistMeta['last_used_tags'])) {
+            $streamingUrls['override_tags'] = $playlistMeta['last_used_tags'];
+        }
+
         if ($platform->type === 'streaming') {
             return $this->postToStreamingPlatform($playlist, $platform, $options);
         } elseif ($platform->type === 'watchlist') {
@@ -1042,10 +1060,28 @@ class YouTubeScraperService
                     $playlist->videos[0]->video_id ?? null
                 );
                 $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
-                // Collect genres/tags from first video
+                // Collect genres/tags: prefer override from options/duty, then per-video data,
+                // then last-used from playlist metadata
                 $first = $playlist->videos[0];
-                $playlistGenres = !empty($first->genres) && is_array($first->genres) ? $first->genres : [];
-                $playlistTags = !empty($first->tags) && is_array($first->tags) ? array_slice($first->tags, 0, 10) : [];
+                $overrideGenres = $options['override_genres'] ?? [];
+                $overrideTags   = $options['override_tags']   ?? [];
+                $playlistMeta   = $playlist->metadata ?? [];
+
+                if (!empty($overrideGenres)) {
+                    $playlistGenres = $overrideGenres;
+                } elseif (!empty($first->genres) && is_array($first->genres)) {
+                    $playlistGenres = $first->genres;
+                } else {
+                    $playlistGenres = $playlistMeta['last_used_genres'] ?? [];
+                }
+
+                if (!empty($overrideTags)) {
+                    $playlistTags = array_slice($overrideTags, 0, 10);
+                } elseif (!empty($first->tags) && is_array($first->tags)) {
+                    $playlistTags = array_slice($first->tags, 0, 10);
+                } else {
+                    $playlistTags = array_slice($playlistMeta['last_used_tags'] ?? [], 0, 10);
+                }
 
                 // Ensure genres/tags exist on streaming platform
                 $validated = $this->ensureStreamingGenresTagsExist($baseUrl, $token, $playlistGenres, $playlistTags);
@@ -1268,9 +1304,16 @@ class YouTubeScraperService
                     'artists' => [$artistId],
                 ];
 
-                // Decide album for this video
+                // Decide album for this video and attach genres/tags to track
                 if ($albumMode === 'single') {
                     $albumIdForTrack = $singleAlbumId;
+                    // Inherit genres/tags from the single album (already validated)
+                    if (!empty($validated['genres'])) {
+                        $trackPayload['genres'] = $validated['genres'];
+                    }
+                    if (!empty($validated['tags'])) {
+                        $trackPayload['tags'] = $validated['tags'];
+                    }
                 } else {
                     // One album per video: create (or reuse) album based on video title
                     // Ensure genres/tags exist for this video's album
@@ -1379,6 +1422,14 @@ class YouTubeScraperService
                             $videoArtistName
                         );
                         Log::info("Per-video album frontend URL built", ['url' => $streamingUrls['album_url']]);
+                    }
+
+                    // Inherit genres/tags from per-video validated values into track payload
+                    if (!empty($videoValidated['genres'])) {
+                        $trackPayload['genres'] = $videoValidated['genres'];
+                    }
+                    if (!empty($videoValidated['tags'])) {
+                        $trackPayload['tags'] = $videoValidated['tags'];
                     }
                 }
 
@@ -1546,6 +1597,44 @@ class YouTubeScraperService
                 'total_skipped' => $results['skipped']
             ]);
 
+            // ── Persist last-used push state to playlist metadata ──────────────
+            // This allows duties and future pushes to reuse the same album + genres/tags
+            try {
+                $meta = $playlist->metadata ?? [];
+
+                if ($streamingUrls['album_id']) {
+                    $meta['last_album_id']  = $streamingUrls['album_id'];
+                    $meta['last_album_url'] = $streamingUrls['album_url'] ?? null;
+                }
+
+                // Save genres/tags that were actually sent to the platform
+                $sentGenres = $albumMode === 'single'
+                    ? ($validated['genres'] ?? $playlistGenres ?? [])
+                    : [];
+                $sentTags = $albumMode === 'single'
+                    ? ($validated['tags'] ?? $playlistTags ?? [])
+                    : [];
+
+                if (!empty($sentGenres)) {
+                    $meta['last_used_genres'] = $sentGenres;
+                }
+                if (!empty($sentTags)) {
+                    $meta['last_used_tags'] = $sentTags;
+                }
+
+                $playlist->update(['metadata' => $meta]);
+
+                Log::info("Saved last-used push state to playlist metadata", [
+                    'playlist_id' => $playlist->playlist_id,
+                    'album_id'    => $streamingUrls['album_id'] ?? null,
+                    'genres'      => $sentGenres,
+                    'tags'        => $sentTags,
+                ]);
+            } catch (\Exception $metaEx) {
+                Log::warning("Failed to save last-used push state: " . $metaEx->getMessage());
+            }
+            // ────────────────────────────────────────────────────────────────────
+
             return [
                 'status' => 'success',
                 'message' => "Successfully pushed {$results['success']} tracks to streaming: {$playlist->title}{$skippedMsg}",
@@ -1621,14 +1710,38 @@ class YouTubeScraperService
             }
 
             // === STEP 2: Collect deduplicated genres/tags from all videos ===
-            $allGenres = [];
-            $allTags = [];
-            foreach ($playlist->videos as $video) {
-                $allGenres = array_merge($allGenres, $video->genres ?? []);
-                $allTags = array_merge($allTags, $video->tags ?? []);
+            // If override genres/tags are provided (e.g. from duty execution_data or last push),
+            // use them directly — otherwise collect from per-video data.
+            $overrideGenres = $streamingUrls['override_genres'] ?? [];
+            $overrideTagsOp = $streamingUrls['override_tags']   ?? [];
+
+            if (!empty($overrideGenres)) {
+                $allGenres = array_values(array_unique($overrideGenres));
+            } else {
+                $allGenres = [];
+                foreach ($playlist->videos as $video) {
+                    $allGenres = array_merge($allGenres, $video->genres ?? []);
+                }
+                // Fallback: last-used genres stored in playlist metadata
+                if (empty($allGenres)) {
+                    $allGenres = $playlist->metadata['last_used_genres'] ?? [];
+                }
+                $allGenres = array_values(array_unique($allGenres));
             }
-            $allGenres = array_values(array_unique($allGenres));
-            $allTags = array_values(array_unique(array_slice($allTags, 0, 20)));
+
+            if (!empty($overrideTagsOp)) {
+                $allTags = array_values(array_unique(array_slice($overrideTagsOp, 0, 20)));
+            } else {
+                $allTags = [];
+                foreach ($playlist->videos as $video) {
+                    $allTags = array_merge($allTags, $video->tags ?? []);
+                }
+                // Fallback: last-used tags stored in playlist metadata
+                if (empty($allTags)) {
+                    $allTags = $playlist->metadata['last_used_tags'] ?? [];
+                }
+                $allTags = array_values(array_unique(array_slice($allTags, 0, 20)));
+            }
 
             // === STEP 3: Create/Get Title ===
             $playlistYoutubeUrl = $playlist->playlist_url ?: ('https://www.youtube.com/playlist?list=' . $playlist->playlist_id);
@@ -1780,6 +1893,24 @@ class YouTubeScraperService
                     $results['failed']++;
                 }
             }
+
+            // ── Persist last-used watchlist genres/tags to playlist metadata ──────
+            try {
+                $meta = $playlist->metadata ?? [];
+                if (!empty($allGenres)) {
+                    $meta['last_used_genres'] = $allGenres;
+                }
+                if (!empty($allTags)) {
+                    $meta['last_used_tags'] = $allTags;
+                }
+                if ($titleId) {
+                    $meta['last_watchlist_title_id'] = $titleId;
+                }
+                $playlist->update(['metadata' => $meta]);
+            } catch (\Exception $metaEx) {
+                Log::warning("Failed to save last-used watchlist state: " . $metaEx->getMessage());
+            }
+            // ─────────────────────────────────────────────────────────────────────
 
             return [
                 'status'  => 'success',

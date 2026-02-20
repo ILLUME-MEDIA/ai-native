@@ -25,10 +25,18 @@ return Application::configure(basePath: dirname(__DIR__))
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
+        // Exclude all API routes from CSRF — they use Bearer token auth, not cookies.
+        // This prevents 419 errors when calling API routes from Swagger UI or external sites
+        // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+        ]);
+
         $middleware->alias([
-            'mcp.check' => \App\Http\Middleware\CheckMcpPermissions::class,
-            'mcp.auth'  => \App\Http\Middleware\McpOrSanctumAuth::class,
-            'otp.admin' => \App\Http\Middleware\OtpAdminAuth::class,
+            'mcp.check'    => \App\Http\Middleware\CheckMcpPermissions::class,
+            'mcp.auth'     => \App\Http\Middleware\McpOrSanctumAuth::class,
+            'otp.admin'    => \App\Http\Middleware\OtpAdminAuth::class,
+            'site.api.key' => \App\Http\Middleware\ValidateSiteApiKey::class,
         ]);
 
         //

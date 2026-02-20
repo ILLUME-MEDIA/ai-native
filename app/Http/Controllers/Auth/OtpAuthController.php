@@ -440,6 +440,89 @@ class OtpAuthController extends Controller
         ], 201);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | GET PROFILE  (after successful OTP auth)
+    |--------------------------------------------------------------------------
+    | GET /api/otp-auth/profile
+    | Header: Authorization: Bearer <encrypted_otp_token>
+    |
+    | Decodes the encrypted token issued by verify/complete-profile and
+    | returns the user row from the original table.
+    | Also accepts ?table= to look up in a specific table.
+    */
+    public function profile(Request $request): JsonResponse
+    {
+        $bearer = $request->bearerToken();
+
+        if (empty($bearer)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Authorization token required.',
+                'code'    => 'token_missing',
+            ], 401);
+        }
+
+        try {
+            $payload = decrypt($bearer);
+        } catch (\Throwable) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or tampered token.',
+                'code'    => 'invalid_token',
+            ], 401);
+        }
+
+        if (
+            ! isset($payload['email'], $payload['exp'], $payload['type']) ||
+            $payload['type'] !== 'otp_auth'
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid token type.',
+                'code'    => 'invalid_token',
+            ], 401);
+        }
+
+        if (Carbon::createFromTimestamp($payload['exp'])->isPast()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Token has expired. Please log in again.',
+                'code'    => 'token_expired',
+            ], 401);
+        }
+
+        $email = $payload['email'];
+        $table = $request->query('table', $payload['table'] ?? $this->getFirstAllowedTable());
+
+        if (! $this->isTableAllowed($table)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid table specified.',
+            ], 422);
+        }
+
+        $record = DB::table($table)->where('email', $email)->first();
+
+        if (! $record) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found.',
+                'code'    => 'user_not_found',
+                'email'   => $email,
+            ], 404);
+        }
+
+        $user = (array) $record;
+        unset($user['password'], $user['remember_token']);
+
+        return response()->json([
+            'success' => true,
+            'user'    => $user,
+            'table'   => $table,
+        ]);
+    }
+
     // -------------------------------------------------------------------------
     // ADMIN: Settings (auth:sanctum protected — see routes/api.php)
     // -------------------------------------------------------------------------

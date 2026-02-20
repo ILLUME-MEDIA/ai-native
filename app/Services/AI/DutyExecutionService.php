@@ -134,8 +134,10 @@ class DutyExecutionService
             ->value('platform_album_id');
 
         return $this->scraperService->pushToPlatform($playlistId, $platformId, [
-            'only_video_ids' => $missingVideoIds,
+            'only_video_ids'   => $missingVideoIds,
             'existing_album_id' => $existingAlbumId,
+            'override_genres'  => $data['override_genres'] ?? [],
+            'override_tags'    => $data['override_tags']   ?? [],
         ]);
     }
 
