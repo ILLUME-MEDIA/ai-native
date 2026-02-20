@@ -85,6 +85,10 @@ export const menuItems = [{
         url: "/apps/ecommerce/seller-details",
         slug: "pages:apps-ecommerce-seller-details",
         label: "Sellers Details"
+      }, {
+        url: "/apps/ecommerce/data-sources",
+        slug: "pages:apps-ecommerce-data-sources",
+        label: "Data Source Hub"
       }]
     }, {
       url: "/apps/ecommerce/refunds",

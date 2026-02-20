@@ -25,17 +25,7 @@ class LocalTableConnector implements ConnectorInterface
 
     public function businesses(): iterable
     {
-        $batchSize = (int) ($this->config['batch_size'] ?? 200);
-        $table     = $this->table();
-
-        DB::table($table)->orderBy('id')->chunk($batchSize, function ($rows) {
-            foreach ($rows as $row) {
-                yield (array) $row;
-            }
-        });
-
-        // chunk() doesn't support generators; use cursor instead
-        return DB::table($table)->orderBy('id')->cursor()->map(fn($r) => (array) $r);
+        return DB::table($this->table())->orderBy('id')->cursor()->map(fn($r) => (array) $r);
     }
 
     private function table(): string
