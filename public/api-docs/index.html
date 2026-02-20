@@ -41,33 +41,37 @@
       color: #aaa;
       font-size: 13px;
     }
-    #token-input {
+    #token-input, #otp-token-input {
       padding: 6px 12px;
       border-radius: 6px;
       border: 1px solid #444;
       background: #2a2a2a;
       color: #fff;
       font-size: 13px;
-      width: 320px;
+      width: 280px;
       outline: none;
     }
     #token-input:focus { border-color: #49cc90; }
-    #save-token-btn {
+    #otp-token-input:focus { border-color: #f39c12; }
+    #save-token-btn, #save-otp-btn {
       padding: 6px 14px;
-      background: #49cc90;
-      color: #000;
       border: none;
       border-radius: 6px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
     }
+    #save-token-btn { background: #49cc90; color: #000; }
     #save-token-btn:hover { background: #3ab87b; }
-    #token-status {
+    #save-otp-btn { background: #f39c12; color: #000; }
+    #save-otp-btn:hover { background: #d68910; }
+    #token-status, #otp-token-status {
       font-size: 12px;
       color: #49cc90;
       display: none;
     }
+    #otp-token-status { color: #f39c12; }
+    .divider { width: 1px; height: 48px; background: #444; }
     #base-url-input {
       padding: 6px 12px;
       border-radius: 6px;
@@ -107,15 +111,25 @@
       <input id="base-url-input" type="text" placeholder="http://127.0.0.1:8000" />
       <button id="apply-url-btn">Apply</button>
     </div>
-    <div style="width:1px;height:28px;background:#444"></div>
-    <div style="display:flex;flex-direction:column;gap:2px">
+    <div class="divider"></div>
+    <div style="display:flex;flex-direction:column;gap:4px">
       <div style="display:flex;align-items:center;gap:6px">
-        <label for="token-input">Bearer Token:</label>
-        <input id="token-input" type="text" placeholder="Sanctum token OR SITE_API_KEY…" />
-        <button id="save-token-btn">Authorize</button>
-        <span id="token-status">✓ Set</span>
+        <label for="token-input" style="white-space:nowrap;color:#49cc90">Admin Token:</label>
+        <input id="token-input" type="text" placeholder="Sanctum token (POST /api/auth/token)" />
+        <button id="save-token-btn">Set</button>
+        <span id="token-status">✓</span>
       </div>
-      <div class="key-hint">Admin APIs: use Sanctum token (POST /api/auth/token) &nbsp;|&nbsp; register-business: use SITE_API_KEY</div>
+      <div class="key-hint">Admin / Sanctum &nbsp;|&nbsp; SITE_API_KEY for register-business</div>
+    </div>
+    <div class="divider"></div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="otp-token-input" style="white-space:nowrap;color:#f39c12">OTP Token:</label>
+        <input id="otp-token-input" type="text" placeholder="token from /otp-auth/verify or /complete-profile" />
+        <button id="save-otp-btn">Set</button>
+        <span id="otp-token-status">✓</span>
+      </div>
+      <div class="key-hint">OTP Auth: send OTP → verify → copy token here → call /otp-auth/profile</div>
     </div>
   </div>
 </div>
@@ -129,16 +143,17 @@
 
   let ui; // SwaggerUI instance
 
-  // ── Restore saved token / URL ──────────────────────────────────────────
-  const savedToken   = localStorage.getItem('api_bearer_token') || '';
-  const savedBaseUrl = localStorage.getItem('api_base_url') || window.location.origin;
+  // ── Restore saved tokens / URL ────────────────────────────────────────
+  const savedToken    = localStorage.getItem('api_bearer_token') || '';
+  const savedOtpToken = localStorage.getItem('api_otp_token') || '';
+  const savedBaseUrl  = localStorage.getItem('api_base_url') || window.location.origin;
 
-  document.getElementById('token-input').value   = savedToken;
-  document.getElementById('base-url-input').value = savedBaseUrl;
+  document.getElementById('token-input').value     = savedToken;
+  document.getElementById('otp-token-input').value = savedOtpToken;
+  document.getElementById('base-url-input').value  = savedBaseUrl;
 
   // ── Init Swagger UI ───────────────────────────────────────────────────
-  function initSwagger(baseUrl, token) {
-    // Patch the YAML on the fly using a request interceptor
+  function initSwagger(baseUrl) {
     ui = SwaggerUIBundle({
       url: YAML_URL,
       dom_id: '#swagger-ui',
@@ -149,34 +164,47 @@
       tryItOutEnabled: true,
       filter: true,
       requestInterceptor: function(req) {
-        // Inject Bearer token
-        const tok = localStorage.getItem('api_bearer_token');
-        if (tok) {
-          req.headers['Authorization'] = 'Bearer ' + tok;
-        }
-        // Replace server URL variable
         const base = localStorage.getItem('api_base_url') || window.location.origin;
         req.url = req.url.replace(/^https?:\/\/[^\/]+\/api\//, base + '/api/');
+
+        // OTP profile endpoint → use OTP token
+        const isOtpProfile = req.url.includes('/otp-auth/profile');
+        if (isOtpProfile) {
+          const otpTok = localStorage.getItem('api_otp_token');
+          if (otpTok) req.headers['Authorization'] = 'Bearer ' + otpTok;
+        } else {
+          // All other endpoints → use admin/Sanctum token
+          const tok = localStorage.getItem('api_bearer_token');
+          if (tok) req.headers['Authorization'] = 'Bearer ' + tok;
+        }
         return req;
       },
       responseInterceptor: function(res) { return res; },
       onComplete: function() {
-        // Auto-authorize if token is saved
-        if (savedToken) {
-          ui.preauthorizeApiKey('bearerAuth', savedToken);
-        }
+        if (savedToken)    ui.preauthorizeApiKey('bearerAuth',    savedToken);
+        if (savedOtpToken) ui.preauthorizeApiKey('otpBearerAuth', savedOtpToken);
       },
     });
   }
 
-  initSwagger(savedBaseUrl, savedToken);
+  initSwagger(savedBaseUrl);
 
-  // ── Authorize button ──────────────────────────────────────────────────
+  // ── Admin token button ────────────────────────────────────────────────
   document.getElementById('save-token-btn').addEventListener('click', function() {
     const token = document.getElementById('token-input').value.trim();
     localStorage.setItem('api_bearer_token', token);
     if (ui) ui.preauthorizeApiKey('bearerAuth', token);
     const status = document.getElementById('token-status');
+    status.style.display = 'inline';
+    setTimeout(() => status.style.display = 'none', 2000);
+  });
+
+  // ── OTP token button ──────────────────────────────────────────────────
+  document.getElementById('save-otp-btn').addEventListener('click', function() {
+    const token = document.getElementById('otp-token-input').value.trim();
+    localStorage.setItem('api_otp_token', token);
+    if (ui) ui.preauthorizeApiKey('otpBearerAuth', token);
+    const status = document.getElementById('otp-token-status');
     status.style.display = 'inline';
     setTimeout(() => status.style.display = 'none', 2000);
   });
@@ -187,7 +215,7 @@
     localStorage.setItem('api_base_url', url);
     // Re-init so server variable updates
     document.getElementById('swagger-ui').innerHTML = '';
-    initSwagger(url, localStorage.getItem('api_bearer_token') || '');
+    initSwagger(url);
   });
 </script>
 </body>
