@@ -101,7 +101,18 @@ class DutyExecutionService
 
         $playlist = \App\Models\YoutubePlaylist::where('playlist_id', $playlistId)->with('videos')->first();
         if (!$playlist) {
-            throw new \Exception("Playlist not found: {$playlistId}");
+            // Playlist was deleted from DB — re-fetch from YouTube and sync
+            Log::info("Duty [{$duty->name}]: Playlist {$playlistId} not in DB, re-syncing from YouTube.");
+            try {
+                $playlistData = $this->scraperService->fetchPlaylist($playlistId);
+                $this->scraperService->syncToDatabase($playlistData);
+            } catch (\Exception $e) {
+                throw new \Exception("Playlist {$playlistId} not found in DB and could not be re-fetched from YouTube: " . $e->getMessage());
+            }
+            $playlist = \App\Models\YoutubePlaylist::where('playlist_id', $playlistId)->with('videos')->first();
+            if (!$playlist) {
+                throw new \Exception("Playlist {$playlistId} re-sync completed but still not found in DB.");
+            }
         }
 
         $platform = \App\Models\AiPlatform::find($platformId);
