@@ -313,15 +313,18 @@ class AiScraperController extends Controller
         $maxResults = (int) $request->input('max_results', 25);
 
         try {
-            $ctx = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 15]]);
+            $searchRes = \Illuminate\Support\Facades\Http::withoutVerifying()
+                ->timeout(15)
+                ->withHeaders(['Accept' => 'application/json'])
+                ->get('https://www.googleapis.com/youtube/v3/search', [
+                    'part'       => 'snippet',
+                    'type'       => $type,
+                    'maxResults' => $maxResults,
+                    'q'          => $query,
+                    'key'        => $apiKey,
+                ]);
 
-            $searchUrl  = "https://www.googleapis.com/youtube/v3/search?part=snippet"
-                        . "&type={$type}&maxResults={$maxResults}"
-                        . "&q=" . urlencode($query)
-                        . "&key=" . urlencode($apiKey);
-
-            $searchJson = @file_get_contents($searchUrl, false, $ctx);
-            $searchData = json_decode($searchJson, true) ?? [];
+            $searchData = $searchRes->json() ?? [];
 
             if (isset($searchData['error'])) {
                 return response()->json(['error' => $searchData['error']['message'] ?? 'YouTube API error'], 500);
@@ -347,10 +350,16 @@ class AiScraperController extends Controller
             $part         = $partMap[$type] ?? 'snippet,statistics,contentDetails';
             $resourceType = $type === 'playlist' ? 'playlists' : ($type === 'channel' ? 'channels' : 'videos');
 
-            $detailsUrl  = "https://www.googleapis.com/youtube/v3/{$resourceType}?part={$part}"
-                         . "&id={$itemIds}&key=" . urlencode($apiKey);
-            $detailsJson = @file_get_contents($detailsUrl, false, $ctx);
-            $detailsData = json_decode($detailsJson, true) ?? [];
+            $detailsRes  = \Illuminate\Support\Facades\Http::withoutVerifying()
+                ->timeout(15)
+                ->withHeaders(['Accept' => 'application/json'])
+                ->get("https://www.googleapis.com/youtube/v3/{$resourceType}", [
+                    'part' => $part,
+                    'id'   => $itemIds,
+                    'key'  => $apiKey,
+                ]);
+
+            $detailsData = $detailsRes->json() ?? [];
 
             $results = collect($detailsData['items'] ?? [])->map(function ($item) use ($type) {
                 $snippet = $item['snippet']        ?? [];
