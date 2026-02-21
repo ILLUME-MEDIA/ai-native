@@ -171,11 +171,6 @@ const Scrapers = () => {
     const [selectedYtItems, setSelectedYtItems] = useState(new Set());
     const [ytImporting, setYtImporting] = useState(false);
 
-    /* ─── Playlist expand (inline videos) state ─── */
-    const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
-    const [expandedVideos, setExpandedVideos] = useState([]);
-    const [expandedLoading, setExpandedLoading] = useState(false);
-
     /* ─── Image Manager modal state ─── */
     const [showImageModal, setShowImageModal] = useState(false);
     const [imageTarget, setImageTarget] = useState(null); // { type: 'playlist'|'video', id, title, currentImage, manualImage }
@@ -186,6 +181,8 @@ const Scrapers = () => {
     const [imageSubmitting, setImageSubmitting] = useState(false);
 
     const searchTimeout = useRef(null);
+    const videosSectionRef = useRef(null);
+    const videoRequestId = useRef(0); // increments each call; stale responses are discarded
 
     /* ─── Load playlists + platforms once ─── */
     useEffect(() => {
@@ -214,6 +211,9 @@ const Scrapers = () => {
     };
 
     const loadVideos = useCallback(async (page, append = false) => {
+        // Stamp this request; any older in-flight call that finishes later will be discarded
+        const reqId = ++videoRequestId.current;
+
         if (append) {
             setLoadingMore(true);
         } else {
@@ -232,6 +232,10 @@ const Scrapers = () => {
             if (filterStatus) params.status = filterStatus;
 
             const res = await axios.get('/api/ai/scrapers/videos/list', { params });
+
+            // Discard stale response if a newer request has already been fired
+            if (reqId !== videoRequestId.current) return;
+
             const newRows = res.data.data || [];
 
             setVideos(prev => append ? [...prev, ...newRows] : newRows);
@@ -242,8 +246,10 @@ const Scrapers = () => {
                 per_page: res.data.per_page,
             });
         } catch (error) {
+            if (reqId !== videoRequestId.current) return;
             console.error('Error fetching videos:', error);
         } finally {
+            if (reqId !== videoRequestId.current) return;
             if (append) {
                 setLoadingMore(false);
             } else {
@@ -909,23 +915,13 @@ const Scrapers = () => {
         }
     };
 
-    /* ─── Playlist expand/collapse ─── */
-    const handleToggleExpand = async (pl) => {
-        if (expandedPlaylistId === pl.id) {
-            setExpandedPlaylistId(null);
-            setExpandedVideos([]);
-            return;
-        }
-        setExpandedPlaylistId(pl.id);
-        setExpandedVideos([]);
-        setExpandedLoading(true);
-        try {
-            const res = await axios.get(`/api/ai/scrapers/${pl.id}`);
-            setExpandedVideos(res.data.videos || []);
-        } catch (e) {
-            setExpandedVideos([]);
-        } finally {
-            setExpandedLoading(false);
+    /* ─── Playlist click → filter videos section below ─── */
+    const handlePlaylistClick = (pl) => {
+        const newFilter = filterPlaylist === pl.playlist_id ? '' : pl.playlist_id;
+        setFilterPlaylist(newFilter);
+        setPagination(p => ({ ...p, current_page: 1 }));
+        if (newFilter && videosSectionRef.current) {
+            setTimeout(() => videosSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
         }
     };
 
@@ -1014,7 +1010,6 @@ const Scrapers = () => {
                                 <Table responsive className="table-centered table-nowrap mb-0">
                                     <thead className="table-light">
                                         <tr>
-                                            <th style={{ width: '32px' }}></th>
                                             <th>Thumbnail</th>
                                             <th>Playlist</th>
                                             <th>Videos</th>
@@ -1027,16 +1022,10 @@ const Scrapers = () => {
                                             const playlistThumb = pl.manual_image_url || pl.metadata?.playlist_thumbnail || null;
                                             const channelThumb  = pl.metadata?.channel_thumbnail || null;
                                             const ytUrl         = getYouTubeUrl(pl);
-                                            const isExpanded    = expandedPlaylistId === pl.id;
+                                            const isSelected    = filterPlaylist === pl.playlist_id;
                                             return (
-                                            <React.Fragment key={pl.id}>
-                                            {/* ── Main row ── */}
-                                            <tr className={isExpanded ? 'table-active' : ''}>
-                                                {/* Expand toggle */}
-                                                <td className="text-center" style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
-                                                    <Icon icon={isExpanded ? 'chevron-down' : 'chevron-right'} className="icon-xs text-muted" />
-                                                </td>
-                                                <td style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                            <tr key={pl.id} className={isSelected ? 'table-active' : ''} style={{ cursor: 'pointer' }}>
+                                                <td onClick={() => handlePlaylistClick(pl)}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         {playlistThumb ? (
                                                             <img src={playlistThumb} alt={pl.title}
@@ -1044,7 +1033,7 @@ const Scrapers = () => {
                                                                 onClick={(e) => { e.stopPropagation(); openPlaylistImage(pl); }}
                                                                 title="Click to change image" />
                                                         ) : (
-                                                            <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0', borderRadius: '4px', cursor: 'pointer' }}
+                                                            <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0', borderRadius: '4px' }}
                                                                 onClick={(e) => { e.stopPropagation(); openPlaylistImage(pl); }}
                                                                 title="No thumbnail - click to set image">
                                                                 <Icon icon="image" style={{ fontSize: '24px', color: '#999' }} />
@@ -1057,7 +1046,7 @@ const Scrapers = () => {
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                                <td onClick={() => handlePlaylistClick(pl)}>
                                                     <strong>{pl.title || 'Untitled Playlist'}</strong>
                                                     <br />
                                                     <div className="d-flex align-items-center gap-1 mt-1">
@@ -1075,22 +1064,22 @@ const Scrapers = () => {
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td>
-                                                    <Badge bg="info" style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                                <td onClick={() => handlePlaylistClick(pl)}>
+                                                    <Badge bg={isSelected ? 'primary' : 'info'}>
                                                         {pl.videos_count} videos
                                                     </Badge>
                                                 </td>
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
                                                     <div className="d-flex flex-wrap gap-1">
-                                                        <Button variant="soft-success" size="sm" onClick={() => handleEnrich(pl.id)} disabled={enriching || enrichingIds.has(pl.playlist_id)}
+                                                        <Button variant="soft-success" size="sm" onClick={(e) => { e.stopPropagation(); handleEnrich(pl.id); }} disabled={enriching || enrichingIds.has(pl.playlist_id)}
                                                             title="Fetch views, likes, comments from YouTube API">
                                                             {enrichingIds.has(pl.playlist_id)
                                                                 ? <><Spinner size="sm" className="me-1" />...</>
                                                                 : <><Icon icon="bar-chart" className="icon-xs" /> Enrich</>}
                                                         </Button>
                                                         <Button variant="soft-secondary" size="sm"
-                                                            onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
+                                                            onClick={(e) => { e.stopPropagation(); setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
                                                             {(generating && selectedPlaylist?.id === pl.id) ? (
                                                                 <><Spinner animation="border" size="sm" style={{width: '12px', height: '12px', borderWidth: '2px'}} className="me-1" />
                                                                     AI ({generationProgress.current}/{generationProgress.total})</>
@@ -1098,85 +1087,18 @@ const Scrapers = () => {
                                                                 <><Icon icon="sparkles" className="icon-xs" /> AI</>
                                                             )}
                                                         </Button>
-                                                        <Button variant="soft-warning" size="sm" onClick={() => openPlaylistImage(pl)} title="Set cover image">
-                                                            <Icon icon="image" className="icon-xs" />
-                                                        </Button>
-                                                        <Button variant="soft-info" size="sm" onClick={() => openPushModal(pl)} disabled={pushing}>
+                                                        <Button variant="soft-info" size="sm" onClick={(e) => { e.stopPropagation(); openPushModal(pl); }} disabled={pushing}>
                                                             <Icon icon="send" className="icon-xs" /> Push
                                                         </Button>
-                                                        <Button variant="soft-danger" size="sm" onClick={() => handleReset(pl)} disabled={resetting} title="Remove playlist">
+                                                        <Button variant="soft-danger" size="sm" onClick={(e) => { e.stopPropagation(); handleReset(pl); }} disabled={resetting} title="Remove playlist">
                                                             <Icon icon="trash" className="icon-xs" />
                                                         </Button>
                                                     </div>
                                                 </td>
                                             </tr>
-
-                                            {/* ── Expanded videos row ── */}
-                                            {isExpanded && (
-                                                <tr>
-                                                    <td colSpan="6" className="p-0 border-top-0">
-                                                        <div style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                                                            {expandedLoading ? (
-                                                                <div className="text-center py-3">
-                                                                    <Spinner animation="border" size="sm" className="me-2" />
-                                                                    Loading videos...
-                                                                </div>
-                                                            ) : expandedVideos.length === 0 ? (
-                                                                <div className="text-center text-muted py-3 small">No videos found.</div>
-                                                            ) : (
-                                                                <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
-                                                                    <Table size="sm" className="mb-0 table-hover" style={{ background: 'transparent' }}>
-                                                                        <thead className="table-light" style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                                                                            <tr>
-                                                                                <th style={{ width: '70px' }}>Thumb</th>
-                                                                                <th>Title</th>
-                                                                                <th>Duration</th>
-                                                                                <th>Views</th>
-                                                                                <th>Published</th>
-                                                                                <th>Status</th>
-                                                                            </tr>
-                                                                        </thead>
-                                                                        <tbody>
-                                                                            {expandedVideos.map(v => (
-                                                                                <tr key={v.video_id}>
-                                                                                    <td>
-                                                                                        <a href={`https://www.youtube.com/watch?v=${v.video_id}`} target="_blank" rel="noopener noreferrer">
-                                                                                            <img src={v.thumbnail_url || `https://i.ytimg.com/vi/${v.video_id}/mqdefault.jpg`}
-                                                                                                alt="" style={{ width: '60px', height: '34px', objectFit: 'cover', borderRadius: '3px' }} />
-                                                                                        </a>
-                                                                                    </td>
-                                                                                    <td>
-                                                                                        <a href={`https://www.youtube.com/watch?v=${v.video_id}`} target="_blank" rel="noopener noreferrer"
-                                                                                            className="text-dark text-decoration-none fw-semibold text-truncate d-block"
-                                                                                            style={{ maxWidth: '340px' }} title={v.title}>
-                                                                                            {v.title}
-                                                                                        </a>
-                                                                                        <small className="text-muted">{v.channel_name}</small>
-                                                                                    </td>
-                                                                                    <td><Badge bg="soft-secondary" className="text-secondary">{fmtDuration(v.duration)}</Badge></td>
-                                                                                    <td><small>{fmtNum(v.view_count)}</small></td>
-                                                                                    <td><small>{v.published_at ? new Date(v.published_at).toLocaleDateString() : '—'}</small></td>
-                                                                                    <td><StatusBadge status={v.push_status || 'new'} /></td>
-                                                                                </tr>
-                                                                            ))}
-                                                                        </tbody>
-                                                                    </Table>
-                                                                </div>
-                                                            )}
-                                                            <div className="px-3 py-2 border-top d-flex justify-content-between align-items-center">
-                                                                <small className="text-muted">{expandedVideos.length} videos</small>
-                                                                <Button size="sm" variant="outline-secondary" onClick={() => { setExpandedPlaylistId(null); setExpandedVideos([]); }}>
-                                                                    <Icon icon="x" className="icon-xs me-1" />Close
-                                                                </Button>
-                                                            </div>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            </React.Fragment>
                                         )})}
                                         {playlists.length === 0 && (
-                                            <tr><td colSpan="6" className="text-center text-muted py-3">No playlists added yet.</td></tr>
+                                            <tr><td colSpan="5" className="text-center text-muted py-3">No playlists added yet.</td></tr>
                                         )}
                                     </tbody>
                                 </Table>
@@ -1186,12 +1108,20 @@ const Scrapers = () => {
                 </Col>
 
                 {/* ─── Videos DataTable Card ─── */}
-                <Col md={12}>
+                <Col md={12} ref={videosSectionRef}>
                     <Card>
                         <Card.Header>
                             <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                                <Card.Title as="h5" className="mb-0">
+                                <Card.Title as="h5" className="mb-0 d-flex align-items-center gap-2">
                                     Videos {pagination.total > 0 && <small className="text-muted fw-normal">({pagination.total} total)</small>}
+                                    {filterPlaylist && (
+                                        <Badge bg="primary" className="fw-normal" style={{ fontSize: '11px', cursor: 'pointer' }}
+                                            onClick={() => { setFilterPlaylist(''); setPagination(p => ({ ...p, current_page: 1 })); }}
+                                            title="Clear playlist filter">
+                                            {playlists.find(p => p.playlist_id === filterPlaylist)?.title || filterPlaylist}
+                                            <Icon icon="x" className="icon-xs ms-1" />
+                                        </Badge>
+                                    )}
                                 </Card.Title>
                                 <div className="d-flex align-items-center gap-2 flex-wrap">
                                     {/* Search */}
