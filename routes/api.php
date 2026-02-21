@@ -181,6 +181,8 @@ Route::middleware('auth:sanctum')->group(function () {
         // Specific routes must come BEFORE dynamic {playlist} route
         Route::get('scrapers/platform-genres', [\App\Http\Controllers\AI\AiScraperController::class, 'getPlatformGenres']);
         Route::get('scrapers/videos/list', [\App\Http\Controllers\AI\AiScraperController::class, 'videos']);
+        Route::post('scrapers/youtube-search', [\App\Http\Controllers\AI\AiScraperController::class, 'youtubeSearch']);
+        Route::post('scrapers/import-from-search', [\App\Http\Controllers\AI\AiScraperController::class, 'importFromSearch']);
 
         // Dynamic {playlist} routes
         Route::get('scrapers/{playlist}', [\App\Http\Controllers\AI\AiScraperController::class, 'show']);

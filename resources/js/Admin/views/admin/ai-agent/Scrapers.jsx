@@ -161,6 +161,16 @@ const Scrapers = () => {
     const [selectedGenres, setSelectedGenres] = useState([]);
     const [platformGenres, setPlatformGenres] = useState({});
 
+    /* ─── YouTube Search modal state ─── */
+    const [showYtSearchModal, setShowYtSearchModal] = useState(false);
+    const [ytSearchQuery, setYtSearchQuery] = useState('');
+    const [ytSearchType, setYtSearchType] = useState('video');
+    const [ytSearchResults, setYtSearchResults] = useState([]);
+    const [ytSearching, setYtSearching] = useState(false);
+    const [ytSearchTotal, setYtSearchTotal] = useState(0);
+    const [selectedYtItems, setSelectedYtItems] = useState(new Set());
+    const [ytImporting, setYtImporting] = useState(false);
+
     /* ─── Image Manager modal state ─── */
     const [showImageModal, setShowImageModal] = useState(false);
     const [imageTarget, setImageTarget] = useState(null); // { type: 'playlist'|'video', id, title, currentImage, manualImage }
@@ -824,6 +834,76 @@ const Scrapers = () => {
         }
     };
 
+    /* ─── YouTube Search handlers ─── */
+    const handleYouTubeSearch = async (e) => {
+        if (e) e.preventDefault();
+        if (!ytSearchQuery.trim()) return;
+        setYtSearching(true);
+        setYtSearchResults([]);
+        setSelectedYtItems(new Set());
+        try {
+            const res = await axios.post('/api/ai/scrapers/youtube-search', {
+                query: ytSearchQuery,
+                type: ytSearchType,
+                max_results: 25,
+            });
+            setYtSearchResults(res.data.results || []);
+            setYtSearchTotal(res.data.total || 0);
+        } catch (error) {
+            alert('Search failed: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setYtSearching(false);
+        }
+    };
+
+    const toggleYtItem = (id) => {
+        setSelectedYtItems(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleAllYtItems = () => {
+        if (selectedYtItems.size === ytSearchResults.length) {
+            setSelectedYtItems(new Set());
+        } else {
+            setSelectedYtItems(new Set(ytSearchResults.map(r => r.video_id)));
+        }
+    };
+
+    const handleImportFromSearch = async (andPush = false) => {
+        if (selectedYtItems.size === 0) { alert('Select at least one item.'); return; }
+        const selectedItems = ytSearchResults.filter(r => selectedYtItems.has(r.video_id));
+        setYtImporting(true);
+        try {
+            const res = await axios.post('/api/ai/scrapers/import-from-search', {
+                title: ytSearchQuery,
+                videos: selectedItems,
+            });
+            const newPlaylist = res.data.playlist;
+            setPlaylists(prev => [newPlaylist, ...prev]);
+            setShowYtSearchModal(false);
+            setYtSearchQuery('');
+            setYtSearchResults([]);
+            setSelectedYtItems(new Set());
+
+            if (andPush) {
+                setSelectedPlaylist(newPlaylist);
+                setSelectedVideoIds(new Set());
+                setPushData({ platform_ids: [], limit: '', create_duties: true, album_mode: 'single', force: false });
+                setShowPushModal(true);
+            } else {
+                alert(res.data.message || 'Imported successfully!');
+            }
+        } catch (error) {
+            alert('Import failed: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setYtImporting(false);
+        }
+    };
+
     /* ─── Pagination renderer ─── */
     const renderPagination = () => {
         if (pagination.last_page <= 1) return null;
@@ -885,9 +965,14 @@ const Scrapers = () => {
                     <Card>
                         <Card.Header className="d-flex justify-content-between align-items-center">
                             <Card.Title as="h5">Monitored Playlists</Card.Title>
-                            <Button variant="primary" size="sm" onClick={() => setShowModal(true)}>
-                                Add Playlist
-                            </Button>
+                            <div className="d-flex gap-2">
+                                <Button variant="soft-danger" size="sm" onClick={() => { setYtSearchQuery(''); setYtSearchResults([]); setSelectedYtItems(new Set()); setShowYtSearchModal(true); }}>
+                                    <Icon icon="search" className="icon-xs me-1" /> YouTube Search
+                                </Button>
+                                <Button variant="primary" size="sm" onClick={() => setShowModal(true)}>
+                                    Add Playlist
+                                </Button>
+                            </div>
                         </Card.Header>
                         <Card.Body>
                             {loading ? (
@@ -1665,6 +1750,178 @@ const Scrapers = () => {
                             </Button>
                         </div>
                     </div>
+                </Modal.Body>
+            </Modal>
+
+            {/* ─── YouTube Search Modal ─── */}
+            <Modal show={showYtSearchModal} onHide={() => setShowYtSearchModal(false)} size="xl">
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        <Icon icon="youtube" className="icon-xs me-2 text-danger" />
+                        YouTube Search &amp; Import
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    {/* Search Form */}
+                    <Form onSubmit={handleYouTubeSearch} className="mb-3">
+                        <div className="d-flex gap-2">
+                            <InputGroup className="flex-grow-1">
+                                <InputGroup.Text><Icon icon="search" className="icon-xs" /></InputGroup.Text>
+                                <Form.Control
+                                    type="text"
+                                    placeholder="Search YouTube by name, keyword (e.g. Pakistani Drama, MrBeast)..."
+                                    value={ytSearchQuery}
+                                    onChange={(e) => setYtSearchQuery(e.target.value)}
+                                    autoFocus
+                                />
+                            </InputGroup>
+                            <Form.Select style={{ width: '140px', flexShrink: 0 }} value={ytSearchType}
+                                onChange={(e) => { setYtSearchType(e.target.value); setYtSearchResults([]); setSelectedYtItems(new Set()); }}>
+                                <option value="video">Videos</option>
+                                <option value="playlist">Playlists</option>
+                                <option value="channel">Channels</option>
+                            </Form.Select>
+                            <Button type="submit" variant="danger" disabled={ytSearching || !ytSearchQuery.trim()} style={{ flexShrink: 0 }}>
+                                {ytSearching
+                                    ? <Spinner animation="border" size="sm" />
+                                    : <><Icon icon="search" className="icon-xs me-1" />Search</>}
+                            </Button>
+                        </div>
+                    </Form>
+
+                    {/* Empty state */}
+                    {!ytSearching && ytSearchResults.length === 0 && !ytSearchQuery && (
+                        <div className="text-center text-muted py-5">
+                            <Icon icon="youtube" className="icon-xl d-block mx-auto mb-2" style={{ fontSize: '3rem', opacity: 0.3 }} />
+                            <p className="mb-0">Enter a keyword above to search YouTube for videos, playlists or channels.</p>
+                            <small>Then select results and import &amp; push to your platforms.</small>
+                        </div>
+                    )}
+
+                    {/* No results */}
+                    {!ytSearching && ytSearchResults.length === 0 && ytSearchQuery && (
+                        <div className="text-center text-muted py-4">
+                            <Icon icon="search" className="d-block mx-auto mb-2" style={{ fontSize: '2rem', opacity: 0.3 }} />
+                            <p>No results found. Try a different keyword.</p>
+                        </div>
+                    )}
+
+                    {/* Results */}
+                    {ytSearchResults.length > 0 && (
+                        <>
+                            <div className="d-flex justify-content-between align-items-center mb-2">
+                                <small className="text-muted">
+                                    Showing {ytSearchResults.length} results
+                                    {selectedYtItems.size > 0 && <> &middot; <strong className="text-primary">{selectedYtItems.size} selected</strong></>}
+                                </small>
+                                <div className="d-flex gap-2">
+                                    <Button size="sm" variant="outline-secondary" onClick={toggleAllYtItems}>
+                                        {selectedYtItems.size === ytSearchResults.length ? 'Deselect All' : 'Select All'}
+                                    </Button>
+                                    {selectedYtItems.size > 0 && (
+                                        <>
+                                            <Button size="sm" variant="outline-primary" onClick={() => handleImportFromSearch(false)} disabled={ytImporting}>
+                                                {ytImporting
+                                                    ? <Spinner animation="border" size="sm" />
+                                                    : <><Icon icon="download" className="icon-xs me-1" />Import ({selectedYtItems.size})</>}
+                                            </Button>
+                                            <Button size="sm" variant="primary" onClick={() => handleImportFromSearch(true)} disabled={ytImporting}>
+                                                {ytImporting
+                                                    ? <Spinner animation="border" size="sm" />
+                                                    : <><Icon icon="send" className="icon-xs me-1" />Import &amp; Push ({selectedYtItems.size})</>}
+                                            </Button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div style={{ maxHeight: '480px', overflowY: 'auto' }}>
+                                <Table size="sm" className="table-hover table-centered mb-0">
+                                    <thead className="table-light" style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                                        <tr>
+                                            <th style={{ width: '36px' }}>
+                                                <Form.Check type="checkbox"
+                                                    checked={selectedYtItems.size === ytSearchResults.length && ytSearchResults.length > 0}
+                                                    onChange={toggleAllYtItems} />
+                                            </th>
+                                            <th style={{ width: '70px' }}>Thumb</th>
+                                            <th style={{ minWidth: '260px' }}>Title</th>
+                                            <th>Channel</th>
+                                            {ytSearchType === 'video' && <><th>Duration</th><th>Views</th><th>Likes</th></>}
+                                            {ytSearchType === 'playlist' && <th>Videos</th>}
+                                            {ytSearchType === 'channel' && <th>Subscribers</th>}
+                                            <th>Published</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ytSearchResults.map((item) => (
+                                            <tr key={item.video_id}
+                                                className={selectedYtItems.has(item.video_id) ? 'table-active' : ''}
+                                                style={{ cursor: 'pointer' }}
+                                                onClick={() => toggleYtItem(item.video_id)}>
+                                                <td onClick={(e) => e.stopPropagation()}>
+                                                    <Form.Check type="checkbox"
+                                                        checked={selectedYtItems.has(item.video_id)}
+                                                        onChange={() => toggleYtItem(item.video_id)} />
+                                                </td>
+                                                <td>
+                                                    <img src={item.thumbnail_url} alt=""
+                                                        style={{ width: '60px', height: '34px', objectFit: 'cover', borderRadius: '4px' }}
+                                                        onError={(e) => { e.target.src = `https://i.ytimg.com/vi/${item.video_id}/hqdefault.jpg`; }} />
+                                                </td>
+                                                <td>
+                                                    <div className="fw-semibold text-truncate" style={{ maxWidth: '300px' }} title={item.title}>
+                                                        {item.title}
+                                                    </div>
+                                                    {item.description && (
+                                                        <small className="text-muted text-truncate d-block" style={{ maxWidth: '300px' }}>
+                                                            {item.description}
+                                                        </small>
+                                                    )}
+                                                </td>
+                                                <td><small className="text-nowrap">{item.channel_name}</small></td>
+                                                {ytSearchType === 'video' && (
+                                                    <>
+                                                        <td><Badge bg="soft-secondary" className="text-secondary">{fmtDuration(item.duration)}</Badge></td>
+                                                        <td><small title={item.view_count?.toLocaleString()}>{fmtNum(item.view_count)}</small></td>
+                                                        <td>
+                                                            {item.like_count > 0 && (
+                                                                <small className="text-danger">
+                                                                    <Icon icon="heart" className="icon-xs me-1" />{fmtNum(item.like_count)}
+                                                                </small>
+                                                            )}
+                                                        </td>
+                                                    </>
+                                                )}
+                                                {ytSearchType === 'playlist' && (
+                                                    <td><Badge bg="soft-info" className="text-info">{item.video_count} videos</Badge></td>
+                                                )}
+                                                {ytSearchType === 'channel' && (
+                                                    <td><small>{fmtNum(parseInt(item.subscriber_count || 0))} subs</small></td>
+                                                )}
+                                                <td>
+                                                    <small className="text-nowrap">
+                                                        {item.published_at ? new Date(item.published_at).toLocaleDateString() : '—'}
+                                                    </small>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </Table>
+                            </div>
+
+                            {selectedYtItems.size > 0 && (
+                                <div className="d-flex justify-content-end gap-2 mt-3 pt-3 border-top">
+                                    <Button variant="outline-primary" onClick={() => handleImportFromSearch(false)} disabled={ytImporting}>
+                                        {ytImporting ? <Spinner animation="border" size="sm" /> : <><Icon icon="download" className="icon-xs me-1" />Import Only ({selectedYtItems.size} items)</>}
+                                    </Button>
+                                    <Button variant="primary" onClick={() => handleImportFromSearch(true)} disabled={ytImporting}>
+                                        {ytImporting ? <Spinner animation="border" size="sm" /> : <><Icon icon="send" className="icon-xs me-1" />Import &amp; Push ({selectedYtItems.size} items)</>}
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </Modal.Body>
             </Modal>
 

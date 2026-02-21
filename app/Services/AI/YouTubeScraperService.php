@@ -772,6 +772,13 @@ class YouTubeScraperService
         if ($platform->type === 'streaming') {
             return $this->postToStreamingPlatform($playlist, $platform, $options);
         } elseif ($platform->type === 'watchlist') {
+            // Forward existing_title_id and existing_artist_id so watchlist skips unnecessary lookups
+            if (!empty($options['existing_title_id'])) {
+                $streamingUrls['existing_title_id'] = $options['existing_title_id'];
+            }
+            if (!empty($options['existing_artist_id'])) {
+                $streamingUrls['existing_artist_id'] = $options['existing_artist_id'];
+            }
             return $this->syncPlaylistToWatchlist($playlist, $platform, $streamingUrls);
         }
 
@@ -950,35 +957,55 @@ class YouTubeScraperService
                 $artistName = $playlist->videos[0]->channel_name ?? 'Unknown Artist';
             }
 
-            // Step 1: Artist — try Channel API style (by-name) first, then search, then create
-            $artistId = null;
-            try {
-                $byNameUrl = $baseUrl . '/artists/by-name/' . rawurlencode($artistName);
-                $byNameRes = Http::withToken($token)->withoutVerifying()->timeout(30)
-                    ->withHeaders(['Accept' => 'application/json'])
-                    ->get($byNameUrl);
-                if ($byNameRes->successful()) {
-                    $body = $byNameRes->json();
-                    $artistId = $body['artist']['id']
-                        ?? $body['id']
-                        ?? $body['data']['artist']['id']
-                        ?? $body['data']['id']
-                        ?? null;
-                    if (! $artistId) {
-                        Log::warning('Streaming: /artists/by-name returned success but no artist id', [
-                            'url' => $byNameUrl,
-                            'response' => $body,
-                        ]);
-                    }
-                } else {
-                    Log::warning('Streaming: /artists/by-name request failed', [
-                        'url' => $byNameUrl,
-                        'status' => $byNameRes->status(),
-                        'body' => substr((string) $byNameRes->body(), 0, 500),
+            // Step 1: Artist — use cached artist_id first, then by-name, then search, then create
+            // Priority: options['existing_artist_id'] → playlist metadata → by-name API → search → create
+            $artistId = !empty($options['existing_artist_id']) ? (int) $options['existing_artist_id'] : null;
+
+            if ($artistId) {
+                Log::info("Streaming: Reusing cached artist ID (skipping lookup)", [
+                    'artist_id' => $artistId,
+                    'artist'    => $artistName,
+                ]);
+            } else {
+                // Also check playlist metadata
+                $playlistMeta = $playlist->metadata ?? [];
+                if (!empty($playlistMeta['last_artist_id'])) {
+                    $artistId = (int) $playlistMeta['last_artist_id'];
+                    Log::info("Streaming: Using last_artist_id from playlist metadata", [
+                        'artist_id' => $artistId,
                     ]);
                 }
-            } catch (\Exception $e) {
-                Log::warning('Streaming: /artists/by-name exception', ['error' => $e->getMessage()]);
+            }
+
+            if (!$artistId) {
+                try {
+                    $byNameUrl = $baseUrl . '/artists/by-name/' . rawurlencode($artistName);
+                    $byNameRes = Http::withToken($token)->withoutVerifying()->timeout(30)
+                        ->withHeaders(['Accept' => 'application/json'])
+                        ->get($byNameUrl);
+                    if ($byNameRes->successful()) {
+                        $body = $byNameRes->json();
+                        $artistId = $body['artist']['id']
+                            ?? $body['id']
+                            ?? $body['data']['artist']['id']
+                            ?? $body['data']['id']
+                            ?? null;
+                        if (! $artistId) {
+                            Log::warning('Streaming: /artists/by-name returned success but no artist id', [
+                                'url' => $byNameUrl,
+                                'response' => $body,
+                            ]);
+                        }
+                    } else {
+                        Log::warning('Streaming: /artists/by-name request failed', [
+                            'url' => $byNameUrl,
+                            'status' => $byNameRes->status(),
+                            'body' => substr((string) $byNameRes->body(), 0, 500),
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Streaming: /artists/by-name exception', ['error' => $e->getMessage()]);
+                }
             }
 
             if (!$artistId) {
@@ -1607,6 +1634,11 @@ class YouTubeScraperService
                     $meta['last_album_url'] = $streamingUrls['album_url'] ?? null;
                 }
 
+                // Cache artist_id for duty re-use (avoids re-lookup every push)
+                if (!empty($artistId)) {
+                    $meta['last_artist_id'] = $artistId;
+                }
+
                 // Save genres/tags that were actually sent to the platform
                 $sentGenres = $albumMode === 'single'
                     ? ($validated['genres'] ?? $playlistGenres ?? [])
@@ -1653,8 +1685,15 @@ class YouTubeScraperService
             Log::info("Syncing to Watchlist platform via helper: {$platform->name}");
 
             // Extract streaming URLs if provided
-            $albumUrl = $streamingUrls['album_url'] ?? null;
-            $trackUrls = $streamingUrls['track_urls'] ?? [];
+            $albumUrl         = $streamingUrls['album_url']          ?? null;
+            $trackUrls        = $streamingUrls['track_urls']         ?? [];
+            $existingTitleId  = $streamingUrls['existing_title_id']  ?? null;
+            $existingArtistId = $streamingUrls['existing_artist_id'] ?? null;
+
+            // Also check playlist metadata as ultimate fallback
+            if (!$existingTitleId) {
+                $existingTitleId = $playlist->metadata['last_watchlist_title_id'] ?? null;
+            }
 
             Log::info("Watchlist sync - Streaming URLs received", [
                 'album_url' => $albumUrl,
@@ -1774,7 +1813,22 @@ class YouTubeScraperService
                 Log::info("Adding streaming album URL to watchlist title", ['album_url' => $albumUrl]);
             }
 
-            $titleId = $helper->createOrGetTitle($titlePayload);
+            // Use cached title_id directly if available — avoids duplicate title creation
+            if ($existingTitleId) {
+                $titleId = (int) $existingTitleId;
+                Log::info("Watchlist: Reusing cached title ID (skipping search/create)", [
+                    'title_id'     => $titleId,
+                    'playlist'     => $playlist->title,
+                ]);
+                // Optionally update the title with latest stream_url / image if changed
+                try {
+                    $helper->updateTitleIfNeeded($titleId, $titlePayload);
+                } catch (\Exception $e) {
+                    Log::warning("Watchlist: Could not update existing title", ['error' => $e->getMessage()]);
+                }
+            } else {
+                $titleId = $helper->createOrGetTitle($titlePayload);
+            }
 
             if (!$titleId) {
                 throw new \Exception("Failed to create/get title on Watchlist platform.");

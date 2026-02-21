@@ -139,16 +139,58 @@ class DutyExecutionService
             ];
         }
 
+        // --- Resolve existing album_id (Streaming) ---
+        // Priority: 1) youtube_platform_pushes table  2) duty execution_data  3) playlist metadata
         $existingAlbumId = \App\Models\YoutubePlatformPush::where('playlist_id', $playlistId)
             ->where('platform_name', $platform->name)
             ->whereNotNull('platform_album_id')
+            ->where('status', 'success')
+            ->orderByDesc('pushed_at')
             ->value('platform_album_id');
 
+        if (!$existingAlbumId && !empty($data['platform_album_id'])) {
+            $existingAlbumId = $data['platform_album_id'];
+            Log::info("Duty: using platform_album_id from execution_data", [
+                'album_id' => $existingAlbumId,
+            ]);
+        }
+
+        if (!$existingAlbumId) {
+            $playlistMeta    = $playlist->metadata ?? [];
+            $existingAlbumId = $playlistMeta['last_album_id'] ?? null;
+            if ($existingAlbumId) {
+                Log::info("Duty: using last_album_id from playlist metadata", [
+                    'album_id' => $existingAlbumId,
+                ]);
+            }
+        }
+
+        // --- Resolve existing artist_id (Streaming) ---
+        $existingArtistId = $data['platform_artist_id'] ?? null;
+        if (!$existingArtistId) {
+            $playlistMeta     = $playlist->metadata ?? [];
+            $existingArtistId = $playlistMeta['last_artist_id'] ?? null;
+        }
+
+        // --- Resolve existing title_id (Watchlist) ---
+        $existingTitleId = $data['platform_title_id'] ?? null;
+        if (!$existingTitleId) {
+            $playlistMeta    = $playlist->metadata ?? [];
+            $existingTitleId = $playlistMeta['last_watchlist_title_id'] ?? null;
+            if ($existingTitleId) {
+                Log::info("Duty: using last_watchlist_title_id from playlist metadata", [
+                    'title_id' => $existingTitleId,
+                ]);
+            }
+        }
+
         return $this->scraperService->pushToPlatform($playlistId, $platformId, [
-            'only_video_ids'   => $missingVideoIds,
+            'only_video_ids'    => $missingVideoIds,
             'existing_album_id' => $existingAlbumId,
-            'override_genres'  => $data['override_genres'] ?? [],
-            'override_tags'    => $data['override_tags']   ?? [],
+            'existing_artist_id'=> $existingArtistId,
+            'existing_title_id' => $existingTitleId,
+            'override_genres'   => $data['override_genres'] ?? [],
+            'override_tags'     => $data['override_tags']   ?? [],
         ]);
     }
 

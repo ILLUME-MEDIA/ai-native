@@ -293,6 +293,162 @@ class AiScraperController extends Controller
     }
 
     /**
+     * Search YouTube by keyword/name and return results.
+     */
+    public function youtubeSearch(Request $request)
+    {
+        $request->validate([
+            'query'       => 'required|string|min:1|max:255',
+            'type'        => 'nullable|in:video,playlist,channel',
+            'max_results' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        $apiKey = env('YOUTUBE_API_KEY');
+        if (!$apiKey) {
+            return response()->json(['error' => 'YouTube API key not configured'], 500);
+        }
+
+        $query      = trim($request->input('query'));
+        $type       = $request->input('type', 'video');
+        $maxResults = (int) $request->input('max_results', 25);
+
+        try {
+            $ctx = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 15]]);
+
+            $searchUrl  = "https://www.googleapis.com/youtube/v3/search?part=snippet"
+                        . "&type={$type}&maxResults={$maxResults}"
+                        . "&q=" . urlencode($query)
+                        . "&key=" . urlencode($apiKey);
+
+            $searchJson = @file_get_contents($searchUrl, false, $ctx);
+            $searchData = json_decode($searchJson, true) ?? [];
+
+            if (isset($searchData['error'])) {
+                return response()->json(['error' => $searchData['error']['message'] ?? 'YouTube API error'], 500);
+            }
+
+            if (empty($searchData['items'])) {
+                return response()->json(['results' => [], 'total' => 0]);
+            }
+
+            $itemIds = collect($searchData['items'])->map(function ($item) {
+                return $item['id']['videoId'] ?? $item['id']['playlistId'] ?? $item['id']['channelId'] ?? null;
+            })->filter()->values()->implode(',');
+
+            if (!$itemIds) {
+                return response()->json(['results' => [], 'total' => 0]);
+            }
+
+            $partMap      = [
+                'video'    => 'snippet,statistics,contentDetails',
+                'playlist' => 'snippet,contentDetails',
+                'channel'  => 'snippet,statistics',
+            ];
+            $part         = $partMap[$type] ?? 'snippet,statistics,contentDetails';
+            $resourceType = $type === 'playlist' ? 'playlists' : ($type === 'channel' ? 'channels' : 'videos');
+
+            $detailsUrl  = "https://www.googleapis.com/youtube/v3/{$resourceType}?part={$part}"
+                         . "&id={$itemIds}&key=" . urlencode($apiKey);
+            $detailsJson = @file_get_contents($detailsUrl, false, $ctx);
+            $detailsData = json_decode($detailsJson, true) ?? [];
+
+            $results = collect($detailsData['items'] ?? [])->map(function ($item) use ($type) {
+                $snippet = $item['snippet']        ?? [];
+                $stats   = $item['statistics']     ?? [];
+                $content = $item['contentDetails'] ?? [];
+                $id      = is_array($item['id']) ? ($item['id']['videoId'] ?? '') : ($item['id'] ?? '');
+
+                if ($type === 'playlist') {
+                    $url = "https://www.youtube.com/playlist?list={$id}";
+                } elseif ($type === 'channel') {
+                    $url = "https://www.youtube.com/channel/{$id}";
+                } else {
+                    $url = "https://www.youtube.com/watch?v={$id}";
+                }
+
+                $thumbnail = $snippet['thumbnails']['high']['url']
+                    ?? $snippet['thumbnails']['medium']['url']
+                    ?? "https://i.ytimg.com/vi/{$id}/hqdefault.jpg";
+
+                return [
+                    'video_id'         => $id,
+                    'title'            => $snippet['title']        ?? 'Unknown',
+                    'channel_name'     => $snippet['channelTitle'] ?? '',
+                    'channel_id'       => $snippet['channelId']    ?? '',
+                    'description'      => substr($snippet['description'] ?? '', 0, 200),
+                    'thumbnail_url'    => $thumbnail,
+                    'duration'         => $content['duration']  ?? null,
+                    'view_count'       => (int) ($stats['viewCount']       ?? 0),
+                    'like_count'       => (int) ($stats['likeCount']       ?? 0),
+                    'published_at'     => $snippet['publishedAt'] ?? null,
+                    'video_url'        => $url,
+                    'type'             => $type,
+                    'video_count'      => $type === 'playlist' ? (int) ($content['itemCount']         ?? 0) : null,
+                    'subscriber_count' => $type === 'channel'  ? ($stats['subscriberCount'] ?? null) : null,
+                ];
+            });
+
+            return response()->json([
+                'results' => $results->values(),
+                'total'   => $searchData['pageInfo']['totalResults'] ?? $results->count(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'YouTube search failed: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Import selected YouTube search results as a new playlist entry and store videos in DB.
+     */
+    public function importFromSearch(Request $request)
+    {
+        $request->validate([
+            'title'              => 'required|string|max:255',
+            'videos'             => 'required|array|min:1',
+            'videos.*.video_id'  => 'required|string',
+            'videos.*.title'     => 'required|string',
+        ]);
+
+        try {
+            $searchPlaylistId = 'search_' . now()->format('Ymd_His') . '_' . substr(md5($request->title . microtime()), 0, 6);
+
+            $playlist = YoutubePlaylist::create([
+                'playlist_id'    => $searchPlaylistId,
+                'playlist_url'   => 'https://www.youtube.com/results?search_query=' . urlencode($request->title),
+                'title'          => '[Search] ' . $request->title,
+                'video_count'    => count($request->videos),
+                'last_fetched_at'=> now(),
+            ]);
+
+            foreach ($request->videos as $videoData) {
+                YoutubeVideo::updateOrCreate(
+                    ['video_id' => $videoData['video_id']],
+                    [
+                        'playlist_id'  => $searchPlaylistId,
+                        'title'        => $videoData['title'],
+                        'thumbnail_url'=> $videoData['thumbnail_url']  ?? null,
+                        'duration'     => $videoData['duration']        ?? null,
+                        'view_count'   => (int) ($videoData['view_count']  ?? 0),
+                        'like_count'   => (int) ($videoData['like_count']  ?? 0),
+                        'channel_name' => $videoData['channel_name']    ?? '',
+                        'published_at' => !empty($videoData['published_at'])
+                            ? \Carbon\Carbon::parse($videoData['published_at'])->toDateTimeString()
+                            : null,
+                        'push_status'  => 'new',
+                    ]
+                );
+            }
+
+            return response()->json([
+                'message'  => count($request->videos) . ' videos imported successfully!',
+                'playlist' => $playlist->fresh()->loadCount('videos'),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Create one automated sync duty per playlist (sync + new episodes tags/genres). No duplicate if same playlist added again.
      */
     protected function ensurePlaylistSyncDutyExists(YoutubePlaylist $playlist): void
@@ -339,10 +495,17 @@ class AiScraperController extends Controller
             ->orderByDesc('pushed_at')
             ->value('platform_album_id');
 
-        // Load last-used genres/tags from playlist metadata
+        // Load last-used genres/tags + cached IDs from playlist metadata
         $playlistMeta     = $playlist->metadata ?? [];
-        $lastUsedGenres   = $playlistMeta['last_used_genres'] ?? [];
-        $lastUsedTags     = $playlistMeta['last_used_tags']   ?? [];
+        $lastUsedGenres   = $playlistMeta['last_used_genres']       ?? [];
+        $lastUsedTags     = $playlistMeta['last_used_tags']         ?? [];
+        $lastArtistId     = $playlistMeta['last_artist_id']         ?? null;
+        $lastTitleId      = $playlistMeta['last_watchlist_title_id'] ?? null;
+
+        // Fallback album_id: metadata
+        if (!$lastAlbumId) {
+            $lastAlbumId = $playlistMeta['last_album_id'] ?? null;
+        }
 
         // If duty already exists, update its album_id and last-used genres/tags
         $existingDuty = AiDuty::where('metadata->playlist_id', $playlist->playlist_id)
@@ -359,6 +522,14 @@ class AiScraperController extends Controller
                 $execData['platform_album_id'] = $lastAlbumId;
                 $changed = true;
             }
+            if ($lastArtistId && ($execData['platform_artist_id'] ?? null) !== $lastArtistId) {
+                $execData['platform_artist_id'] = $lastArtistId;
+                $changed = true;
+            }
+            if ($lastTitleId && ($execData['platform_title_id'] ?? null) !== $lastTitleId) {
+                $execData['platform_title_id'] = $lastTitleId;
+                $changed = true;
+            }
             if (!empty($lastUsedGenres) && ($execData['override_genres'] ?? []) !== $lastUsedGenres) {
                 $execData['override_genres'] = $lastUsedGenres;
                 $changed = true;
@@ -370,11 +541,13 @@ class AiScraperController extends Controller
 
             if ($changed) {
                 $existingDuty->update(['execution_data' => $execData]);
-                \Log::info("Updated existing push duty with latest album_id / genres / tags", [
-                    'duty_id'          => $existingDuty->id,
+                \Log::info("Updated existing push duty with latest IDs / genres / tags", [
+                    'duty_id'           => $existingDuty->id,
                     'platform_album_id' => $lastAlbumId,
-                    'genres'           => $lastUsedGenres,
-                    'tags'             => $lastUsedTags,
+                    'platform_artist_id'=> $lastArtistId,
+                    'platform_title_id' => $lastTitleId,
+                    'genres'            => $lastUsedGenres,
+                    'tags'              => $lastUsedTags,
                 ]);
             }
             return;
@@ -452,16 +625,18 @@ IMPORTANT:
                 'schedule_type' => 'interval',
                 'schedule_value' => 'every_12_hours',
                 'execution_data' => [
-                    'playlist_url'     => $playlist->playlist_url,
-                    'platform_name'    => $platform->name,
-                    'base_url'         => $baseUrl,
-                    'playlist_id'      => $playlist->playlist_id,
-                    'playlist_title'   => $playlist->title,
-                    'platform_id'      => $platform->id,
-                    'tracking_table'   => 'youtube_platform_pushes',
+                    'playlist_url'      => $playlist->playlist_url,
+                    'platform_name'     => $platform->name,
+                    'base_url'          => $baseUrl,
+                    'playlist_id'       => $playlist->playlist_id,
+                    'playlist_title'    => $playlist->title,
+                    'platform_id'       => $platform->id,
+                    'tracking_table'    => 'youtube_platform_pushes',
                     'platform_album_id' => $lastAlbumId,
-                    'override_genres'  => $lastUsedGenres,
-                    'override_tags'    => $lastUsedTags,
+                    'platform_artist_id'=> $lastArtistId,
+                    'platform_title_id' => $lastTitleId,
+                    'override_genres'   => $lastUsedGenres,
+                    'override_tags'     => $lastUsedTags,
                 ],
                 'is_active' => true,
                 'metadata' => [
