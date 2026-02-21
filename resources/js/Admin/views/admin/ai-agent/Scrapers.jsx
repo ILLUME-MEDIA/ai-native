@@ -171,6 +171,11 @@ const Scrapers = () => {
     const [selectedYtItems, setSelectedYtItems] = useState(new Set());
     const [ytImporting, setYtImporting] = useState(false);
 
+    /* ─── Playlist expand (inline videos) state ─── */
+    const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
+    const [expandedVideos, setExpandedVideos] = useState([]);
+    const [expandedLoading, setExpandedLoading] = useState(false);
+
     /* ─── Image Manager modal state ─── */
     const [showImageModal, setShowImageModal] = useState(false);
     const [imageTarget, setImageTarget] = useState(null); // { type: 'playlist'|'video', id, title, currentImage, manualImage }
@@ -904,6 +909,34 @@ const Scrapers = () => {
         }
     };
 
+    /* ─── Playlist expand/collapse ─── */
+    const handleToggleExpand = async (pl) => {
+        if (expandedPlaylistId === pl.id) {
+            setExpandedPlaylistId(null);
+            setExpandedVideos([]);
+            return;
+        }
+        setExpandedPlaylistId(pl.id);
+        setExpandedVideos([]);
+        setExpandedLoading(true);
+        try {
+            const res = await axios.get(`/api/ai/scrapers/${pl.id}`);
+            setExpandedVideos(res.data.videos || []);
+        } catch (e) {
+            setExpandedVideos([]);
+        } finally {
+            setExpandedLoading(false);
+        }
+    };
+
+    /* ─── Build YouTube URL from playlist ─── */
+    const getYouTubeUrl = (pl) => {
+        if (pl.playlist_id && !pl.playlist_id.startsWith('search_')) {
+            return `https://www.youtube.com/playlist?list=${pl.playlist_id}`;
+        }
+        return pl.playlist_url || null;
+    };
+
     /* ─── Pagination renderer ─── */
     const renderPagination = () => {
         if (pagination.last_page <= 1) return null;
@@ -981,6 +1014,7 @@ const Scrapers = () => {
                                 <Table responsive className="table-centered table-nowrap mb-0">
                                     <thead className="table-light">
                                         <tr>
+                                            <th style={{ width: '32px' }}></th>
                                             <th>Thumbnail</th>
                                             <th>Playlist</th>
                                             <th>Videos</th>
@@ -990,82 +1024,159 @@ const Scrapers = () => {
                                     </thead>
                                     <tbody>
                                         {playlists.map((pl) => {
-                                            // Get playlist and artist/channel thumbnails
                                             const playlistThumb = pl.manual_image_url || pl.metadata?.playlist_thumbnail || null;
-                                            const channelThumb = pl.metadata?.channel_thumbnail || null;
+                                            const channelThumb  = pl.metadata?.channel_thumbnail || null;
+                                            const ytUrl         = getYouTubeUrl(pl);
+                                            const isExpanded    = expandedPlaylistId === pl.id;
                                             return (
-                                            <tr key={pl.id}>
-                                                <td>
+                                            <React.Fragment key={pl.id}>
+                                            {/* ── Main row ── */}
+                                            <tr className={isExpanded ? 'table-active' : ''}>
+                                                {/* Expand toggle */}
+                                                <td className="text-center" style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                                    <Icon icon={isExpanded ? 'chevron-down' : 'chevron-right'} className="icon-xs text-muted" />
+                                                </td>
+                                                <td style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        {/* Album/Playlist Thumbnail */}
                                                         {playlistThumb ? (
-                                                            <img
-                                                                src={playlistThumb}
-                                                                alt={pl.title}
-                                                                style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', cursor: 'pointer' }}
-                                                                onClick={() => openPlaylistImage(pl)}
-                                                                title="Album/Playlist Image - Click to change"
-                                                            />
+                                                            <img src={playlistThumb} alt={pl.title}
+                                                                style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px' }}
+                                                                onClick={(e) => { e.stopPropagation(); openPlaylistImage(pl); }}
+                                                                title="Click to change image" />
                                                         ) : (
-                                                            <div
-                                                                style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0', borderRadius: '4px', cursor: 'pointer' }}
-                                                                onClick={() => openPlaylistImage(pl)}
-                                                                title="No thumbnail - click to set image"
-                                                            >
+                                                            <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0', borderRadius: '4px', cursor: 'pointer' }}
+                                                                onClick={(e) => { e.stopPropagation(); openPlaylistImage(pl); }}
+                                                                title="No thumbnail - click to set image">
                                                                 <Icon icon="image" style={{ fontSize: '24px', color: '#999' }} />
                                                             </div>
                                                         )}
-                                                        {/* Artist/Channel Avatar */}
                                                         {channelThumb && channelThumb !== playlistThumb && (
-                                                            <img
-                                                                src={channelThumb}
-                                                                alt="Artist"
+                                                            <img src={channelThumb} alt="Artist"
                                                                 style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #e0e0e0' }}
-                                                                title="Artist/Channel Image"
-                                                            />
+                                                                title="Artist/Channel Image" />
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                                    <strong>{pl.title || 'Untitled Playlist'}</strong>
+                                                    <br />
+                                                    <div className="d-flex align-items-center gap-1 mt-1">
+                                                        <small className="text-muted">{pl.playlist_id}</small>
+                                                        {ytUrl && (
+                                                            <a href={ytUrl} target="_blank" rel="noopener noreferrer"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                title="Open on YouTube"
+                                                                className="text-danger"
+                                                                style={{ lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                                                    <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-2.75 12.43 12.43 0 0 0-3.48-.48C6.39 3.46 2 7.42 2 12.34c0 4.92 4.39 8.88 9.8 8.88 4.13 0 7.68-2.28 9.2-5.6-.01 0 2.43-9.62-1.41-8.93zM10.31 15.5l-.74-2.08H7.73l-.74 2.08H5.85l2.7-7h1.2l2.7 7h-1.14zm5.44 0h-1.04v-.52c-.34.4-.82.62-1.38.62-.96 0-1.72-.72-1.72-1.84 0-1.1.76-1.82 1.72-1.82.56 0 1.04.22 1.38.62v-2.08h1.04v5.02z"/>
+                                                                </svg>
+                                                            </a>
                                                         )}
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <strong>{pl.title || 'Untitled Playlist'}</strong>
-                                                    <br />
-                                                    <small className="text-muted">{pl.playlist_id}</small>
+                                                    <Badge bg="info" style={{ cursor: 'pointer' }} onClick={() => handleToggleExpand(pl)}>
+                                                        {pl.videos_count} videos
+                                                    </Badge>
                                                 </td>
-                                                <td><Badge bg="info">{pl.videos_count} videos</Badge></td>
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
-                                                    <Button variant="soft-success" size="sm" className="me-1" onClick={() => handleEnrich(pl.id)} disabled={enriching || enrichingIds.has(pl.playlist_id)}
-                                                        title="Fetch views, likes, comments, HD info from YouTube API">
-                                                        {enrichingIds.has(pl.playlist_id)
-                                                            ? <><Spinner size="sm" className="me-1" />Processing...</>
-                                                            : <><Icon icon="bar-chart" className="icon-xs" /> {enriching ? 'Queuing...' : 'Enrich'}</>
-                                                        }
-                                                    </Button>
-                                                    <Button variant="soft-secondary" size="sm" className="me-1"
-                                                        onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
-                                                        {(generating && selectedPlaylist?.id === pl.id) ? (
-                                                            <><Spinner animation="border" size="sm" className="me-1" style={{width: '12px', height: '12px', borderWidth: '2px'}} />
-                                                                AI ({generationProgress.current}/{generationProgress.total})</>
-                                                        ) : (
-                                                            <><Icon icon="sparkles" className="icon-xs" /> AI / Meta</>
-                                                        )}
-                                                    </Button>
-                                                    <Button variant="soft-warning" size="sm" className="me-1" onClick={() => openPlaylistImage(pl)}
-                                                        title="Set cover image for streaming album / watchlist title">
-                                                        <Icon icon="image" className="icon-xs" /> Image
-                                                    </Button>
-                                                    <Button variant="soft-info" size="sm" className="me-1" onClick={() => openPushModal(pl)} disabled={pushing}>
-                                                        <Icon icon="send" className="icon-xs" /> Push
-                                                    </Button>
-                                                    <Button variant="soft-danger" size="sm" onClick={() => handleReset(pl)} disabled={resetting}
-                                                        title="Remove this playlist and all its videos">
-                                                        <Icon icon="trash" className="icon-xs" /> Reset
-                                                    </Button>
+                                                    <div className="d-flex flex-wrap gap-1">
+                                                        <Button variant="soft-success" size="sm" onClick={() => handleEnrich(pl.id)} disabled={enriching || enrichingIds.has(pl.playlist_id)}
+                                                            title="Fetch views, likes, comments from YouTube API">
+                                                            {enrichingIds.has(pl.playlist_id)
+                                                                ? <><Spinner size="sm" className="me-1" />...</>
+                                                                : <><Icon icon="bar-chart" className="icon-xs" /> Enrich</>}
+                                                        </Button>
+                                                        <Button variant="soft-secondary" size="sm"
+                                                            onClick={() => { setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
+                                                            {(generating && selectedPlaylist?.id === pl.id) ? (
+                                                                <><Spinner animation="border" size="sm" style={{width: '12px', height: '12px', borderWidth: '2px'}} className="me-1" />
+                                                                    AI ({generationProgress.current}/{generationProgress.total})</>
+                                                            ) : (
+                                                                <><Icon icon="sparkles" className="icon-xs" /> AI</>
+                                                            )}
+                                                        </Button>
+                                                        <Button variant="soft-warning" size="sm" onClick={() => openPlaylistImage(pl)} title="Set cover image">
+                                                            <Icon icon="image" className="icon-xs" />
+                                                        </Button>
+                                                        <Button variant="soft-info" size="sm" onClick={() => openPushModal(pl)} disabled={pushing}>
+                                                            <Icon icon="send" className="icon-xs" /> Push
+                                                        </Button>
+                                                        <Button variant="soft-danger" size="sm" onClick={() => handleReset(pl)} disabled={resetting} title="Remove playlist">
+                                                            <Icon icon="trash" className="icon-xs" />
+                                                        </Button>
+                                                    </div>
                                                 </td>
                                             </tr>
+
+                                            {/* ── Expanded videos row ── */}
+                                            {isExpanded && (
+                                                <tr>
+                                                    <td colSpan="6" className="p-0 border-top-0">
+                                                        <div style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+                                                            {expandedLoading ? (
+                                                                <div className="text-center py-3">
+                                                                    <Spinner animation="border" size="sm" className="me-2" />
+                                                                    Loading videos...
+                                                                </div>
+                                                            ) : expandedVideos.length === 0 ? (
+                                                                <div className="text-center text-muted py-3 small">No videos found.</div>
+                                                            ) : (
+                                                                <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
+                                                                    <Table size="sm" className="mb-0 table-hover" style={{ background: 'transparent' }}>
+                                                                        <thead className="table-light" style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                                                                            <tr>
+                                                                                <th style={{ width: '70px' }}>Thumb</th>
+                                                                                <th>Title</th>
+                                                                                <th>Duration</th>
+                                                                                <th>Views</th>
+                                                                                <th>Published</th>
+                                                                                <th>Status</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {expandedVideos.map(v => (
+                                                                                <tr key={v.video_id}>
+                                                                                    <td>
+                                                                                        <a href={`https://www.youtube.com/watch?v=${v.video_id}`} target="_blank" rel="noopener noreferrer">
+                                                                                            <img src={v.thumbnail_url || `https://i.ytimg.com/vi/${v.video_id}/mqdefault.jpg`}
+                                                                                                alt="" style={{ width: '60px', height: '34px', objectFit: 'cover', borderRadius: '3px' }} />
+                                                                                        </a>
+                                                                                    </td>
+                                                                                    <td>
+                                                                                        <a href={`https://www.youtube.com/watch?v=${v.video_id}`} target="_blank" rel="noopener noreferrer"
+                                                                                            className="text-dark text-decoration-none fw-semibold text-truncate d-block"
+                                                                                            style={{ maxWidth: '340px' }} title={v.title}>
+                                                                                            {v.title}
+                                                                                        </a>
+                                                                                        <small className="text-muted">{v.channel_name}</small>
+                                                                                    </td>
+                                                                                    <td><Badge bg="soft-secondary" className="text-secondary">{fmtDuration(v.duration)}</Badge></td>
+                                                                                    <td><small>{fmtNum(v.view_count)}</small></td>
+                                                                                    <td><small>{v.published_at ? new Date(v.published_at).toLocaleDateString() : '—'}</small></td>
+                                                                                    <td><StatusBadge status={v.push_status || 'new'} /></td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </Table>
+                                                                </div>
+                                                            )}
+                                                            <div className="px-3 py-2 border-top d-flex justify-content-between align-items-center">
+                                                                <small className="text-muted">{expandedVideos.length} videos</small>
+                                                                <Button size="sm" variant="outline-secondary" onClick={() => { setExpandedPlaylistId(null); setExpandedVideos([]); }}>
+                                                                    <Icon icon="x" className="icon-xs me-1" />Close
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            </React.Fragment>
                                         )})}
                                         {playlists.length === 0 && (
-                                            <tr><td colSpan="5" className="text-center text-muted py-3">No playlists added yet.</td></tr>
+                                            <tr><td colSpan="6" className="text-center text-muted py-3">No playlists added yet.</td></tr>
                                         )}
                                     </tbody>
                                 </Table>
