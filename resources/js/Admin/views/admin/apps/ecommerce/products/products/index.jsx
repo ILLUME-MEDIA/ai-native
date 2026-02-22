@@ -1,20 +1,28 @@
+import DataTable from '@admin/components/table/DataTable';
+import TablePagination from '@admin/components/table/TablePagination';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import MediaUpload from '../../_components/MediaUpload';
 import axios from 'axios';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-    Alert, Card, CardBody, CardHeader, Col,
+    Alert, Card, CardBody, CardFooter, CardHeader, Col,
     Form, Modal, ModalBody, ModalFooter, ModalHeader, ModalTitle,
     Row, Spinner,
 } from 'react-bootstrap';
+import { Link } from 'react-router';
+import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { Button } from 'react-bootstrap';
 
 const api = (path, opts = {}) => axios({ url: `/api/ecommerce/${path}`, ...opts });
 
+const columnHelper = createColumnHelper();
+
 export default function MenuItemsPage() {
-    const [items, setItems]           = useState([]);
-    const [businesses, setBusinesses] = useState([]);
-    const [menuCats, setMenuCats]     = useState([]);
+    const [items, setItems]             = useState([]);
+    const [businesses, setBusinesses]   = useState([]);
+    const [menuCats, setMenuCats]       = useState([]);
+    const [menuCategoryTypes, setMenuCategoryTypes] = useState([]);
     const [loading, setLoading]       = useState(true);
     const [showModal, setShowModal]   = useState(false);
     const [editTarget, setEditTarget] = useState(null);
@@ -26,29 +34,54 @@ export default function MenuItemsPage() {
     const [page, setPage]             = useState(1);
 
     const [form, setForm] = useState({
-        business_id: '', menu_category_id: '', name: '', description: '',
+        business_id: '', menu_category_id: '', menu_category_type_id: '', name: '', description: '',
         price: '', image: '', is_available: true, sort_order: 0,
     });
 
     const loadItems = useCallback(async (pg = 1) => {
         setLoading(true);
-        const params = new URLSearchParams({ page: pg });
-        if (bizFilter) params.append('business_id', bizFilter);
-        if (catFilter) params.append('category_id', catFilter);
-        const { data } = await api(`menu-items?${params}`);
-        setItems(data.data);
-        setMeta({ total: data.total, lastPage: data.last_page, currentPage: data.current_page });
+        try {
+            const params = new URLSearchParams({ page: pg, per_page: 20 });
+            if (bizFilter) params.append('business_id', bizFilter);
+            if (catFilter) params.append('category_id', catFilter);
+            const { data } = await api(`menu-items?${params}`);
+            const list = Array.isArray(data) ? data : (data.data || []);
+            setItems(list);
+            setMeta(data?.total != null ? { total: data.total, lastPage: data.last_page ?? 1, currentPage: data.current_page ?? 1 } : null);
+        } catch (e) {
+            setItems([]);
+            setMeta(null);
+        }
         setPage(pg);
         setLoading(false);
     }, [bizFilter, catFilter]);
 
     const loadBusinesses = useCallback(async () => {
-        const { data } = await api('businesses?active_only=1');
-        setBusinesses(data.data || data);
+        try {
+            const { data } = await api('businesses?per_page=500');
+            const list = Array.isArray(data) ? data : (data.data || []);
+            setBusinesses(list);
+        } catch (e) {
+            setBusinesses([]);
+        }
+    }, []);
+
+    const loadMenuCategoryTypes = useCallback(async () => {
+        try {
+            const { data } = await api('menu-category-types?all=1&active_only=1');
+            setMenuCategoryTypes(Array.isArray(data) ? data : (data.data || []));
+        } catch (e) {
+            setMenuCategoryTypes([]);
+        }
     }, []);
 
     useEffect(() => { loadBusinesses(); }, [loadBusinesses]);
+    useEffect(() => { loadMenuCategoryTypes(); }, [loadMenuCategoryTypes]);
     useEffect(() => { loadItems(1); }, [loadItems]);
+    useEffect(() => {
+        if (bizFilter) loadMenuCats(bizFilter);
+        else setMenuCats([]);
+    }, [bizFilter]);
 
     const loadMenuCats = async (bizId) => {
         if (!bizId) { setMenuCats([]); return; }
@@ -57,13 +90,14 @@ export default function MenuItemsPage() {
     };
 
     const openAdd = () => {
-        setForm({ business_id: '', menu_category_id: '', name: '', description: '', price: '', image: '', is_available: true, sort_order: 0 });
+        setForm({ business_id: '', menu_category_id: '', menu_category_type_id: '', name: '', description: '', price: '', image: '', is_available: true, sort_order: 0 });
         setMenuCats([]); setError(''); setEditTarget(null); setShowModal(true);
     };
     const openEdit = (item) => {
         setForm({
             business_id: String(item.business_id || ''),
             menu_category_id: String(item.menu_category_id || ''),
+            menu_category_type_id: String(item.menu_category_type_id || ''),
             name: item.name, description: item.description || '',
             price: item.price, image: item.image || '',
             is_available: item.is_available, sort_order: item.sort_order || 0,
@@ -77,10 +111,12 @@ export default function MenuItemsPage() {
         try {
             const payload = { ...form, price: parseFloat(form.price) || 0, sort_order: parseInt(form.sort_order) || 0 };
             if (!payload.menu_category_id) delete payload.menu_category_id;
+            if (!payload.menu_category_type_id) delete payload.menu_category_type_id;
             if (!editTarget) {
                 await api(`businesses/${form.business_id}/menu-items`, { method: 'post', data: payload });
             } else {
-                await api(`businesses/${editTarget.business_id}/menu-items/${editTarget.id}`, { method: 'patch', data: payload });
+                const bizId = editTarget.business_id;
+                await api(`businesses/${bizId}/menu-items/${editTarget.id}`, { method: 'patch', data: payload });
             }
             setShowModal(false); loadItems(page);
         } catch (err) {
@@ -99,6 +135,89 @@ export default function MenuItemsPage() {
         loadItems(page);
     };
 
+    const columns = useMemo(() => [
+        columnHelper.accessor(row => row.name, {
+            id: 'item',
+            header: 'Item',
+            cell: ({ row }) => {
+                const item = row.original;
+                return (
+                    <div className="d-flex align-items-center gap-2">
+                        {item.image
+                            ? <img src={item.image} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
+                            : <div style={{ width: 40, height: 40, background: '#f1f3f5', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon icon="photo" className="text-muted" /></div>}
+                        <div>
+                            <strong>{item.name}</strong>
+                            {item.description && <small className="text-muted d-block" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</small>}
+                        </div>
+                    </div>
+                );
+            },
+            enableSorting: false,
+        }),
+        columnHelper.accessor(row => row.business?.name ?? row.business_id, {
+            id: 'business',
+            header: 'Business',
+            cell: ({ row }) => <small>{row.original.business?.name ?? `#${row.original.business_id}`}</small>,
+            enableSorting: false,
+        }),
+        columnHelper.accessor(row => row.menu_category?.name, {
+            id: 'category',
+            header: 'Category',
+            cell: ({ row }) => <small className="text-muted">{row.original.menu_category?.name || '—'}</small>,
+            enableSorting: false,
+        }),
+        columnHelper.accessor(row => row.menu_category_type?.name, {
+            id: 'type',
+            header: 'Type',
+            cell: ({ row }) => <small className="text-muted">{row.original.menu_category_type?.name || '—'}</small>,
+            enableSorting: false,
+        }),
+        columnHelper.accessor(row => row.price, {
+            id: 'price',
+            header: 'Price',
+            cell: ({ row }) => <strong className="text-success">${parseFloat(row.original.price).toFixed(2)}</strong>,
+            enableSorting: false,
+        }),
+        columnHelper.accessor(row => row.is_available, {
+            id: 'available',
+            header: 'Available',
+            cell: ({ row }) => (
+                <Form.Check
+                    type="switch"
+                    checked={!!row.original.is_available}
+                    onChange={() => toggleAvail(row.original)}
+                    label={<small className={row.original.is_available ? 'text-success' : 'text-muted'}>{row.original.is_available ? 'Yes' : 'No'}</small>}
+                />
+            ),
+            enableSorting: false,
+        }),
+        {
+            id: 'actions',
+            header: 'Actions',
+            cell: ({ row }) => (
+                <div className="d-flex gap-1">
+                    <button type="button" className="btn btn-default btn-sm btn-icon" onClick={() => openEdit(row.original)}><Icon icon="edit" className="fs-lg" /></button>
+                    <button type="button" className="btn btn-default btn-sm btn-icon" onClick={() => del(row.original)}><Icon icon="trash" className="fs-lg text-danger" /></button>
+                </div>
+            ),
+            enableSorting: false,
+        },
+    ], []);
+
+    const table = useReactTable({
+        data: items,
+        columns,
+        getCoreRowModel: getCoreRowModel(),
+    });
+
+    const totalItems = meta?.total ?? 0;
+    const totalPages = meta?.lastPage ?? 1;
+    const currentPage = meta?.currentPage ?? 1;
+    const pageSize = 20;
+    const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const end = Math.min(currentPage * pageSize, totalItems);
+
     return (
         <>
             <PageBreadcrumb title="Menu Items / Products" subtitle="Ecommerce" />
@@ -107,7 +226,7 @@ export default function MenuItemsPage() {
                 <CardHeader className="border-light">
                     <div className="d-flex flex-wrap gap-2 align-items-center justify-content-between">
                         <h5 className="card-title mb-0">Menu Items</h5>
-                        <div className="d-flex gap-2 flex-wrap">
+                        <div className="d-flex gap-2 flex-wrap align-items-center">
                             <Form.Select size="sm" style={{ width: 180 }} value={bizFilter} onChange={e => { setBizFilter(e.target.value); setCatFilter(''); }}>
                                 <option value="">All Businesses</option>
                                 {businesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -118,65 +237,49 @@ export default function MenuItemsPage() {
                                     {menuCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </Form.Select>
                             )}
-                            <button className="btn btn-primary btn-sm" onClick={openAdd}>
+                            <Button variant="outline-secondary" size="sm" as={Link} to="/apps/ecommerce/menu-categories">
+                                <Icon icon="tags" className="me-1" /> Menu Categories
+                            </Button>
+                            <Button variant="outline-secondary" size="sm" as={Link} to="/apps/ecommerce/menu-category-types">
+                                <Icon icon="circle" className="me-1" /> Menu Types
+                            </Button>
+                            <button type="button" className="btn btn-primary btn-sm" onClick={openAdd}>
                                 <Icon icon="plus" className="me-1" /> Add Item
                             </button>
                         </div>
                     </div>
                 </CardHeader>
 
-                {loading ? (
-                    <CardBody className="text-center py-5"><Spinner animation="border" size="sm" className="text-primary" /></CardBody>
-                ) : items.length === 0 ? (
-                    <CardBody className="text-center text-muted py-5">No menu items yet.</CardBody>
-                ) : (
-                    <div className="table-responsive">
-                        <table className="table table-hover align-middle mb-0">
-                            <thead className="table-light">
-                                <tr><th>Item</th><th>Business</th><th>Category</th><th>Price</th><th>Available</th><th>Actions</th></tr>
-                            </thead>
-                            <tbody>
-                                {items.map(item => (
-                                    <tr key={item.id}>
-                                        <td>
-                                            <div className="d-flex align-items-center gap-2">
-                                                {item.image
-                                                    ? <img src={item.image} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
-                                                    : <div style={{ width: 40, height: 40, background: '#f1f3f5', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon icon="photo" className="text-muted" /></div>}
-                                                <div>
-                                                    <strong>{item.name}</strong>
-                                                    {item.description && <small className="text-muted d-block" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</small>}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td><small>{item.business?.name ?? `#${item.business_id}`}</small></td>
-                                        <td><small className="text-muted">{item.menu_category?.name || '—'}</small></td>
-                                        <td><strong className="text-success">${parseFloat(item.price).toFixed(2)}</strong></td>
-                                        <td>
-                                            <Form.Check type="switch" checked={!!item.is_available} onChange={() => toggleAvail(item)}
-                                                label={<small className={item.is_available ? 'text-success' : 'text-muted'}>{item.is_available ? 'Yes' : 'No'}</small>} />
-                                        </td>
-                                        <td>
-                                            <div className="d-flex gap-1">
-                                                <button className="btn btn-default btn-sm btn-icon" onClick={() => openEdit(item)}><Icon icon="edit" className="fs-lg" /></button>
-                                                <button className="btn btn-default btn-sm btn-icon" onClick={() => del(item)}><Icon icon="trash" className="fs-lg text-danger" /></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-
-                {meta && meta.lastPage > 1 && (
-                    <CardBody className="d-flex justify-content-between align-items-center pt-3">
-                        <small className="text-muted">Page {meta.currentPage} of {meta.lastPage} ({meta.total} items)</small>
-                        <div className="d-flex gap-1">
-                            <button className="btn btn-light btn-sm" disabled={meta.currentPage <= 1} onClick={() => loadItems(meta.currentPage - 1)}>‹ Prev</button>
-                            <button className="btn btn-light btn-sm" disabled={meta.currentPage >= meta.lastPage} onClick={() => loadItems(meta.currentPage + 1)}>Next ›</button>
+                <CardBody className="p-0" style={{ position: 'relative', minHeight: 120 }}>
+                    {loading && (
+                        <div style={{
+                            position: 'absolute', inset: 0, zIndex: 10,
+                            background: 'rgba(255,255,255,0.65)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                            <Spinner />
                         </div>
-                    </CardBody>
+                    )}
+                    <DataTable table={table} emptyMessage={loading ? '' : 'No menu items yet.'} />
+                </CardBody>
+
+                {meta && totalPages > 1 && (
+                    <CardFooter className="border-0">
+                        <TablePagination
+                            totalItems={totalItems}
+                            start={start}
+                            end={end}
+                            itemsName="items"
+                            showInfo
+                            previousPage={() => loadItems(page - 1)}
+                            canPreviousPage={page > 1}
+                            pageCount={totalPages}
+                            pageIndex={page - 1}
+                            setPageIndex={(idx) => loadItems(idx + 1)}
+                            nextPage={() => loadItems(page + 1)}
+                            canNextPage={page < totalPages}
+                        />
+                    </CardFooter>
                 )}
             </Card>
 
@@ -193,9 +296,15 @@ export default function MenuItemsPage() {
                                 <Form.Label>Business <span className="text-danger">*</span></Form.Label>
                                 <Form.Select value={form.business_id}
                                     onChange={e => { setForm(f => ({ ...f, business_id: e.target.value, menu_category_id: '' })); loadMenuCats(e.target.value); }}
-                                    required disabled={!!editTarget}>
+                                    required>
                                     <option value="">— Select Business —</option>
-                                    {businesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                    {(() => {
+                                        const list = [...businesses];
+                                        if (editTarget?.business && !list.some(b => Number(b.id) === Number(editTarget.business_id))) {
+                                            list.unshift(editTarget.business);
+                                        }
+                                        return list.map(b => <option key={b.id} value={b.id}>{b.name}</option>);
+                                    })()}
                                 </Form.Select>
                             </Col>
                             {menuCats.length > 0 && (
@@ -207,6 +316,13 @@ export default function MenuItemsPage() {
                                     </Form.Select>
                                 </Col>
                             )}
+                            <Col xs={12}>
+                                <Form.Label>Menu Type (e.g. Kids, Vegetarian)</Form.Label>
+                                <Form.Select value={form.menu_category_type_id} onChange={e => setForm(f => ({ ...f, menu_category_type_id: e.target.value }))}>
+                                    <option value="">— None —</option>
+                                    {menuCategoryTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </Form.Select>
+                            </Col>
                             <Col xs={12}>
                                 <Form.Label>Item Name <span className="text-danger">*</span></Form.Label>
                                 <Form.Control value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Chicken Burger" required />

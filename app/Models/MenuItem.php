@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class MenuItem extends Model
 {
     protected $fillable = [
-        'business_id','menu_category_id','name','description',
+        'business_id','menu_category_id','menu_category_type_id','name','description',
         'price','image','is_available','sort_order',
     ];
 
@@ -22,5 +22,11 @@ class MenuItem extends Model
     public function menuCategory(): BelongsTo
     {
         return $this->belongsTo(MenuCategory::class);
+    }
+
+    /** Menu category type (e.g. Kids Cuisine, Vegetarian) — global list. */
+    public function menuCategoryType(): BelongsTo
+    {
+        return $this->belongsTo(MenuCategoryType::class, 'menu_category_type_id');
     }
 }

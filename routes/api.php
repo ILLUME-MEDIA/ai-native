@@ -8,9 +8,11 @@ use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
 use App\Http\Controllers\PublicApi\CaseStudyController;
-use App\Http\Controllers\Ecommerce\BusinessCategoryController;
 use App\Http\Controllers\Ecommerce\BusinessController;
+use App\Http\Controllers\Ecommerce\MuzzhubController;
+use App\Http\Controllers\Ecommerce\MuzzhubCategoryController;
 use App\Http\Controllers\Ecommerce\MenuController;
+use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
 use App\Http\Controllers\Ecommerce\CartController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
@@ -67,11 +69,22 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ── Ecommerce / Order Flow ───────────────────────────────────────────────
     Route::prefix('ecommerce')->group(function () {
-        // Business Categories
-        Route::get('categories',                    [BusinessCategoryController::class, 'index']);
-        Route::post('categories',                   [BusinessCategoryController::class, 'store']);
-        Route::patch('categories/{category}',       [BusinessCategoryController::class, 'update']);
-        Route::delete('categories/{category}',      [BusinessCategoryController::class, 'destroy']);
+        // Muzzhub listings
+        Route::get('muzzhub',                  [MuzzhubController::class, 'index']);
+        Route::post('muzzhub',                 [MuzzhubController::class, 'store']);
+        Route::get('muzzhub/{muzzhub}',        [MuzzhubController::class, 'show']);
+        Route::patch('muzzhub/{muzzhub}',      [MuzzhubController::class, 'update']);
+        Route::delete('muzzhub/{muzzhub}',     [MuzzhubController::class, 'destroy']);
+
+        // Muzzhub categories
+        Route::get('muzzhub-categories',                             [MuzzhubCategoryController::class, 'index']);
+        Route::post('muzzhub-categories',                            [MuzzhubCategoryController::class, 'store']);
+        Route::patch('muzzhub-categories/{muzzhubCategory}',         [MuzzhubCategoryController::class, 'update']);
+        Route::delete('muzzhub-categories/{muzzhubCategory}',        [MuzzhubCategoryController::class, 'destroy']);
+
+        // Menu by Muzzhub (uses linked Business for order flow)
+        Route::get('muzzhub/{muzzhub}/menu-categories',             [MenuController::class, 'muzzhubCategories']);
+        Route::get('muzzhub/{muzzhub}/menu-items',                  [MenuController::class, 'muzzhubItems']);
 
         // Businesses
         Route::get('businesses',                    [BusinessController::class, 'index']);
@@ -85,6 +98,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('businesses/{business}/menu-categories',              [MenuController::class, 'storeCategory']);
         Route::patch('businesses/{business}/menu-categories/{category}',  [MenuController::class, 'updateCategory']);
         Route::delete('businesses/{business}/menu-categories/{category}', [MenuController::class, 'destroyCategory']);
+
+        // Menu category types (e.g. Kids Cuisine, Vegetarian) — global list for menu items
+        Route::get('menu-category-types',                           [MenuCategoryTypeController::class, 'index']);
+        Route::post('menu-category-types',                          [MenuCategoryTypeController::class, 'store']);
+        Route::patch('menu-category-types/{menuCategoryType}',      [MenuCategoryTypeController::class, 'update']);
+        Route::delete('menu-category-types/{menuCategoryType}',     [MenuCategoryTypeController::class, 'destroy']);
 
         // Menu items
         Route::get('menu-items',                                    [MenuController::class, 'allItems']);

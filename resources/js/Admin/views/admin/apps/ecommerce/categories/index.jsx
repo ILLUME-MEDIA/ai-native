@@ -23,8 +23,9 @@ const COMMON_ICONS = [
     'chart-bar','chart-line','bell','info-circle','help','settings','world',
     'sun','moon','cloud','umbrella','bolt','flame','droplet','leaf',
 ];
+import { Link } from 'react-router';
 import {
-    Alert, Badge, Card, CardBody, CardHeader, Col,
+    Alert, Badge, Button, Card, CardBody, CardHeader, Col,
     Form, Modal, ModalBody, ModalFooter, ModalHeader, ModalTitle,
     Row, Spinner,
 } from 'react-bootstrap';
@@ -134,9 +135,16 @@ export default function CategoriesPage() {
             <Card>
                 <CardHeader className="border-light justify-content-between">
                     <h5 className="card-title mb-0">Business Categories</h5>
-                    <button className="btn btn-primary btn-sm" onClick={openAdd}>
-                        <Icon icon="plus" className="me-1" /> Add Category
-                    </button>
+                    <div className="d-flex gap-2">
+                        <Link to="/apps/ecommerce/muzzhub-categories">
+                            <Button variant="outline-secondary" size="sm">
+                                <Icon icon="tags" className="me-1" /> Muzzhub Categories
+                            </Button>
+                        </Link>
+                        <button type="button" className="btn btn-primary btn-sm" onClick={openAdd}>
+                            <Icon icon="plus" className="me-1" /> Add Category
+                        </button>
+                    </div>
                 </CardHeader>
                 {loading ? (
                     <CardBody className="text-center py-5"><Spinner animation="border" size="sm" className="text-primary" /></CardBody>

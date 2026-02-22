@@ -1,18 +1,91 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
+import DataTable from '@admin/components/table/DataTable';
 import axios from 'axios';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
+import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
-  Col, Row, Spinner, Table
+  Col, Placeholder, Row, Spinner,
 } from 'react-bootstrap';
 
-const TYPE_COLORS = { restaurant: 'danger', store: 'primary', service: 'success' };
-const STATUS_COLORS = {
-  pending: 'warning', confirmed: 'info', preparing: 'primary',
-  ready: 'success', out_for_delivery: 'info', delivered: 'success', cancelled: 'danger'
-};
+const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+const PRICE_MAP = { '1': '$', '2': '$$', '3': '$$$', '4': '$$$$' };
+
+const BOOL_FEATURES = [
+  { key: 'delivery',           label: 'Delivery' },
+  { key: 'catering',           label: 'Catering' },
+  { key: 'wifi',               label: 'WiFi' },
+  { key: 'kids_menu',          label: 'Kids Menu' },
+  { key: 'pray_space',         label: 'Prayer Space' },
+  { key: 'organic',            label: 'Organic' },
+  { key: 'wheelchair_access',  label: 'Wheelchair' },
+  { key: 'cash_only',          label: 'Cash Only' },
+  { key: 'pork',               label: 'Pork Served' },
+  { key: 'alcohol',            label: 'Alcohol' },
+  { key: 'featured',           label: 'Featured' },
+  { key: 'sponsored',          label: 'Sponsored' },
+  { key: 'is_online',          label: 'Online' },
+  { key: 'enable_order',       label: 'Orders Enabled' },
+  { key: 'enable_stripe',      label: 'Stripe Enabled' },
+];
+
+const TEXT_FEATURES = [
+  { key: 'shisha',          label: 'Shisha' },
+  { key: 'drive_thru',      label: 'Drive Thru' },
+  { key: 'reservations',    label: 'Reservations' },
+  { key: 'outdoor_seating', label: 'Outdoor Seating' },
+  { key: 'prayer',          label: 'Prayer Facilities' },
+  { key: 'restrooms',       label: 'Restrooms' },
+  { key: 'credit_cards',    label: 'Credit Cards' },
+  { key: 'amenities',       label: 'Amenities' },
+  { key: 'alcohol_options', label: 'Alcohol Options' },
+  { key: 'parking',         label: 'Parking' },
+  { key: 'transit',         label: 'Transit' },
+];
+
+// ── Stable column definitions outside component ──────────────────────────────
+const colH = createColumnHelper();
+const hoursColumns = [
+  colH.accessor('day', {
+    header: 'Day',
+    enableSorting: false,
+    cell: ({ getValue }) => <span className="text-capitalize fw-semibold">{getValue()}</span>,
+  }),
+  colH.accessor('open', {
+    header: 'Opens',
+    enableSorting: false,
+    cell: ({ getValue }) => getValue()
+      ? <span className="text-success fw-semibold">{getValue()}</span>
+      : <span className="text-muted">—</span>,
+  }),
+  colH.accessor('close', {
+    header: 'Closes',
+    enableSorting: false,
+    cell: ({ getValue }) => getValue()
+      ? <span className="text-danger fw-semibold">{getValue()}</span>
+      : <span className="text-muted">—</span>,
+  }),
+  colH.display({
+    id: 'status',
+    header: 'Status',
+    cell: ({ row }) => {
+      const { open, close } = row.original;
+      return (!open && !close)
+        ? <Badge bg="secondary">Closed</Badge>
+        : <Badge bg="success">Open</Badge>;
+    },
+  }),
+];
+// ─────────────────────────────────────────────────────────────────────────────
+
+const InfoRow = ({ icon, value }) => !value ? null : (
+  <div className="d-flex align-items-start gap-2 mb-2">
+    <Icon icon={icon} size={15} className="text-muted mt-1 flex-shrink-0" />
+    <small>{value}</small>
+  </div>
+);
 
 export default function SellerDetailsPage() {
   const [searchParams] = useSearchParams();
@@ -20,8 +93,6 @@ export default function SellerDetailsPage() {
   const bizId = searchParams.get('id');
 
   const [biz, setBiz]         = useState(null);
-  const [menuItems, setMenuItems] = useState([]);
-  const [orders, setOrders]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast]     = useState(null);
 
@@ -31,20 +102,29 @@ export default function SellerDetailsPage() {
   };
 
   useEffect(() => {
-    if (!bizId) return;
+    if (!bizId) { setLoading(false); return; }
     setLoading(true);
-    Promise.all([
-      axios.get(`/api/ecommerce/businesses/${bizId}`),
-      axios.get(`/api/ecommerce/businesses/${bizId}/menu-items`),
-      axios.get(`/api/ecommerce/orders?business_id=${bizId}&per_page=10`),
-    ]).then(([bizRes, menuRes, ordersRes]) => {
-      setBiz(bizRes.data);
-      setMenuItems(menuRes.data || []);
-      setOrders(ordersRes.data?.data || []);
-    }).catch(() => showToast('Failed to load business', 'danger'))
+    axios.get(`/api/ecommerce/muzzhub/${bizId}`)
+      .then(r => setBiz(r.data))
+      .catch(() => showToast('Failed to load business', 'danger'))
       .finally(() => setLoading(false));
   }, [bizId]);
 
+  // Stable memoized hours rows — always 7 rows (Mon–Sun)
+  const hoursData = useMemo(() => DAYS.map(day => ({
+    day,
+    open:  biz?.[`${day}_open`]  || '',
+    close: biz?.[`${day}_close`] || '',
+  })), [biz]);
+
+  // Table created once, updates when hoursData changes
+  const hoursTable = useReactTable({
+    data: hoursData,
+    columns: hoursColumns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  // No bizId at all
   if (!bizId) {
     return (
       <>
@@ -59,30 +139,16 @@ export default function SellerDetailsPage() {
     );
   }
 
-  if (loading) {
-    return (
-      <>
-        <PageBreadcrumb title="Seller Details" subtitle="Ecommerce" />
-        <div className="text-center py-5"><Spinner /> Loading...</div>
-      </>
-    );
-  }
-
-  if (!biz) {
-    return (
-      <>
-        <PageBreadcrumb title="Seller Details" subtitle="Ecommerce" />
-        <Alert variant="danger">Business not found.</Alert>
-      </>
-    );
-  }
-
-  const totalRevenue = orders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
-  const activeItems  = menuItems.filter(i => i.is_available).length;
+  const enabledFeatures = biz ? BOOL_FEATURES.filter(f => biz[f.key]) : [];
+  const textFeatures    = biz ? TEXT_FEATURES.filter(f => biz[f.key])  : [];
+  const hasHalal        = biz && (biz.compliance || biz.slaughter_method || biz.halal_authority || biz.halal_options);
+  const hasFeatures     = enabledFeatures.length > 0 || textFeatures.length > 0;
+  const hasOrder        = biz && (biz.order_online_link || biz.platforms || biz.booking);
+  const hasExtra        = biz && (biz.comments || biz.ownedBy || biz.capacity || biz.timezone);
 
   return (
     <>
-      <PageBreadcrumb title={biz.name} subtitle="Sellers" />
+      <PageBreadcrumb title={biz?.name || 'Seller Details'} subtitle="Sellers" />
 
       {toast && (
         <Alert variant={toast.type} className="position-fixed top-0 end-0 m-3 shadow" style={{ zIndex: 9999, minWidth: 260 }}>
@@ -90,188 +156,272 @@ export default function SellerDetailsPage() {
         </Alert>
       )}
 
-      <Row>
-        {/* Left: Contact Card */}
-        <Col xl={3}>
-          <Card className="sticky-top" style={{ top: 80 }}>
-            <CardBody>
-              {biz.cover_image && (
-                <img src={biz.cover_image} alt="cover" className="w-100 rounded mb-3" style={{ height: 100, objectFit: 'cover' }} />
-              )}
-              <div className="d-flex align-items-center gap-3 mb-3">
-                {biz.logo ? (
-                  <img src={biz.logo} alt={biz.name} style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 12 }} />
-                ) : (
-                  <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center" style={{ width: 56, height: 56 }}>
-                    <Icon name="store" size={26} className="text-primary" />
-                  </div>
+      {/* Full-page loading overlay — no unmount/remount */}
+      {loading && (
+        <div className="text-center py-5 d-flex align-items-center justify-content-center gap-2 text-muted">
+          <Spinner size="sm" /> Loading business...
+        </div>
+      )}
+
+      {!loading && !biz && (
+        <Alert variant="danger">Business not found.</Alert>
+      )}
+
+      {!loading && biz && (
+        <Row className="g-3">
+          {/* ── LEFT SIDEBAR ── */}
+          <Col xl={3} lg={4}>
+            <Card className="sticky-top" style={{ top: 80 }}>
+              <CardBody>
+                {biz.cover_image && (
+                  <img src={biz.cover_image} alt="cover" className="w-100 rounded mb-3"
+                    style={{ height: 110, objectFit: 'cover' }} />
                 )}
-                <div>
-                  <h5 className="mb-0 fw-bold">{biz.name}</h5>
-                  <Badge bg={TYPE_COLORS[biz.category?.type] || 'secondary'} className="mt-1">
-                    {biz.category?.name || '—'}
+
+                <div className="d-flex align-items-center gap-3 mb-3">
+                  {biz.logo ? (
+                    <img src={biz.logo} alt={biz.name}
+                      style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 12 }} />
+                  ) : (
+                    <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center"
+                      style={{ width: 60, height: 60 }}>
+                      <Icon icon="building-store" size={28} className="text-primary" />
+                    </div>
+                  )}
+                  <div>
+                    <h5 className="mb-1 fw-bold">{biz.name}</h5>
+                    <div className="d-flex flex-wrap gap-1">
+                      {biz.category && (
+                        <span className="badge rounded-pill"
+                          style={{ background: biz.category.color || '#6366f1', fontSize: 11 }}>
+                          {biz.category.name}
+                        </span>
+                      )}
+                      {biz.type && <Badge bg="secondary" className="text-capitalize">{biz.type}</Badge>}
+                      {biz.price && <Badge bg="light" text="dark">{PRICE_MAP[biz.price] || biz.price}</Badge>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="d-flex flex-wrap gap-1 mb-3">
+                  <Badge bg={biz.is_active ? 'success' : 'secondary'}>
+                    {biz.is_active ? 'Active' : 'Inactive'}
                   </Badge>
+                  {biz.delivery  && <Badge bg="info">Delivery</Badge>}
+                  {biz.featured  && <Badge bg="warning" text="dark">Featured</Badge>}
+                  {biz.sponsored && <Badge bg="primary">Sponsored</Badge>}
+                  {biz.is_online && <Badge bg="success">Online</Badge>}
                 </div>
-              </div>
 
+                <InfoRow icon="map-pin" value={[biz.address, biz.city, biz.state, biz.zip, biz.country].filter(Boolean).join(', ')} />
+                <InfoRow icon="phone"   value={biz.phone || biz.mobile_phone} />
+                <InfoRow icon="mail"    value={biz.email} />
+                <InfoRow icon="world"   value={biz.website} />
+                {biz.cuisine && <InfoRow icon="tools-kitchen-2" value={biz.cuisine} />}
+
+                {biz.description && (
+                  <p className="text-muted small mt-2 border-top pt-2 mb-2">{biz.description}</p>
+                )}
+
+                <div className="border-top pt-3 mt-2 d-flex gap-2">
+                  <Button variant="outline-secondary" size="sm" className="flex-grow-1"
+                    onClick={() => navigate('/apps/ecommerce/sellers')}>
+                    <Icon icon="arrow-left" size={14} className="me-1" />
+                    Back
+                  </Button>
+                  <Button variant="outline-primary" size="sm" className="flex-grow-1"
+                    onClick={() => navigate('/apps/ecommerce/sellers')}>
+                    <Icon icon="pencil" size={14} className="me-1" />
+                    Edit
+                  </Button>
+                </div>
+              </CardBody>
+            </Card>
+          </Col>
+
+          {/* ── RIGHT CONTENT ── */}
+          <Col xl={9} lg={8}>
+
+            {/* Stats row */}
+            <Row className="g-3 mb-3">
               {[
-                { icon: 'map-pin', label: [biz.address, biz.city, biz.state].filter(Boolean).join(', ') || '—' },
-                { icon: 'phone', label: biz.phone || '—' },
-                { icon: 'mail', label: biz.email || '—' },
-              ].map(({ icon, label }) => (
-                <div key={icon} className="d-flex align-items-start gap-2 mb-2">
-                  <Icon name={icon} size={15} className="text-muted mt-1 flex-shrink-0" />
-                  <small className="text-muted">{label}</small>
-                </div>
+                { label: 'Rating',        value: biz.rating        || '—', icon: 'star',           color: 'warning' },
+                { label: 'Reviews',       value: biz.review_count  || '0', icon: 'message-circle',  color: 'info' },
+                { label: 'Followers',     value: biz.followers     || '0', icon: 'users',           color: 'primary' },
+                { label: 'Total Ratings', value: biz.total_ratings || '0', icon: 'chart-bar',       color: 'success' },
+              ].map(stat => (
+                <Col key={stat.label} sm={6} xxl={3}>
+                  <Card>
+                    <CardBody className="d-flex align-items-center gap-3 py-3">
+                      <div className={`bg-${stat.color} bg-opacity-10 rounded p-2`}>
+                        <Icon icon={stat.icon} size={22} className={`text-${stat.color}`} />
+                      </div>
+                      <div>
+                        <h4 className="mb-0 fw-bold">{stat.value}</h4>
+                        <small className="text-muted">{stat.label}</small>
+                      </div>
+                    </CardBody>
+                  </Card>
+                </Col>
               ))}
+            </Row>
 
-              {biz.description && (
-                <p className="text-muted small mt-2 border-top pt-2">{biz.description}</p>
-              )}
+            {/* Hours — DataTable (always rendered, stable) */}
+            <Card className="mb-3">
+              <CardHeader>
+                <CardTitle as="h6" className="mb-0">
+                  <Icon icon="clock" size={16} className="me-2 text-info" />
+                  Business Hours
+                </CardTitle>
+              </CardHeader>
+              <DataTable table={hoursTable} emptyMessage="No hours set." />
+            </Card>
 
-              <div className="mt-2">
-                <Badge bg={biz.is_active ? 'success' : 'secondary'}>
-                  {biz.is_active ? 'Active' : 'Inactive'}
-                </Badge>
-              </div>
-
-              <div className="mt-3 border-top pt-3">
-                <Button variant="outline-secondary" size="sm" className="w-100" onClick={() => navigate('/apps/ecommerce/sellers')}>
-                  <Icon name="arrow-left" size={14} className="me-1" />
-                  Back to Sellers
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </Col>
-
-        {/* Right: Stats + Menu + Orders */}
-        <Col xl={9}>
-          <Row className="g-3 mb-3">
-            {[
-              { label: 'Menu Items', value: menuItems.length, icon: 'clipboard-list', color: 'primary' },
-              { label: 'Available', value: activeItems, icon: 'circle-check', color: 'success' },
-              { label: 'Recent Orders', value: orders.length, icon: 'shopping-bag', color: 'warning' },
-              { label: 'Revenue', value: `$${totalRevenue.toFixed(2)}`, icon: 'currency-dollar', color: 'info' },
-            ].map(stat => (
-              <Col key={stat.label} sm={6} xxl={3}>
-                <Card>
-                  <CardBody className="d-flex align-items-center gap-3">
-                    <div className={`bg-${stat.color} bg-opacity-10 rounded p-2`}>
-                      <Icon name={stat.icon} size={22} className={`text-${stat.color}`} />
-                    </div>
-                    <div>
-                      <h4 className="mb-0 fw-bold">{stat.value}</h4>
-                      <small className="text-muted">{stat.label}</small>
-                    </div>
-                  </CardBody>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-
-          {/* Menu Items */}
-          <Card className="mb-3">
-            <CardHeader className="d-flex justify-content-between align-items-center">
-              <CardTitle as="h5" className="mb-0">
-                <Icon name="clipboard-list" size={16} className="me-2" />
-                Menu / Products
-              </CardTitle>
-              <small className="text-muted">{menuItems.length} total</small>
-            </CardHeader>
-            <CardBody className="p-0">
-              {menuItems.length === 0 ? (
-                <p className="text-muted text-center py-4">No menu items yet.</p>
-              ) : (
-                <Table responsive hover className="mb-0">
-                  <thead className="table-light">
-                    <tr>
-                      <th>Item</th>
-                      <th>Category</th>
-                      <th>Price</th>
-                      <th>Available</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {menuItems.map(item => (
-                      <tr key={item.id}>
-                        <td>
-                          <div className="d-flex align-items-center gap-2">
-                            {item.image && (
-                              <img src={item.image} alt={item.name} style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6 }} />
-                            )}
-                            <div>
-                              <div className="fw-semibold">{item.name}</div>
-                              {item.description && <small className="text-muted">{item.description}</small>}
-                            </div>
-                          </div>
-                        </td>
-                        <td><small className="text-muted">{item.menu_category?.name || '—'}</small></td>
-                        <td className="fw-semibold text-success">${parseFloat(item.price).toFixed(2)}</td>
-                        <td>
-                          <Badge bg={item.is_available ? 'success' : 'secondary'}>
-                            {item.is_available ? 'Yes' : 'No'}
-                          </Badge>
-                        </td>
-                      </tr>
+            {/* Halal Info */}
+            {hasHalal && (
+              <Card className="mb-3">
+                <CardHeader>
+                  <CardTitle as="h6" className="mb-0">
+                    <Icon icon="leaf" size={16} className="me-2 text-success" />
+                    Halal Information
+                  </CardTitle>
+                </CardHeader>
+                <CardBody>
+                  <Row className="g-3">
+                    {[
+                      { label: 'Compliance',       val: biz.compliance },
+                      { label: 'Slaughter Method', val: biz.slaughter_method },
+                      { label: 'Halal Authority',  val: biz.halal_authority },
+                      { label: 'Halal Chain',      val: biz.halal_chain },
+                    ].filter(r => r.val).map(r => (
+                      <Col key={r.label} md={6}>
+                        <small className="text-muted d-block">{r.label}</small>
+                        <span className="fw-semibold">{r.val}</span>
+                      </Col>
                     ))}
-                  </tbody>
-                </Table>
-              )}
-            </CardBody>
-          </Card>
+                    {biz.halal_options && (
+                      <Col xs={12}>
+                        <small className="text-muted d-block">Halal Options</small>
+                        <span>{biz.halal_options}</span>
+                      </Col>
+                    )}
+                    {biz.halal_info && (
+                      <Col xs={12}>
+                        <small className="text-muted d-block">Halal Info</small>
+                        <span>{biz.halal_info}</span>
+                      </Col>
+                    )}
+                    {biz.description_halal && (
+                      <Col xs={12}>
+                        <small className="text-muted d-block">Halal Description</small>
+                        <p className="mb-0">{biz.description_halal}</p>
+                      </Col>
+                    )}
+                  </Row>
+                </CardBody>
+              </Card>
+            )}
 
-          {/* Recent Orders */}
-          <Card>
-            <CardHeader>
-              <CardTitle as="h5" className="mb-0">
-                <Icon name="shopping-bag" size={16} className="me-2" />
-                Recent Orders
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="p-0">
-              {orders.length === 0 ? (
-                <p className="text-muted text-center py-4">No orders yet.</p>
-              ) : (
-                <Table responsive hover className="mb-0">
-                  <thead className="table-light">
-                    <tr>
-                      <th>Order #</th>
-                      <th>Customer</th>
-                      <th>Total</th>
-                      <th>Type</th>
-                      <th>Vendor</th>
-                      <th>Status</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map(order => (
-                      <tr key={order.id}>
-                        <td><span className="fw-semibold">{order.order_number}</span></td>
-                        <td>{order.customer_name || '—'}</td>
-                        <td className="fw-semibold">${parseFloat(order.total).toFixed(2)}</td>
-                        <td><Badge bg="secondary" className="text-capitalize">{order.order_type}</Badge></td>
-                        <td>
-                          {order.delivery_vendor
-                            ? <Badge bg="info">{order.delivery_vendor}</Badge>
-                            : <small className="text-muted">—</small>}
-                        </td>
-                        <td>
-                          <Badge bg={STATUS_COLORS[order.status] || 'secondary'} className="text-capitalize">
-                            {order.status?.replace(/_/g, ' ')}
-                          </Badge>
-                        </td>
-                        <td><small className="text-muted">{new Date(order.created_at).toLocaleDateString()}</small></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              )}
-            </CardBody>
-          </Card>
-        </Col>
-      </Row>
+            {/* Features */}
+            {hasFeatures && (
+              <Card className="mb-3">
+                <CardHeader>
+                  <CardTitle as="h6" className="mb-0">
+                    <Icon icon="sparkles" size={16} className="me-2 text-primary" />
+                    Features & Amenities
+                  </CardTitle>
+                </CardHeader>
+                <CardBody>
+                  {enabledFeatures.length > 0 && (
+                    <div className="d-flex flex-wrap gap-2 mb-3">
+                      {enabledFeatures.map(f => (
+                        <Badge key={f.key} bg="success" className="fw-normal">
+                          <Icon icon="check" size={11} className="me-1" />
+                          {f.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {textFeatures.length > 0 && (
+                    <Row className="g-2">
+                      {textFeatures.map(f => (
+                        <Col key={f.key} sm={6} md={4}>
+                          <small className="text-muted d-block">{f.label}</small>
+                          <span className="small">{biz[f.key]}</span>
+                        </Col>
+                      ))}
+                    </Row>
+                  )}
+                </CardBody>
+              </Card>
+            )}
+
+            {/* Order & Booking */}
+            {hasOrder && (
+              <Card className="mb-3">
+                <CardHeader>
+                  <CardTitle as="h6" className="mb-0">
+                    <Icon icon="shopping-bag" size={16} className="me-2 text-warning" />
+                    Order & Booking
+                  </CardTitle>
+                </CardHeader>
+                <CardBody>
+                  <Row className="g-2">
+                    {biz.order_online_link && (
+                      <Col xs={12}>
+                        <small className="text-muted d-block">Order Online</small>
+                        <a href={biz.order_online_link} target="_blank" rel="noreferrer" className="small">
+                          {biz.order_online_link}
+                        </a>
+                      </Col>
+                    )}
+                    {biz.platforms && (
+                      <Col md={6}>
+                        <small className="text-muted d-block">Platforms</small>
+                        <span className="small">{biz.platforms}</span>
+                      </Col>
+                    )}
+                    {biz.booking && (
+                      <Col md={6}>
+                        <small className="text-muted d-block">Booking</small>
+                        <span className="small">{biz.booking}</span>
+                      </Col>
+                    )}
+                    {biz.delivery_fee_discount && (
+                      <Col md={6}>
+                        <small className="text-muted d-block">Delivery Fee Discount</small>
+                        <span className="small">{biz.delivery_fee_discount}</span>
+                      </Col>
+                    )}
+                  </Row>
+                </CardBody>
+              </Card>
+            )}
+
+            {/* Additional Info */}
+            {hasExtra && (
+              <Card>
+                <CardHeader>
+                  <CardTitle as="h6" className="mb-0">
+                    <Icon icon="info-circle" size={16} className="me-2 text-secondary" />
+                    Additional Info
+                  </CardTitle>
+                </CardHeader>
+                <CardBody>
+                  <Row className="g-2">
+                    {biz.ownedBy  && <Col md={6}><small className="text-muted d-block">Owned By</small><span>{biz.ownedBy}</span></Col>}
+                    {biz.capacity && <Col md={6}><small className="text-muted d-block">Capacity</small><span>{biz.capacity}</span></Col>}
+                    {biz.timezone && <Col md={6}><small className="text-muted d-block">Timezone</small><span>{biz.timezone}</span></Col>}
+                    {biz.kitchen  && <Col md={6}><small className="text-muted d-block">Kitchen</small><span>{biz.kitchen}</span></Col>}
+                    {biz.comments && <Col xs={12}><small className="text-muted d-block">Comments</small><p className="mb-0 small">{biz.comments}</p></Col>}
+                  </Row>
+                </CardBody>
+              </Card>
+            )}
+
+          </Col>
+        </Row>
+      )}
     </>
   );
 }

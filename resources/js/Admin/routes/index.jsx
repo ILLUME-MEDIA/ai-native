@@ -102,6 +102,12 @@ export const routes = [
     path: '/apps/ecommerce/categories',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/categories'))
   }, {
+    path: '/apps/ecommerce/menu-categories',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/menu-categories'))
+  }, {
+    path: '/apps/ecommerce/menu-category-types',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/menu-category-types'))
+  }, {
     path: '/apps/ecommerce/checkout',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/checkout'))
   }, {
@@ -158,6 +164,9 @@ export const routes = [
   }, {
     path: '/apps/ecommerce/registrations',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/registrations'))
+  }, {
+    path: '/apps/ecommerce/muzzhub-categories',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/muzzhub-categories'))
   }, {
     path: '/apps/ecommerce/settings',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/settings'))

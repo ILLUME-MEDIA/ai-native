@@ -5,6 +5,29 @@ info:
   description: |
     Complete API for the MyApps platform.
 
+    ## Order flow (Menu & Muzzhub)
+    Menu and orders are tied to **Business**. Muzzhub sellers can be linked to a Business via `business_id` on the Muzzhub record. Then:
+    - **Menu**: Use `GET /ecommerce/muzzhub/{id}/menu-categories` and `.../menu-items` (they use the linked Business), or manage menu via `GET /ecommerce/businesses/{businessId}/menu-*`.
+    - **Cart**: Add items by `menu_item_id`; cart stores `business_id` from the menu item.
+    - **Place order**: Send `business_id` (from Muzzhub's linked business or the Business directly). Order and OrderItems reference that business and its menu items.
+
+    ## Add to cart flow (testable)
+    1. **Get menu items** — `GET /ecommerce/menu-items?business_id={id}` or `GET /ecommerce/businesses/{businessId}/menu-items` to list items. Note a `menu_item_id` and the item's `business_id`.
+    2. **Optional: same session** — Send header `X-Session-Id: <uuid>` on all cart/order requests to keep the same cart (e.g. from a mobile app or SPA). If omitted, server uses cookie session or generates a new UUID.
+    3. **Add to cart** — `POST /ecommerce/cart` with body `{ "menu_item_id": <id>, "quantity": 1, "notes": "" }`. Returns the cart row with `menu_item` and `business`.
+    4. **Get cart** — `GET /ecommerce/cart` (same `X-Session-Id` if used). Response: `{ "items": [...], "subtotal": 12.99, "count": 1 }`.
+    5. **Place order** — `POST /ecommerce/orders` with `{ "business_id": <id> }` (must match the business of the items you want to checkout). Cart items for that business are converted to an order and removed from cart.
+
+    ## Query filters (quick reference)
+    | Endpoint | Filters |
+    |----------|---------|
+    | **Restaurants (Businesses)** | `search`, `active_only`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
+    | **Muzzhub (Sellers)** | `search`, `active_only`, `category_id`, `type`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
+    | **Menu items (global)** | `business_id`, `category_id` (menu_category_id), `search` (name/description), `is_available`, `page`, `per_page` |
+    | **Menu by business** | `category_id` (for items only) |
+    | **Menu by Muzzhub** | `category_id` (for items only) |
+    | **Muzzhub categories** | `active_only`, `search`, `all` (no pagination), `per_page` |
+
     ## Authentication
 
     Two methods are supported:
@@ -43,6 +66,8 @@ tags:
     description: Business CRUD (admin)
   - name: Business Categories
     description: Category management
+  - name: Muzzhub
+    description: Muzzhub sellers/listings and categories; link business_id for menu and order flow
   - name: Menu
     description: Menu categories and items
   - name: Cart
@@ -711,26 +736,56 @@ paths:
         "409":
           description: Already rejected
 
-  # ── BUSINESSES ────────────────────────────────────────────────────────────
+  # ── MUZZHUB (Sellers / Listings) ──────────────────────────────────────────
 
-  /ecommerce/businesses:
+  /ecommerce/muzzhub:
     get:
       tags:
-        - Businesses
-      summary: List businesses
+        - Muzzhub
+      summary: List Muzzhub sellers (restaurants)
+      description: |
+        **Query filters** — all optional; combine to fetch exactly what you need:
       parameters:
         - name: search
           in: query
           schema:
             type: string
+          description: Search in seller name (partial match)
         - name: category_id
           in: query
           schema:
             type: integer
-        - name: is_active
+          description: Muzzhub category ID (e.g. from GET /ecommerce/muzzhub-categories)
+        - name: active_only
           in: query
           schema:
             type: boolean
+          description: If true, only is_active = true
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Filter by type (e.g. restaurant, cafe)
+        - name: city
+          in: query
+          schema:
+            type: string
+          description: City (partial match)
+        - name: country
+          in: query
+          schema:
+            type: string
+          description: Country code (e.g. us)
+        - name: delivery
+          in: query
+          schema:
+            type: boolean
+          description: If true, only sellers with delivery = true
+        - name: featured
+          in: query
+          schema:
+            type: boolean
+          description: If true, only featured sellers
         - name: page
           in: query
           schema:
@@ -740,7 +795,284 @@ paths:
           in: query
           schema:
             type: integer
+            default: 15
+      responses:
+        "200":
+          description: Paginated Muzzhub listings (category and business relation eager-loaded)
+    post:
+      tags:
+        - Muzzhub
+      summary: Create Muzzhub listing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                category_id:
+                  type: integer
+                  nullable: true
+                business_id:
+                  type: integer
+                  nullable: true
+                  description: Link to Business for menu and order flow
+                slug:
+                  type: string
+                type:
+                  type: string
+                cuisine:
+                  type: string
+                description:
+                  type: string
+                address:
+                  type: string
+                city:
+                  type: string
+                state:
+                  type: string
+                zip:
+                  type: string
+                country:
+                  type: string
+                phone:
+                  type: string
+                email:
+                  type: string
+                website:
+                  type: string
+                logo:
+                  type: string
+                cover_image:
+                  type: string
+                is_active:
+                  type: boolean
+                  default: true
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/muzzhub/{id}:
+    get:
+      tags:
+        - Muzzhub
+      summary: Get Muzzhub seller detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Muzzhub record with category and business
+    patch:
+      tags:
+        - Muzzhub
+      summary: Update Muzzhub listing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                category_id:
+                  type: integer
+                  nullable: true
+                business_id:
+                  type: integer
+                  nullable: true
+                slug:
+                  type: string
+                type:
+                  type: string
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Muzzhub
+      summary: Delete (soft) Muzzhub listing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  /ecommerce/muzzhub-categories:
+    get:
+      tags:
+        - Muzzhub
+      summary: List Muzzhub categories
+      description: |
+        **Query filters** — for dropdowns use `all=1` to get full list without pagination.
+      parameters:
+        - name: active_only
+          in: query
+          schema:
+            type: boolean
+          description: If true, only is_active categories
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in category name
+        - name: all
+          in: query
+          schema:
+            type: boolean
+          description: If 1, return all (no pagination) — ideal for filter dropdowns
+        - name: per_page
+          in: query
+          schema:
+            type: integer
             default: 20
+      responses:
+        "200":
+          description: List or paginated categories
+    post:
+      tags:
+        - Muzzhub
+      summary: Create Muzzhub category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                icon:
+                  type: string
+                color:
+                  type: string
+                is_active:
+                  type: boolean
+      responses:
+        "201":
+          description: Created
+
+  /ecommerce/muzzhub-categories/{id}:
+    patch:
+      tags:
+        - Muzzhub
+      summary: Update Muzzhub category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                icon:
+                  type: string
+                color:
+                  type: string
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Muzzhub
+      summary: Delete (soft) Muzzhub category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── BUSINESSES ────────────────────────────────────────────────────────────
+
+  /ecommerce/businesses:
+    get:
+      tags:
+        - Businesses
+      summary: List businesses (restaurants)
+      description: |
+        **Query filters** — all optional; combine for narrow results:
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in business name (partial match)
+        - name: active_only
+          in: query
+          schema:
+            type: boolean
+          description: If true, only return is_active = true
+        - name: city
+          in: query
+          schema:
+            type: string
+          description: Filter by city (partial match)
+        - name: country
+          in: query
+          schema:
+            type: string
+          description: Filter by country code (e.g. US)
+        - name: delivery
+          in: query
+          schema:
+            type: boolean
+          description: If true, only businesses with delivery = true
+        - name: featured
+          in: query
+          schema:
+            type: boolean
+          description: If true, only featured businesses
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
       responses:
         "200":
           description: Paginated businesses
@@ -856,11 +1188,101 @@ paths:
 
   # ── MENU ──────────────────────────────────────────────────────────────────
 
+  /ecommerce/menu-items:
+    get:
+      tags:
+        - Menu
+      summary: List all menu items (with filters)
+      description: |
+        **Query filters** — use to fetch by restaurant, category, availability or search:
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by business (restaurant) ID
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by menu_category_id (e.g. Starters, Mains)
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in item name and description (partial match)
+        - name: is_available
+          in: query
+          schema:
+            type: boolean
+          description: If true/false, filter by availability
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: Paginated menu items with business and menuCategory
+
+  /ecommerce/muzzhub/{id}/menu-categories:
+    get:
+      tags:
+        - Menu
+        - Muzzhub
+      summary: List menu categories for a Muzzhub seller
+      description: |
+        Uses the Muzzhub's linked Business. Returns 404 if no business_id is set.
+        Link a Business to the Muzzhub listing to enable menu and order flow.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Muzzhub listing ID
+      responses:
+        "200":
+          description: List of menu categories with item counts
+        "404":
+          description: No business linked for this seller
+
+  /ecommerce/muzzhub/{id}/menu-items:
+    get:
+      tags:
+        - Menu
+        - Muzzhub
+      summary: List menu items for a Muzzhub seller
+      description: Uses the Muzzhub's linked Business. 404 if no business linked.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Muzzhub listing ID
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+            description: menu_category_id filter
+      responses:
+        "200":
+          description: List of menu items with menuCategory
+        "404":
+          description: No business linked for this seller
+
   /ecommerce/businesses/{businessId}/menu-categories:
     get:
       tags:
         - Menu
       summary: List menu categories for a business
+      description: Returns categories with menu item counts. No query filters (path businessId only).
       parameters:
         - name: businessId
           in: path
@@ -869,7 +1291,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: List of menu categories
+          description: List of menu categories (withCount menuItems)
     post:
       tags:
         - Menu
@@ -901,15 +1323,21 @@ paths:
       tags:
         - Menu
       summary: List menu items for a business
+      description: **Filter** — optional `category_id` (menu_category_id) to filter by category.
       parameters:
         - name: businessId
           in: path
           required: true
           schema:
             type: integer
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by menu_category_id (optional)
       responses:
         "200":
-          description: List of menu items
+          description: List of menu items with menuCategory
     post:
       tags:
         - Menu
@@ -945,24 +1373,44 @@ paths:
                 is_available:
                   type: boolean
                   default: true
+                menu_category_type_id:
+                  type: integer
+                  nullable: true
+                  description: Optional type (e.g. Kids Cuisine) from GET /ecommerce/menu-category-types
       responses:
         "201":
           description: Created
 
-  # ── CART ──────────────────────────────────────────────────────────────────
+  # ── MENU CATEGORY TYPES ────────────────────────────────────────────────────
 
-  /ecommerce/cart:
+  /ecommerce/menu-category-types:
     get:
       tags:
-        - Cart
-      summary: Get cart items
+        - Menu
+      summary: List menu category types (Kids Cuisine, Vegetarian, etc.)
+      description: Global types for menu items. Use `?all=1&active_only=1` for dropdowns.
+      parameters:
+        - name: all
+          in: query
+          schema:
+            type: boolean
+          description: If true, return all (no pagination)
+        - name: active_only
+          in: query
+          schema:
+            type: boolean
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
       responses:
         "200":
-          description: Cart items
+          description: List or paginated menu category types
     post:
       tags:
-        - Cart
-      summary: Add item to cart
+        - Menu
+      summary: Create menu category type
       requestBody:
         required: true
         content:
@@ -970,25 +1418,31 @@ paths:
             schema:
               type: object
               required:
-                - menu_item_id
-                - quantity
+                - name
               properties:
-                menu_item_id:
+                name:
+                  type: string
+                  example: Kids Cuisine
+                slug:
+                  type: string
+                description:
+                  type: string
+                sort_order:
                   type: integer
-                quantity:
-                  type: integer
-                  default: 1
+                is_active:
+                  type: boolean
+                  default: true
       responses:
         "201":
-          description: Added to cart
+          description: Created
 
-  /ecommerce/cart/{cartItemId}:
+  /ecommerce/menu-category-types/{id}:
     patch:
       tags:
-        - Cart
-      summary: Update cart item quantity
+        - Menu
+      summary: Update menu category type
       parameters:
-        - name: cartItemId
+        - name: id
           in: path
           required: true
           schema:
@@ -999,17 +1453,25 @@ paths:
             schema:
               type: object
               properties:
-                quantity:
+                name:
+                  type: string
+                slug:
+                  type: string
+                description:
+                  type: string
+                sort_order:
                   type: integer
+                is_active:
+                  type: boolean
       responses:
         "200":
           description: Updated
     delete:
       tags:
-        - Cart
-      summary: Remove cart item
+        - Menu
+      summary: Delete menu category type
       parameters:
-        - name: cartItemId
+        - name: id
           in: path
           required: true
           schema:
@@ -1018,11 +1480,175 @@ paths:
         "200":
           $ref: "#/components/responses/MessageOk"
 
+  # ── CART ──────────────────────────────────────────────────────────────────
+
+  /ecommerce/cart:
+    get:
+      tags:
+        - Cart
+      summary: Get cart items
+      description: |
+        Returns all cart items for the current session. Use the same `X-Session-Id` header as when adding items to keep the same cart.
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Session identifier (e.g. UUID). If omitted, uses cookie session or generates one.
+      responses:
+        "200":
+          description: Cart with items, subtotal and count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        session_id:
+                          type: string
+                        business_id:
+                          type: integer
+                        menu_item_id:
+                          type: integer
+                        quantity:
+                          type: integer
+                        notes:
+                          type: string
+                        menu_item:
+                          type: object
+                          description: Loaded menu item (name, price, etc.)
+                        business:
+                          type: object
+                  subtotal:
+                    type: number
+                    description: Sum of (price * quantity) for all items
+                  count:
+                    type: integer
+                    description: Number of cart rows
+    post:
+      tags:
+        - Cart
+      summary: Add item to cart
+      description: |
+        Add a menu item to the cart. Use `menu_item_id` from `GET /ecommerce/menu-items` or `GET /ecommerce/businesses/{id}/menu-items`. Same item + session updates quantity (updateOrCreate). Send `X-Session-Id` to tie to a session.
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - menu_item_id
+              properties:
+                menu_item_id:
+                  type: integer
+                  description: ID from menu_items (required)
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 99
+                  default: 1
+                notes:
+                  type: string
+                  maxLength: 300
+            example:
+              menu_item_id: 1
+              quantity: 2
+              notes: "No onions"
+      responses:
+        "201":
+          description: Cart row created/updated with menu_item and business
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  session_id:
+                    type: string
+                  business_id:
+                    type: integer
+                  menu_item_id:
+                    type: integer
+                  quantity:
+                    type: integer
+                  notes:
+                    type: string
+                  menu_item:
+                    type: object
+                  business:
+                    type: object
+        "422":
+          description: Validation error (e.g. menu_item_id not found)
+
+  /ecommerce/cart/{cartItem}:
+    patch:
+      tags:
+        - Cart
+      summary: Update cart item quantity or notes
+      parameters:
+        - name: cartItem
+          in: path
+          required: true
+          schema:
+            type: integer
+            description: Cart item ID (from GET /ecommerce/cart response)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - quantity
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 99
+                notes:
+                  type: string
+                  maxLength: 300
+      responses:
+        "200":
+          description: Cart item updated
+    delete:
+      tags:
+        - Cart
+      summary: Remove one item from cart
+      parameters:
+        - name: cartItem
+          in: path
+          required: true
+          schema:
+            type: integer
+            description: Cart item ID
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
   /ecommerce/cart/clear:
     delete:
       tags:
         - Cart
-      summary: Clear entire cart
+      summary: Clear entire cart for current session
+      description: Deletes all cart rows for the session (same `X-Session-Id` or cookie).
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
@@ -1044,23 +1670,45 @@ paths:
               - confirmed
               - preparing
               - ready
+              - out_for_delivery
               - delivered
               - cancelled
         - name: business_id
           in: query
           schema:
             type: integer
+        - name: session_id
+          in: query
+          schema:
+            type: string
+          description: Filter by session (e.g. customer's orders)
         - name: page
           in: query
           schema:
             type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
       responses:
         "200":
-          description: Paginated orders
+          description: Paginated orders (each with business, items)
     post:
       tags:
         - Orders
       summary: Place an order
+      description: |
+        Converts cart items for the given `business_id` into an order. Use the same `X-Session-Id` header as used for cart so the server finds your cart items. Use Muzzhub's `business_id` when ordering from a Muzzhub seller.
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Must match the session used when adding to cart
       requestBody:
         required: true
         content:
@@ -1072,13 +1720,39 @@ paths:
               properties:
                 business_id:
                   type: integer
+                  description: Business (or Muzzhub.business_id) for this order
+                customer_name:
+                  type: string
+                customer_phone:
+                  type: string
+                customer_email:
+                  type: string
+                  format: email
                 delivery_address:
                   type: string
                 notes:
                   type: string
+                order_type:
+                  type: string
+                  enum:
+                    - delivery
+                    - pickup
+                    - dine_in
+                item_delivery_type:
+                  type: string
+                  enum:
+                    - pickup
+                    - delivery
+                delivery_vendor:
+                  type: string
+                tax_rate:
+                  type: number
+                  description: Tax rate percentage (e.g. 10 for 10%)
       responses:
         "201":
-          description: Order placed
+          description: Order placed (cart for this business cleared)
+        "422":
+          description: Cart is empty for this business
 
   /ecommerce/orders/{id}:
     get:
@@ -1114,6 +1788,7 @@ paths:
                     - confirmed
                     - preparing
                     - ready
+                    - out_for_delivery
                     - delivered
                     - cancelled
       responses:

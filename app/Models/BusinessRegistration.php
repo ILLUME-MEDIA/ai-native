@@ -8,7 +8,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class BusinessRegistration extends Model
 {
     protected $fillable = [
-        'business_name', 'address', 'address_2', 'city', 'state', 'zip', 'country',
+        'business_name', 'business_type', 'cuisine', 'business_description',
+        'address', 'address_2', 'city', 'state', 'zip', 'country',
         'contact_name', 'contact_email', 'contact_phone', 'website_url', 'menu_url',
         'monday_open', 'monday_close', 'tuesday_open', 'tuesday_close',
         'wednesday_open', 'wednesday_close', 'thursday_open', 'thursday_close',

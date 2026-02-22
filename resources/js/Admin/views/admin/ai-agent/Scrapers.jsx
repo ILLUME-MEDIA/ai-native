@@ -165,6 +165,7 @@ const Scrapers = () => {
     const [showYtSearchModal, setShowYtSearchModal] = useState(false);
     const [ytSearchQuery, setYtSearchQuery] = useState('');
     const [ytSearchType, setYtSearchType] = useState('video');
+    const [ytMaxResults, setYtMaxResults] = useState(50);
     const [ytSearchResults, setYtSearchResults] = useState([]);
     const [ytSearching, setYtSearching] = useState(false);
     const [ytSearchTotal, setYtSearchTotal] = useState(0);
@@ -856,7 +857,7 @@ const Scrapers = () => {
             const res = await axios.post('/api/ai/scrapers/youtube-search', {
                 query: ytSearchQuery,
                 type: ytSearchType,
-                max_results: 25,
+                max_results: ytMaxResults,
             });
             setYtSearchResults(res.data.results || []);
             setYtSearchTotal(res.data.total || 0);
@@ -1821,6 +1822,14 @@ const Scrapers = () => {
                                 <option value="video">Videos</option>
                                 <option value="playlist">Playlists</option>
                                 <option value="channel">Channels</option>
+                            </Form.Select>
+                            <Form.Select style={{ width: '110px', flexShrink: 0 }} value={ytMaxResults}
+                                onChange={(e) => setYtMaxResults(parseInt(e.target.value))}>
+                                <option value={25}>25</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                                <option value={200}>200</option>
+                                <option value={500}>500</option>
                             </Form.Select>
                             <Button type="submit" variant="danger" disabled={ytSearching || !ytSearchQuery.trim()} style={{ flexShrink: 0 }}>
                                 {ytSearching

@@ -12,17 +12,21 @@ class BusinessController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $q = Business::with('category')->orderBy('name');
-        if ($request->filled('category_id'))    $q->where('category_id', $request->category_id);
-        if ($request->filled('search'))         $q->where('name', 'like', '%' . $request->search . '%');
-        if ($request->filled('type'))           $q->whereHas('category', fn($c) => $c->where('type', $request->type));
-        if ($request->boolean('active_only'))   $q->where('is_active', true);
+        $q = Business::orderBy('name');
+
+        if ($request->filled('search'))       $q->where('name', 'like', '%' . $request->search . '%');
+        if ($request->boolean('active_only')) $q->where('is_active', true);
+        if ($request->filled('city'))         $q->where('city', 'like', '%' . $request->city . '%');
+        if ($request->filled('country'))      $q->where('country', $request->country);
+        if ($request->boolean('delivery'))    $q->where('delivery', true);
+        if ($request->boolean('featured'))    $q->where('featured', true);
+
         return response()->json($q->paginate($request->input('per_page', 15)));
     }
 
     public function show(Business $business): JsonResponse
     {
-        return response()->json($business->load(['category', 'menuCategories.menuItems']));
+        return response()->json($business->load(['menuCategories.menuItems']));
     }
 
     public function store(Request $request): JsonResponse
@@ -30,7 +34,7 @@ class BusinessController extends Controller
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name']);
         $business = Business::create($data);
-        return response()->json($business->load('category'), 201);
+        return response()->json($business, 201);
     }
 
     public function update(Request $request, Business $business): JsonResponse
@@ -40,7 +44,7 @@ class BusinessController extends Controller
             $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name'] ?? $business->name, $business->id);
         }
         $business->update($data);
-        return response()->json($business->load('category'));
+        return response()->json($business);
     }
 
     public function destroy(Business $business): JsonResponse
@@ -54,7 +58,6 @@ class BusinessController extends Controller
         $slugUnique = 'unique:businesses,slug' . ($ignoreId ? ",{$ignoreId}" : '');
         $req = $mode === 'create' ? 'required' : 'sometimes';
         return [
-            'category_id'      => "{$req}|exists:business_categories,id",
             'name'             => "{$req}|string|max:200",
             'slug'             => "nullable|string|max:200|{$slugUnique}",
             'description'      => 'nullable|string',
@@ -72,50 +75,10 @@ class BusinessController extends Controller
             'cover_image'      => 'nullable|string',
             'latitude'         => 'nullable|numeric',
             'longitude'        => 'nullable|numeric',
-            'compliance'       => 'nullable|string|max:200',
-            'slaughter_method' => 'nullable|string|max:200',
-            'halal_authority'  => 'nullable|string|max:200',
-            'halal_info'       => 'nullable|string',
-            'halal_options'    => 'nullable|string|max:200',
-            'halal_chain'      => 'nullable|string|max:200',
             'price'            => 'nullable|string|max:10',
-            'parking'          => 'nullable|string|max:200',
-            'credit_cards'     => 'nullable|string|max:500',
-            'transit'          => 'nullable|string|max:500',
-            'permalink'        => 'nullable|string|max:500',
-            'rating'           => 'nullable|numeric|min:0|max:5',
-            'review_count'     => 'nullable|integer|min:0',
-            'alcohol'          => 'boolean',
-            'kids_menu'        => 'boolean',
-            'pray_space'       => 'boolean',
-            'organic'          => 'boolean',
-            'catering'         => 'boolean',
             'delivery'         => 'boolean',
-            'wheelchair_access'=> 'boolean',
-            'wifi'             => 'boolean',
-            'cash_only'        => 'boolean',
-            'pork'             => 'boolean',
-            'drive_thru'       => 'boolean',
-            'reservations'     => 'boolean',
-            'outdoor_seating'  => 'boolean',
-            'shisha'           => 'boolean',
             'featured'         => 'boolean',
-            'sponsored'        => 'boolean',
             'is_active'        => 'boolean',
-            'monday_open'      => 'nullable|string|max:10',
-            'monday_close'     => 'nullable|string|max:10',
-            'tuesday_open'     => 'nullable|string|max:10',
-            'tuesday_close'    => 'nullable|string|max:10',
-            'wednesday_open'   => 'nullable|string|max:10',
-            'wednesday_close'  => 'nullable|string|max:10',
-            'thursday_open'    => 'nullable|string|max:10',
-            'thursday_close'   => 'nullable|string|max:10',
-            'friday_open'      => 'nullable|string|max:10',
-            'friday_close'     => 'nullable|string|max:10',
-            'saturday_open'    => 'nullable|string|max:10',
-            'saturday_close'   => 'nullable|string|max:10',
-            'sunday_open'      => 'nullable|string|max:10',
-            'sunday_close'     => 'nullable|string|max:10',
         ];
     }
 
