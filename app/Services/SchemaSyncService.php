@@ -68,11 +68,54 @@ class SchemaSyncService
 
     /**
      * Run any pending migrations to align the database with the migrations folder.
+     * If a table already exists (created manually before its migration was added),
+     * that migration is marked as run in the migrations table instead of failing.
      */
     protected function runPendingMigrations(): void
     {
-        // This is effectively "auto-create tables from migrations" in a safe, idempotent way.
-        Artisan::call('migrate', ['--force' => true]);
+        // Step 1: Attempt a normal bulk migrate. Works fine on clean installs.
+        try {
+            Artisan::call('migrate', ['--force' => true]);
+            return;
+        } catch (\Illuminate\Database\QueryException $e) {
+            if (!str_contains($e->getMessage(), 'already exists') && $e->getCode() !== '42S01') {
+                throw $e;
+            }
+            // Table-exists conflict — fall through to per-migration mode.
+        }
+
+        // Step 2: Run each pending migration individually so conflicts are handled gracefully.
+        $ran      = DB::table('migrations')->pluck('migration')->toArray();
+        $maxBatch = DB::table('migrations')->max('batch') ?? 0;
+        $batch    = $maxBatch + 1;
+
+        $files = glob(database_path('migrations/*.php'));
+        sort($files);
+
+        foreach ($files as $file) {
+            $name = pathinfo($file, PATHINFO_FILENAME);
+
+            if (in_array($name, $ran)) {
+                continue;
+            }
+
+            try {
+                Artisan::call('migrate', [
+                    '--force' => true,
+                    '--path'  => 'database/migrations/' . basename($file),
+                ]);
+            } catch (\Illuminate\Database\QueryException $e) {
+                if (str_contains($e->getMessage(), 'already exists') || $e->getCode() === '42S01') {
+                    // Table already existed — mark migration as run so it won't be retried.
+                    DB::table('migrations')->insertOrIgnore([
+                        'migration' => $name,
+                        'batch'     => $batch,
+                    ]);
+                } else {
+                    throw $e;
+                }
+            }
+        }
     }
 
     /**
