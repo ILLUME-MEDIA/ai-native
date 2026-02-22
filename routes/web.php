@@ -27,28 +27,81 @@ Route::get('/api-docs/openapi.yaml', function () {
 })->name('api-docs.yaml');
 
 // Run all migrations. GET /run-migrations (no key required).
+// Smart mode: if a table already exists (created manually before migration was added),
+// the migration is marked as run in the migrations table without re-creating the table.
 Route::get('/run-migrations', function () {
     try {
-        // Run all pending migrations
-        Artisan::call('migrate', ['--force' => true]);
-        $migrateOutput = Artisan::output();
+        $allOutput = [];
+        $skipped   = [];
+        $errors    = [];
 
-        // Ensure storage symlink exists
+        // Step 1: Run all migrations normally (handles fresh installs cleanly).
+        // If a "table already exists" conflict occurs we fall through to Step 2.
+        try {
+            Artisan::call('migrate', ['--force' => true]);
+            $allOutput[] = Artisan::output();
+        } catch (\Illuminate\Database\QueryException $e) {
+            if (!str_contains($e->getMessage(), 'already exists') && $e->getCode() !== '42S01') {
+                throw $e; // re-throw non-table-exists errors
+            }
+            $allOutput[] = 'Conflict detected on bulk migrate — switching to per-migration mode.';
+        }
+
+        // Step 2: Run each pending migration individually so conflicts can be handled gracefully.
+        $ran      = \Illuminate\Support\Facades\DB::table('migrations')->pluck('migration')->toArray();
+        $maxBatch = \Illuminate\Support\Facades\DB::table('migrations')->max('batch') ?? 0;
+        $batch    = $maxBatch + 1;
+
+        $files = glob(database_path('migrations/*.php'));
+        sort($files);
+
+        foreach ($files as $file) {
+            $name = pathinfo($file, PATHINFO_FILENAME);
+
+            if (in_array($name, $ran)) {
+                continue; // already run — skip
+            }
+
+            try {
+                Artisan::call('migrate', [
+                    '--force' => true,
+                    '--path'  => 'database/migrations/' . basename($file),
+                ]);
+                $allOutput[] = trim(Artisan::output());
+            } catch (\Illuminate\Database\QueryException $e) {
+                $msg = $e->getMessage();
+                if (str_contains($msg, 'already exists') || $e->getCode() === '42S01') {
+                    // Table already existed — mark migration as run so it won't be retried.
+                    \Illuminate\Support\Facades\DB::table('migrations')->insertOrIgnore([
+                        'migration' => $name,
+                        'batch'     => $batch,
+                    ]);
+                    $skipped[] = $name . ' (table already exists — marked as run)';
+                } else {
+                    $errors[] = $name . ': ' . $msg;
+                }
+            }
+        }
+
+        // Step 3: Storage symlink
         Artisan::call('storage:link');
         $storageLinkOutput = Artisan::output();
 
         return response()->json([
-            'message' => 'Migrations and storage link command completed.',
-            'migrate_output' => $migrateOutput,
+            'message'             => 'Migrations completed.',
+            'migrate_output'      => $allOutput,
+            'skipped'             => $skipped,
+            'errors'              => $errors,
             'storage_link_output' => $storageLinkOutput,
         ]);
+
     } catch (\Illuminate\Database\QueryException $e) {
         $code = $e->getCode() ?? 0;
-        $msg = $e->getMessage();
+        $msg  = $e->getMessage();
         if ($code === 1045 || str_contains($msg, 'Access denied')) {
             return response()->json([
                 'message' => 'Database connection failed. Check .env: DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD.',
-                'hint' => 'Get correct credentials from your hosting panel (cPanel/Plesk). Use their MySQL host (often localhost or a host like mysql.yourdomain.com).',
+                'hint'    => 'Get correct credentials from your hosting panel (cPanel/Plesk). Use their MySQL host (often localhost or a host like mysql.yourdomain.com).',
                 'error_code' => 1045,
             ], 503);
         }
