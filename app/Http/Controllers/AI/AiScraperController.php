@@ -300,7 +300,7 @@ class AiScraperController extends Controller
         $request->validate([
             'query'       => 'required|string|min:1|max:255',
             'type'        => 'nullable|in:video,playlist,channel',
-            'max_results' => 'nullable|integer|min:1|max:50',
+            'max_results' => 'nullable|integer|min:1|max:500',
         ]);
 
         $apiKey = env('YOUTUBE_API_KEY');
@@ -312,36 +312,51 @@ class AiScraperController extends Controller
         $type       = $request->input('type', 'video');
         $maxResults = (int) $request->input('max_results', 25);
 
+        // YouTube API returns max 50 per page — paginate for larger requests
+        $perPage   = min($maxResults, 50);
+        $allItems  = [];
+        $pageToken = null;
+        $totalEstimate = 0;
+
         try {
-            $searchRes = \Illuminate\Support\Facades\Http::withoutVerifying()
-                ->timeout(15)
-                ->withHeaders(['Accept' => 'application/json'])
-                ->get('https://www.googleapis.com/youtube/v3/search', [
+            do {
+                $params = [
                     'part'       => 'snippet',
                     'type'       => $type,
-                    'maxResults' => $maxResults,
+                    'maxResults' => $perPage,
                     'q'          => $query,
                     'key'        => $apiKey,
-                ]);
+                ];
+                if ($pageToken) {
+                    $params['pageToken'] = $pageToken;
+                }
 
-            $searchData = $searchRes->json() ?? [];
+                $searchRes  = \Illuminate\Support\Facades\Http::withoutVerifying()
+                    ->timeout(15)
+                    ->withHeaders(['Accept' => 'application/json'])
+                    ->get('https://www.googleapis.com/youtube/v3/search', $params);
 
-            if (isset($searchData['error'])) {
-                return response()->json(['error' => $searchData['error']['message'] ?? 'YouTube API error'], 500);
-            }
+                $searchData = $searchRes->json() ?? [];
 
-            if (empty($searchData['items'])) {
+                if (isset($searchData['error'])) {
+                    return response()->json(['error' => $searchData['error']['message'] ?? 'YouTube API error'], 500);
+                }
+
+                $totalEstimate = $searchData['pageInfo']['totalResults'] ?? 0;
+                $allItems      = array_merge($allItems, $searchData['items'] ?? []);
+                $pageToken     = $searchData['nextPageToken'] ?? null;
+
+                // Stop if we have enough or no more pages
+            } while ($pageToken && count($allItems) < $maxResults);
+
+            // Trim to requested amount
+            $allItems = array_slice($allItems, 0, $maxResults);
+
+            if (empty($allItems)) {
                 return response()->json(['results' => [], 'total' => 0]);
             }
 
-            $itemIds = collect($searchData['items'])->map(function ($item) {
-                return $item['id']['videoId'] ?? $item['id']['playlistId'] ?? $item['id']['channelId'] ?? null;
-            })->filter()->values()->implode(',');
-
-            if (!$itemIds) {
-                return response()->json(['results' => [], 'total' => 0]);
-            }
-
+            // Fetch details in batches of 50 (API limit)
             $partMap      = [
                 'video'    => 'snippet,statistics,contentDetails',
                 'playlist' => 'snippet,contentDetails',
@@ -350,18 +365,27 @@ class AiScraperController extends Controller
             $part         = $partMap[$type] ?? 'snippet,statistics,contentDetails';
             $resourceType = $type === 'playlist' ? 'playlists' : ($type === 'channel' ? 'channels' : 'videos');
 
-            $detailsRes  = \Illuminate\Support\Facades\Http::withoutVerifying()
-                ->timeout(15)
-                ->withHeaders(['Accept' => 'application/json'])
-                ->get("https://www.googleapis.com/youtube/v3/{$resourceType}", [
-                    'part' => $part,
-                    'id'   => $itemIds,
-                    'key'  => $apiKey,
-                ]);
+            $allDetails = [];
+            foreach (array_chunk($allItems, 50) as $chunk) {
+                $chunkIds = collect($chunk)->map(function ($item) {
+                    return $item['id']['videoId'] ?? $item['id']['playlistId'] ?? $item['id']['channelId'] ?? null;
+                })->filter()->values()->implode(',');
 
-            $detailsData = $detailsRes->json() ?? [];
+                if (!$chunkIds) continue;
 
-            $results = collect($detailsData['items'] ?? [])->map(function ($item) use ($type) {
+                $detailsRes  = \Illuminate\Support\Facades\Http::withoutVerifying()
+                    ->timeout(15)
+                    ->withHeaders(['Accept' => 'application/json'])
+                    ->get("https://www.googleapis.com/youtube/v3/{$resourceType}", [
+                        'part' => $part,
+                        'id'   => $chunkIds,
+                        'key'  => $apiKey,
+                    ]);
+
+                $allDetails = array_merge($allDetails, $detailsRes->json()['items'] ?? []);
+            }
+
+            $results = collect($allDetails)->map(function ($item) use ($type) {
                 $snippet = $item['snippet']        ?? [];
                 $stats   = $item['statistics']     ?? [];
                 $content = $item['contentDetails'] ?? [];
@@ -379,12 +403,15 @@ class AiScraperController extends Controller
                     ?? $snippet['thumbnails']['medium']['url']
                     ?? "https://i.ytimg.com/vi/{$id}/hqdefault.jpg";
 
+                // Sanitize strings to avoid UTF-8 encoding errors in JSON response
+                $clean = fn($s) => mb_convert_encoding((string) ($s ?? ''), 'UTF-8', 'UTF-8');
+
                 return [
                     'video_id'         => $id,
-                    'title'            => $snippet['title']        ?? 'Unknown',
-                    'channel_name'     => $snippet['channelTitle'] ?? '',
-                    'channel_id'       => $snippet['channelId']    ?? '',
-                    'description'      => substr($snippet['description'] ?? '', 0, 200),
+                    'title'            => $clean($snippet['title']        ?? 'Unknown'),
+                    'channel_name'     => $clean($snippet['channelTitle'] ?? ''),
+                    'channel_id'       => $clean($snippet['channelId']    ?? ''),
+                    'description'      => $clean(substr($snippet['description'] ?? '', 0, 200)),
                     'thumbnail_url'    => $thumbnail,
                     'duration'         => $content['duration']  ?? null,
                     'view_count'       => (int) ($stats['viewCount']       ?? 0),
@@ -399,7 +426,7 @@ class AiScraperController extends Controller
 
             return response()->json([
                 'results' => $results->values(),
-                'total'   => $searchData['pageInfo']['totalResults'] ?? $results->count(),
+                'total'   => $totalEstimate ?: $results->count(),
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => 'YouTube search failed: ' . $e->getMessage()], 500);
