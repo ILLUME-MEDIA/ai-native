@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stripe Payment Test</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 700px; margin: 0 auto; }
+        h1 { color: #333; font-size: 22px; }
+        h2 { color: #555; font-size: 16px; margin: 0 0 12px; background: #e8e8e8; padding: 8px 12px; border-radius: 4px; }
+        .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .row { margin-bottom: 12px; }
+        label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 4px; color: #444; }
+        input[type="text"], input[type="email"], input[type="password"] {
+            width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
+        }
+        .row-inline { display: flex; gap: 10px; }
+        .row-inline input { flex: 1; }
+        button {
+            padding: 9px 16px; border: none; border-radius: 4px; cursor: pointer;
+            font-size: 14px; font-weight: bold; color: #fff; background: #5469d4;
+        }
+        button:hover { background: #4353b8; }
+        button.green { background: #28a745; }
+        button.green:hover { background: #218838; }
+        button.red { background: #dc3545; }
+        button.red:hover { background: #c82333; }
+        button.gray { background: #6c757d; }
+        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+        #card-element { padding: 10px; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+        pre {
+            background: #1a1a2e; color: #00ff88; padding: 14px; border-radius: 6px;
+            overflow: auto; max-height: 250px; font-size: 12px; margin: 0;
+        }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .badge-green { background: #d4edda; color: #155724; }
+        .badge-blue { background: #cce5ff; color: #004085; }
+        .badge-red { background: #f8d7da; color: #721c24; }
+        .saved-card { border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; background: #fafafa; }
+        .saved-card .card-info { font-size: 14px; }
+        .saved-card .card-info strong { font-size: 15px; }
+        .saved-card .actions { display: flex; gap: 6px; }
+        #token-display { font-size: 11px; color: #888; word-break: break-all; margin-top: 6px; }
+        .step-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+        .success-msg { color: #28a745; font-weight: bold; }
+        .error-msg { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Stripe Payment — Full Flow Test</h1>
+
+    <!-- CONFIG -->
+    <div class="card">
+        <h2>Configuration</h2>
+        <div class="row">
+            <label>API Base URL</label>
+            <input id="apiBase" type="text" value="http://127.0.0.1:8000/api" />
+        </div>
+        <div class="row">
+            <label>Stripe Publishable Key (pk_test_...)</label>
+            <input id="pk" type="text" placeholder="pk_test_..." />
+        </div>
+    </div>
+
+    <!-- STEP 1: OTP LOGIN -->
+    <div class="card">
+        <h2>Step 1 — OTP Login (get Bearer token)</h2>
+        <div class="row-inline">
+            <div>
+                <label>Email</label>
+                <input id="email" type="email" placeholder="customer@example.com" />
+            </div>
+            <div>
+                <label>Table</label>
+                <input id="table" type="text" value="discovery_users" />
+            </div>
+        </div>
+        <div class="btn-group" style="margin-top:10px">
+            <button onclick="sendOtp()">Send OTP</button>
+        </div>
+        <div class="row" style="margin-top:12px">
+            <label>OTP Code</label>
+            <div class="row-inline">
+                <input id="otp" type="text" placeholder="123456" style="max-width:160px" />
+                <button class="green" onclick="verifyOtp()">Verify OTP → Get Token</button>
+            </div>
+        </div>
+        <div id="token-display"></div>
+    </div>
+
+    <!-- STEP 2: SETUP INTENT -->
+    <div class="card">
+        <h2>Step 2 — Create SetupIntent</h2>
+        <p class="step-label">Calls POST /api/payment/stripe/setup-intent → gets client_secret</p>
+        <button onclick="createSetupIntent()">Create SetupIntent</button>
+        <div id="setup-result" style="margin-top:10px"></div>
+    </div>
+
+    <!-- STEP 3: CARD + CONFIRM -->
+    <div class="card">
+        <h2>Step 3 — Enter Card & Confirm</h2>
+        <p class="step-label">Use test card: <strong>4242 4242 4242 4242</strong> | Any future date | Any CVC | Any ZIP</p>
+        <div class="row">
+            <label>Cardholder Name</label>
+            <input id="cardName" type="text" value="Test User" />
+        </div>
+        <div class="row">
+            <label>Card Details</label>
+            <div id="card-element"></div>
+        </div>
+        <button class="green" onclick="confirmAndSave()">Confirm Card & Save (Steps 3+4)</button>
+        <div id="confirm-result" style="margin-top:10px"></div>
+    </div>
+
+    <!-- STEP 5: PLACE ORDER -->
+    <div class="card">
+        <h2>Step 5 — Charge Saved Card for an Order</h2>
+        <p class="step-label">Place an order first, then charge it using the saved card.</p>
+        <div class="row-inline">
+            <div>
+                <label>Order ID</label>
+                <input id="orderId" type="text" placeholder="42" />
+            </div>
+            <div style="align-self:flex-end">
+                <button class="green" onclick="chargeOrder()">Charge Order</button>
+            </div>
+        </div>
+        <div id="charge-result" style="margin-top:10px"></div>
+    </div>
+
+    <!-- SAVED CARDS -->
+    <div class="card">
+        <h2>Saved Cards</h2>
+        <button onclick="loadMethods()">Refresh List</button>
+        <div id="methods-list" style="margin-top:12px">
+            <p style="color:#888; font-size:13px">Click "Refresh List" to load saved cards.</p>
+        </div>
+    </div>
+
+    <!-- OUTPUT LOG -->
+    <div class="card">
+        <h2>API Response Log</h2>
+        <pre id="output">Ready. Complete Step 1 first to get a Bearer token.</pre>
+    </div>
+</div>
+
+<script>
+let stripe = null;
+let cardElement = null;
+let bearerToken = null;
+let clientSecret = null;
+let stripeCustomerId = null;
+
+function log(obj, label) {
+    const out = document.getElementById('output');
+    const prefix = label ? `// ${label}\n` : '';
+    out.textContent = prefix + (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
+}
+
+function apiBase() {
+    return document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+}
+
+async function apiFetch(path, method = 'GET', body = null) {
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    if (bearerToken) headers['Authorization'] = 'Bearer ' + bearerToken;
+    const opts = { method, headers };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(apiBase() + path, opts);
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) {}
+    return { ok: res.ok, status: res.status, data, text };
+}
+
+// ── Step 1: OTP ──────────────────────────────────────────────────────────────
+
+async function sendOtp() {
+    const email = document.getElementById('email').value.trim();
+    const table = document.getElementById('table').value.trim();
+    if (!email) return alert('Enter email');
+    const r = await apiFetch('/otp-auth/send', 'POST', { email, table });
+    log(r.data, 'POST /otp-auth/send');
+    if (r.ok) alert('OTP sent to ' + email + '. Check your email.');
+    else alert('Error: ' + (r.data?.message || r.text));
+}
+
+async function verifyOtp() {
+    const email = document.getElementById('email').value.trim();
+    const otp   = document.getElementById('otp').value.trim();
+    const table = document.getElementById('table').value.trim();
+    if (!otp) return alert('Enter OTP code');
+    const r = await apiFetch('/otp-auth/verify', 'POST', { email, otp, table, check_email: true, on_found: 'token', on_not_found: 'create' });
+    log(r.data, 'POST /otp-auth/verify');
+    if (r.ok && r.data?.token) {
+        bearerToken = r.data.token;
+        document.getElementById('token-display').innerHTML =
+            '<span class="success-msg">✓ Token saved!</span> User: <strong>' + (r.data.user?.name || r.data.user?.email || 'OK') + '</strong><br>' +
+            '<span style="color:#aaa">Bearer: ' + bearerToken.substring(0, 40) + '...</span>';
+        // Init Stripe card element
+        initStripeCard();
+    } else {
+        alert('Error: ' + (r.data?.message || r.text));
+    }
+}
+
+function initStripeCard() {
+    const pk = document.getElementById('pk').value.trim();
+    if (!pk) { alert('Enter Stripe Publishable Key first'); return; }
+    stripe = Stripe(pk);
+    const elements = stripe.elements();
+    if (cardElement) cardElement.unmount();
+    cardElement = elements.create('card');
+    cardElement.mount('#card-element');
+}
+
+// ── Step 2: Setup Intent ──────────────────────────────────────────────────────
+
+async function createSetupIntent() {
+    if (!bearerToken) return alert('Complete Step 1 first (OTP login)');
+    const r = await apiFetch('/payment/stripe/setup-intent', 'POST');
+    log(r.data, 'POST /payment/stripe/setup-intent');
+    if (r.ok && r.data?.client_secret) {
+        clientSecret     = r.data.client_secret;
+        stripeCustomerId = r.data.stripe_customer_id;
+        document.getElementById('setup-result').innerHTML =
+            '<span class="success-msg">✓ SetupIntent created!</span><br>' +
+            'Stripe Customer: <span class="badge badge-blue">' + stripeCustomerId + '</span><br>' +
+            '<small style="color:#888">client_secret: ' + clientSecret.substring(0, 30) + '...</small>';
+    } else {
+        document.getElementById('setup-result').innerHTML = '<span class="error-msg">Error: ' + (r.data?.message || r.text) + '</span>';
+    }
+}
+
+// ── Step 3+4: Confirm card + Save ─────────────────────────────────────────────
+
+async function confirmAndSave() {
+    if (!stripe || !cardElement) return alert('Initialize Stripe first (complete OTP login)');
+    if (!clientSecret) return alert('Create SetupIntent first (Step 2)');
+
+    document.getElementById('confirm-result').innerHTML = '<span style="color:#888">Confirming card with Stripe...</span>';
+
+    const { setupIntent, error } = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: {
+            card: cardElement,
+            billing_details: { name: document.getElementById('cardName').value || 'Test User' }
+        }
+    });
+
+    if (error) {
+        document.getElementById('confirm-result').innerHTML = '<span class="error-msg">Stripe Error: ' + error.message + '</span>';
+        log(error, 'Stripe confirmCardSetup error');
+        return;
+    }
+
+    const pmId = setupIntent.payment_method;
+    log({ stripe_pm_id: pmId, setupIntent }, 'stripe.confirmCardSetup success');
+    document.getElementById('confirm-result').innerHTML = '<span style="color:#888">Card confirmed. Saving to server...</span>';
+
+    // Now call save-method with the pm_ id
+    const r = await apiFetch('/payment/stripe/save-method', 'POST', {
+        payment_method_id: pmId,
+        set_default: true
+    });
+    log(r.data, 'POST /payment/stripe/save-method');
+
+    if (r.ok) {
+        const pm = r.data?.payment_method;
+        document.getElementById('confirm-result').innerHTML =
+            '<span class="success-msg">✓ Card saved!</span><br>' +
+            '<span class="badge badge-green">' + (pm?.brand?.toUpperCase() || 'CARD') + '</span> ' +
+            '**** **** **** <strong>' + (pm?.last4 || '????') + '</strong> ' +
+            'Exp: ' + (pm?.exp_month || '--') + '/' + (pm?.exp_year || '--') + ' | ' +
+            (pm?.is_default ? '<span class="badge badge-blue">Default</span>' : '');
+        loadMethods();
+    } else {
+        document.getElementById('confirm-result').innerHTML = '<span class="error-msg">Save failed: ' + (r.data?.message || r.text) + '</span>';
+    }
+}
+
+// ── Step 5: Charge ────────────────────────────────────────────────────────────
+
+async function chargeOrder() {
+    if (!bearerToken) return alert('Complete Step 1 first (OTP login)');
+    const orderId = document.getElementById('orderId').value.trim();
+    if (!orderId) return alert('Enter Order ID');
+    const r = await apiFetch('/payment/stripe/charge', 'POST', { order_id: parseInt(orderId) });
+    log(r.data, 'POST /payment/stripe/charge');
+    if (r.ok) {
+        document.getElementById('charge-result').innerHTML =
+            '<span class="success-msg">✓ Charged!</span> ' +
+            'Status: <span class="badge badge-green">' + (r.data?.payment_status || 'paid') + '</span> ' +
+            'Amount: $' + (r.data?.amount_charged || '?') + ' | ' +
+            'Order: ' + (r.data?.order_number || orderId);
+    } else {
+        document.getElementById('charge-result').innerHTML =
+            '<span class="error-msg">Error ' + r.status + ': ' + (r.data?.message || r.text) + '</span>';
+    }
+}
+
+// ── List & Delete Methods ─────────────────────────────────────────────────────
+
+async function loadMethods() {
+    if (!bearerToken) return alert('Complete Step 1 first (OTP login)');
+    const r = await apiFetch('/payment/stripe/methods');
+    log(r.data, 'GET /payment/stripe/methods');
+    const container = document.getElementById('methods-list');
+    if (!r.ok) { container.innerHTML = '<span class="error-msg">' + (r.data?.message || r.text) + '</span>'; return; }
+    const methods = r.data?.payment_methods || [];
+    if (!methods.length) { container.innerHTML = '<p style="color:#888; font-size:13px">No saved cards.</p>'; return; }
+    container.innerHTML = methods.map(pm => `
+        <div class="saved-card">
+            <div class="card-info">
+                <strong>${(pm.brand || 'card').toUpperCase()} **** ${pm.last4 || '????'}</strong>
+                &nbsp; Exp: ${pm.exp_month}/${pm.exp_year} &nbsp;
+                ${pm.is_default ? '<span class="badge badge-green">Default</span>' : ''}
+                <br><small style="color:#888">${pm.cardholder_name || ''} | pm_id: ${pm.stripe_pm_id}</small>
+            </div>
+            <div class="actions">
+                ${!pm.is_default ? `<button class="gray" onclick="setDefault(${pm.id})">Set Default</button>` : ''}
+                <button class="red" onclick="deleteMethod(${pm.id})">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function deleteMethod(id) {
+    if (!confirm('Delete this card?')) return;
+    const r = await apiFetch('/payment/stripe/methods/' + id, 'DELETE');
+    log(r.data, 'DELETE /payment/stripe/methods/' + id);
+    if (r.ok) loadMethods();
+    else alert('Error: ' + (r.data?.message || r.text));
+}
+
+async function setDefault(id) {
+    const r = await apiFetch('/payment/stripe/methods/' + id + '/set-default', 'POST');
+    log(r.data, 'POST /payment/stripe/methods/' + id + '/set-default');
+    if (r.ok) loadMethods();
+    else alert('Error: ' + (r.data?.message || r.text));
+}
+</script>
+</body>
+</html>
