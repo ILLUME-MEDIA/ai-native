@@ -692,6 +692,7 @@ class AIManager
         $workspace = $data['workspace'] ?? null;
         $user = $data['user'] ?? Auth::user();
         $shouldStop = $data['should_stop'] ?? null;
+        $extraSystem = (string) ($data['extra_system'] ?? '');
 
         try {
             // Required UX protocol: show liveness immediately
@@ -720,6 +721,11 @@ class AIManager
                 $toolExecutor = new ToolExecutor();
                 $toolDefinitions = $toolExecutor->getToolDefinitions();
                 $baseSystemPrompt .= "\n\n" . $this->buildToolInstructions($toolDefinitions);
+            }
+
+            // Inject orchestrator addendum (PLAN / CLARIFY protocol)
+            if ($extraSystem !== '') {
+                $baseSystemPrompt .= "\n\n" . $extraSystem;
             }
 
             $streamCallback('status', ['message' => 'Generating response...']);

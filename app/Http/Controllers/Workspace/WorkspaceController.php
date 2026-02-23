@@ -97,6 +97,93 @@ class WorkspaceController extends Controller
         return response()->json(['message' => 'Workspace archived']);
     }
 
+    public function search(Request $request, Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $data = $request->validate([
+            'query'          => 'required|string|min:2',
+            'case_sensitive' => 'nullable|boolean',
+            'regex'          => 'nullable|boolean',
+        ]);
+
+        $query         = $data['query'];
+        $caseSensitive = filter_var($data['case_sensitive'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $useRegex      = filter_var($data['regex'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        $results = [];
+        $total   = 0;
+        $this->searchDirectory($workspace->full_path, '', $query, $caseSensitive, $useRegex, $results, $total);
+
+        return response()->json(['results' => $results, 'total' => $total, 'query' => $query]);
+    }
+
+    private function searchDirectory(
+        string $basePath,
+        string $relativePath,
+        string $query,
+        bool $caseSensitive,
+        bool $useRegex,
+        array &$results,
+        int &$total,
+        int $maxTotal = 200,
+        int $maxPerFile = 10
+    ): void {
+        if ($total >= $maxTotal) return;
+
+        $directory = $relativePath === '' ? $basePath : $basePath . DIRECTORY_SEPARATOR . $relativePath;
+        if (!$this->fs->isDirectory($directory)) return;
+
+        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'mp3', 'mp4', 'zip', 'tar', 'gz', 'pdf', 'svg', 'webp', 'avif', 'bin', 'exe', 'dll'];
+
+        foreach ($this->fs->directories($directory) as $dir) {
+            if ($total >= $maxTotal || is_link($dir)) continue;
+            $name     = basename($dir);
+            $childRel = $relativePath ? ($relativePath . '/' . $name) : $name;
+            if ($this->isExcludedPath($childRel)) continue;
+            $this->searchDirectory($basePath, $childRel, $query, $caseSensitive, $useRegex, $results, $total, $maxTotal, $maxPerFile);
+        }
+
+        foreach ($this->fs->files($directory) as $file) {
+            if ($total >= $maxTotal || is_link($file->getRealPath())) continue;
+
+            $ext = strtolower($file->getExtension());
+            if (in_array($ext, $binaryExts, true)) continue;
+            if ($file->getSize() > 1024 * 1024) continue;
+
+            $name     = $file->getFilename();
+            $childRel = str_replace('\\', '/', $relativePath ? ($relativePath . '/' . $name) : $name);
+
+            try {
+                $content = $file->getContents();
+            } catch (\Exception) {
+                continue;
+            }
+
+            $fileCount = 0;
+            foreach (preg_split('/\r\n|\r|\n/', $content) as $lineIdx => $lineContent) {
+                if ($fileCount >= $maxPerFile || $total >= $maxTotal) break;
+
+                if ($useRegex) {
+                    $flags = $caseSensitive ? '' : 'i';
+                    if (@preg_match('/' . $query . '/' . $flags, $lineContent, $m)) {
+                        $results[] = ['file' => $childRel, 'line' => $lineIdx + 1, 'content' => trim($lineContent), 'match' => $m[0] ?? $query];
+                        $fileCount++;
+                        $total++;
+                    }
+                } else {
+                    $haystack = $caseSensitive ? $lineContent : strtolower($lineContent);
+                    $needle   = $caseSensitive ? $query : strtolower($query);
+                    if (str_contains($haystack, $needle)) {
+                        $results[] = ['file' => $childRel, 'line' => $lineIdx + 1, 'content' => trim($lineContent), 'match' => $query];
+                        $fileCount++;
+                        $total++;
+                    }
+                }
+            }
+        }
+    }
+
     public function files(Request $request, Workspace $workspace)
     {
         $this->authorize('view', $workspace);

@@ -9,32 +9,51 @@ export default function MonacoEditor({
     readOnly = false,
     onSave,
     height = '100%',
-    path = ''
+    path = '',
+    onEditorMount,
+    onScrollChange,
 }) {
     const editorRef = useRef(null);
 
     function handleEditorDidMount(editor, monaco) {
         editorRef.current = editor;
 
-        // Add save command (Ctrl+S / Cmd+S)
+        if (onEditorMount) {
+            onEditorMount(editor, monaco);
+        }
+
+        // Save (Ctrl+S / Cmd+S)
         editor.addCommand(
             monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-            () => {
-                if (onSave) {
-                    onSave(editor.getValue());
-                }
-            }
+            () => { if (onSave) onSave(editor.getValue()); }
         );
 
-        // Add find command (Ctrl+F / Cmd+F)
+        // Find (Ctrl+F / Cmd+F)
         editor.addCommand(
             monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF,
-            () => {
-                editor.getAction('actions.find').run();
-            }
+            () => { editor.getAction('actions.find').run(); }
         );
 
-        // Focus editor
+        // Go to Line (Ctrl+G)
+        editor.addCommand(
+            monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG,
+            () => { editor.getAction('editor.action.gotoLine').run(); }
+        );
+
+        // Format Document (Shift+Alt+F)
+        editor.addCommand(
+            monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+            () => { editor.getAction('editor.action.formatDocument').run(); }
+        );
+
+        // Scroll change for blame gutter sync
+        if (onScrollChange) {
+            editor.onDidScrollChange(() => {
+                const lh = editor.getOption(monaco.editor.EditorOption.lineHeight);
+                onScrollChange(editor.getScrollTop(), lh);
+            });
+        }
+
         editor.focus();
     }
 
@@ -44,45 +63,19 @@ export default function MonacoEditor({
         }
     }
 
-    // Detect language from file path if not provided
     const detectLanguage = (filePath) => {
         if (!filePath) return language;
-
-        const extension = filePath.split('.').pop()?.toLowerCase();
-        const languageMap = {
-            'js': 'javascript',
-            'jsx': 'javascript',
-            'ts': 'typescript',
-            'tsx': 'typescript',
-            'php': 'php',
-            'blade': 'blade',
-            'py': 'python',
-            'rb': 'ruby',
-            'java': 'java',
-            'go': 'go',
-            'rs': 'rust',
-            'c': 'c',
-            'cpp': 'cpp',
-            'cs': 'csharp',
-            'css': 'css',
-            'scss': 'scss',
-            'sass': 'sass',
-            'less': 'less',
-            'html': 'html',
-            'htm': 'html',
-            'xml': 'xml',
-            'json': 'json',
-            'yaml': 'yaml',
-            'yml': 'yaml',
-            'md': 'markdown',
-            'sql': 'sql',
-            'sh': 'shell',
-            'bash': 'shell',
-            'txt': 'plaintext',
-            'log': 'plaintext'
+        const ext = filePath.split('.').pop()?.toLowerCase();
+        const map = {
+            'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript', 'tsx': 'typescript',
+            'php': 'php', 'blade': 'blade', 'py': 'python', 'rb': 'ruby', 'java': 'java',
+            'go': 'go', 'rs': 'rust', 'c': 'c', 'cpp': 'cpp', 'cs': 'csharp',
+            'css': 'css', 'scss': 'scss', 'sass': 'sass', 'less': 'less',
+            'html': 'html', 'htm': 'html', 'xml': 'xml', 'json': 'json',
+            'yaml': 'yaml', 'yml': 'yaml', 'md': 'markdown', 'sql': 'sql',
+            'sh': 'shell', 'bash': 'shell', 'txt': 'plaintext', 'log': 'plaintext',
         };
-
-        return languageMap[extension] || 'plaintext';
+        return map[ext] || 'plaintext';
     };
 
     const editorLanguage = path ? detectLanguage(path) : language;
@@ -109,10 +102,7 @@ export default function MonacoEditor({
                 formatOnPaste: true,
                 formatOnType: false,
                 quickSuggestions: true,
-                suggest: {
-                    showKeywords: true,
-                    showSnippets: true
-                },
+                suggest: { showKeywords: true, showSnippets: true },
                 folding: true,
                 foldingStrategy: 'indentation',
                 showFoldingControls: 'always',
@@ -126,17 +116,17 @@ export default function MonacoEditor({
                 find: {
                     addExtraSpaceOnTop: false,
                     autoFindInSelection: 'never',
-                    seedSearchStringFromSelection: 'always'
+                    seedSearchStringFromSelection: 'always',
                 },
                 fontLigatures: true,
                 renderWhitespace: 'selection',
                 smoothScrolling: true,
-                snippetSuggestions: 'top'
+                snippetSuggestions: 'top',
             }}
             loading={
                 <div className="d-flex align-items-center justify-content-center h-100">
                     <div className="spinner-border text-primary" role="status">
-                        <span className="visually-hidden">Loading editor...</span>
+                        <span className="visually-hidden">Loading editor…</span>
                     </div>
                 </div>
             }

@@ -8,6 +8,7 @@ use App\Models\AIConversationEvent;
 use App\Models\AICommandApproval;
 use App\Models\Workspace;
 use App\Services\AI\AIManager;
+use App\Services\AI\AIOrchestrator;
 use App\Support\ResolvesWorkspacePaths;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ class AICommandController extends Controller
 
     public function __construct(
         protected AIManager $aiManager,
+        protected AIOrchestrator $orchestrator,
         private Filesystem $fs
     )
     {
@@ -144,8 +146,15 @@ class AICommandController extends Controller
         ]);
         $conversation->update(['last_activity_at' => now()]);
 
+        // Classify message before streaming (orchestration)
+        $classification = $this->orchestrator->classify($message);
+        $orchestratorAddendum = $this->orchestrator->getOrchestratorSystemAddendum(
+            $classification['needs_planning'],
+            $classification['is_vague']
+        );
+
         // SSE headers
-        return response()->stream(function () use ($request, $workspace, $conversation) {
+        return response()->stream(function () use ($request, $workspace, $conversation, $orchestratorAddendum) {
             // Send headers for SSE
             header('Content-Type: text/event-stream');
             header('Cache-Control: no-cache');
@@ -160,6 +169,10 @@ class AICommandController extends Controller
                     'conversation_id' => $conversation?->id,
                 ]);
 
+                // Chunk buffer for first-line prefix detection (PLAN: / CLARIFY:)
+                $chunkBuffer = '';
+                $prefixResolved = false;
+
                 // Stream AI response
                 $this->aiManager->chatWithCodeStream([
                     'message' => $request->message,
@@ -170,13 +183,83 @@ class AICommandController extends Controller
                     'open_files' => $request->open_files ?? [],
                     'workspace' => $workspace,
                     'user' => auth()->user(),
+                    'extra_system' => $orchestratorAddendum,
                     'should_stop' => function () use ($conversation) {
                         if (connection_aborted()) {
                             return true;
                         }
                         return (bool) cache()->get("ai_cancel:conversation:{$conversation->id}", false);
                     },
-                ], function ($event, $data) use ($workspace, $conversation) {
+                ], function ($event, $data) use ($workspace, $conversation, &$chunkBuffer, &$prefixResolved) {
+                    // ── Chunk buffering: intercept until first newline for prefix detection ──
+                    if ($event === 'chunk' && !$prefixResolved) {
+                        $chunkBuffer .= $data['text'] ?? '';
+
+                        if (!str_contains($chunkBuffer, "\n")) {
+                            return; // Still building the first line — don't forward yet
+                        }
+
+                        $prefixResolved = true;
+                        $firstLineEnd = strpos($chunkBuffer, "\n");
+                        $firstLine = substr($chunkBuffer, 0, $firstLineEnd);
+
+                        // Check CLARIFY: prefix
+                        $clarify = $this->orchestrator->parseClarifyPrefix($firstLine);
+                        if ($clarify) {
+                            $this->sendSSE('clarification_needed', $clarify);
+                            AIConversationEvent::create([
+                                'conversation_id' => $conversation->id,
+                                'type' => 'clarification_needed',
+                                'payload' => $clarify,
+                            ]);
+                            $conversation->update(['last_activity_at' => now()]);
+                            $chunkBuffer = ''; // Discard the prefix line
+                            return;
+                        }
+
+                        // Check PLAN: prefix
+                        $plan = $this->orchestrator->parsePlanPrefix($firstLine);
+                        if ($plan) {
+                            $taskList = $this->orchestrator->createTaskList($conversation->id, $plan['tasks']);
+                            $payload = [
+                                'task_list_id' => $taskList->id,
+                                'tasks' => $taskList->tasks->map(fn($t) => [
+                                    'id'          => $t->id,
+                                    'title'       => $t->title,
+                                    'description' => $t->description,
+                                    'status'      => $t->status,
+                                ])->toArray(),
+                            ];
+                            $this->sendSSE('plan_created', $payload);
+                            AIConversationEvent::create([
+                                'conversation_id' => $conversation->id,
+                                'type' => 'plan_created',
+                                'payload' => $payload,
+                            ]);
+                            $conversation->update(['last_activity_at' => now()]);
+
+                            // Forward remainder (text after the PLAN: line)
+                            $rest = ltrim(substr($chunkBuffer, $firstLineEnd + 1));
+                            if ($rest !== '') {
+                                $this->sendSSE('chunk', ['text' => $rest]);
+                            }
+                            $chunkBuffer = '';
+                            return;
+                        }
+
+                        // No recognized prefix — forward everything buffered as a normal chunk
+                        $this->sendSSE('chunk', ['text' => $chunkBuffer]);
+                        $chunkBuffer = '';
+                        return;
+                    }
+
+                    // ── For non-chunk events, flush any remaining buffer first ──
+                    if (!$prefixResolved && $chunkBuffer !== '') {
+                        $prefixResolved = true;
+                        $this->sendSSE('chunk', ['text' => $chunkBuffer]);
+                        $chunkBuffer = '';
+                    }
+
                     // Stream callback - send each chunk to frontend
                     $this->sendSSE($event, $data);
 

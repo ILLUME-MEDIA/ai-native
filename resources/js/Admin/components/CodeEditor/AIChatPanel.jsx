@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch }) {
@@ -19,6 +19,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [selectedModel, setSelectedModel] = useState('AUTO');
     const [isAuto, setIsAuto] = useState(true);
     const [uiTarget, setUiTarget] = useState(() => localStorage.getItem('codeEditor.uiTarget') || 'ask');
+    const [pendingClarification, setPendingClarification] = useState(null); // { questions: [...] }
+    const [activePlanTasks, setActivePlanTasks] = useState(null); // { task_list_id, tasks: [...] }
     const messagesEndRef = useRef(null);
     const eventSourceRef = useRef(null);
     const abortRef = useRef(null);
@@ -495,6 +497,24 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 setStreamingMessage('');
                 setLoading(false);
                 break;
+
+            case 'plan_created':
+                setActivePlanTasks({ task_list_id: data.task_list_id, tasks: data.tasks || [] });
+                setMessages(prev => [...prev, {
+                    role: 'plan',
+                    task_list_id: data.task_list_id,
+                    tasks: data.tasks || [],
+                    timestamp: new Date(),
+                }]);
+                setStreamingStatus('Executing plan...');
+                break;
+
+            case 'clarification_needed':
+                setPendingClarification({ questions: data.questions || [] });
+                setLoading(false);
+                setStreamingMessage('');
+                setStreamingStatus('');
+                break;
         }
     }
 
@@ -707,6 +727,41 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 <div ref={messagesEndRef} />
             </div>
 
+            {pendingClarification && (
+                <div className="chat-clarification">
+                    <div className="clarification-header">
+                        <HelpCircle size={14} />
+                        <span>A few quick questions before I proceed:</span>
+                        <button
+                            className="btn-icon ms-auto"
+                            onClick={() => setPendingClarification(null)}
+                            title="Dismiss"
+                        >
+                            <X size={13} />
+                        </button>
+                    </div>
+                    {pendingClarification.questions.map((q) => (
+                        <div key={q.id} className="clarification-question">
+                            <div className="clarification-q-text">{q.text}</div>
+                            <div className="clarification-options">
+                                {(q.options || []).map((opt, i) => (
+                                    <button
+                                        key={i}
+                                        className="clarification-option-btn"
+                                        onClick={() => {
+                                            setPendingClarification(null);
+                                            setInput(opt);
+                                        }}
+                                    >
+                                        {opt}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             <div className="chat-input">
                 {!workspace?.id && (
                     <div className="alert alert-warning py-2 px-3 mb-2 small mb-0">
@@ -773,6 +828,28 @@ function renderGroupedMessages(messages, handleApply) {
         }
 
         flushSystem();
+
+        if (msg.role === 'plan') {
+            out.push(
+                <div key={idx} className="chat-message plan-message">
+                    <div className="plan-header">
+                        <ListChecks size={14} />
+                        <span>AI Plan — {msg.tasks.length} step{msg.tasks.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <ol className="plan-task-list">
+                        {msg.tasks.map((t) => (
+                            <li key={t.id} className={`plan-task plan-task--${t.status}`}>
+                                <span className="plan-task-title">{t.title}</span>
+                                {t.description && (
+                                    <span className="plan-task-desc">{t.description}</span>
+                                )}
+                            </li>
+                        ))}
+                    </ol>
+                </div>
+            );
+            continue;
+        }
 
         out.push(
             <div key={idx} className={`chat-message ${msg.role} ${msg.isError ? 'error' : ''}`}>

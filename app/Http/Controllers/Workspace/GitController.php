@@ -124,6 +124,232 @@ class GitController extends Controller
         return response()->json($this->runGit($workspace, ...$args));
     }
 
+    public function blame(Request $request, Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $data = $request->validate(['file' => 'required|string']);
+        $file = $this->sanitizeGitPath($workspace, $data['file']);
+
+        $result = $this->runGit($workspace, 'blame', '--line-porcelain', '--', $file);
+
+        if (!$result['success']) {
+            return response()->json($result);
+        }
+
+        return response()->json(['success' => true, 'blame' => $this->parseBlame($result['output'] ?? '')]);
+    }
+
+    public function parsedDiff(Request $request, Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $data = $request->validate([
+            'file'   => 'nullable|string',
+            'staged' => 'nullable|boolean',
+            'commit' => 'nullable|string',
+        ]);
+
+        $file   = $data['file'] ?? null;
+        $staged = filter_var($data['staged'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $commit = $data['commit'] ?? null;
+
+        $args = ['diff'];
+        if ($staged) {
+            $args[] = '--cached';
+        }
+        if ($commit !== null && $commit !== '') {
+            $this->assertSafeGitRef($commit);
+            $args[] = $commit;
+        }
+        if ($file !== null && $file !== '') {
+            $args[] = '--';
+            $args[] = $this->sanitizeGitPath($workspace, $file);
+        }
+
+        $result = $this->runGit($workspace, ...$args);
+
+        if (!$result['success']) {
+            return response()->json($result);
+        }
+
+        return response()->json(['success' => true, 'files' => $this->parseUnifiedDiff($result['output'] ?? '')]);
+    }
+
+    public function branches(Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $result        = $this->runGit($workspace, 'branch', '-a', '--format=%(refname:short)');
+        $currentResult = $this->runGit($workspace, 'rev-parse', '--abbrev-ref', 'HEAD');
+
+        $branches = [];
+        if ($result['success']) {
+            $branches = array_values(array_filter(
+                preg_split('/\r\n|\r|\n/', trim($result['output'] ?? '')),
+                fn ($b) => $b !== ''
+            ));
+        }
+
+        return response()->json([
+            'success'  => true,
+            'current'  => trim($currentResult['output'] ?? ''),
+            'branches' => $branches,
+        ]);
+    }
+
+    public function createBranch(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['name' => 'required|string']);
+        $this->assertSafeGitRef($data['name']);
+
+        return response()->json($this->runGit($workspace, 'branch', $data['name']));
+    }
+
+    public function checkout(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'branch' => 'required|string',
+            'create' => 'nullable|boolean',
+        ]);
+
+        $this->assertSafeGitRef($data['branch']);
+
+        $args = ['checkout'];
+        if (!empty($data['create'])) {
+            $args[] = '-b';
+        }
+        $args[] = $data['branch'];
+
+        $result = $this->runGit($workspace, ...$args);
+
+        // After checkout, refresh git_enabled status if needed
+        if ($result['success']) {
+            $result['branch'] = $data['branch'];
+        }
+
+        return response()->json($result);
+    }
+
+    protected function parseBlame(string $output): array
+    {
+        $lines       = preg_split('/\r\n|\r|\n/', $output);
+        $blame       = [];
+        $current     = [];
+        $commitCache = [];
+
+        foreach ($lines as $line) {
+            if (preg_match('/^([0-9a-f]{40}) \d+ \d+/', $line, $m)) {
+                $hash    = $m[1];
+                $current = ['hash' => $hash];
+                if (isset($commitCache[$hash])) {
+                    $current = array_merge($commitCache[$hash], ['hash' => $hash]);
+                }
+                continue;
+            }
+
+            if (preg_match('/^author (.+)$/', $line, $m)) {
+                $current['author'] = $m[1];
+            } elseif (preg_match('/^author-mail <(.+)>$/', $line, $m)) {
+                $current['email'] = $m[1];
+            } elseif (preg_match('/^author-time (\d+)$/', $line, $m)) {
+                $current['timestamp'] = (int) $m[1];
+            } elseif (preg_match('/^summary (.+)$/', $line, $m)) {
+                $current['summary'] = $m[1];
+            } elseif (str_starts_with($line, "\t")) {
+                $current['content'] = substr($line, 1);
+                $current['line']    = count($blame) + 1;
+
+                if (!empty($current['hash']) && !isset($commitCache[$current['hash']])) {
+                    $commitCache[$current['hash']] = [
+                        'author'    => $current['author'] ?? '',
+                        'email'     => $current['email'] ?? '',
+                        'timestamp' => $current['timestamp'] ?? null,
+                        'summary'   => $current['summary'] ?? '',
+                    ];
+                }
+
+                $blame[]  = $current;
+                $current  = [];
+            }
+        }
+
+        return $blame;
+    }
+
+    protected function parseUnifiedDiff(string $output): array
+    {
+        $files       = [];
+        $currentFile = null;
+        $currentHunk = null;
+        $oldLine     = 0;
+        $newLine     = 0;
+        $lines       = preg_split('/\r\n|\r|\n/', $output);
+
+        foreach ($lines as $line) {
+            if (str_starts_with($line, 'diff --git ')) {
+                if ($currentFile !== null) {
+                    if ($currentHunk !== null) {
+                        $currentFile['hunks'][] = $currentHunk;
+                        $currentHunk = null;
+                    }
+                    $files[] = $currentFile;
+                }
+                $currentFile = ['file' => '', 'additions' => 0, 'deletions' => 0, 'hunks' => []];
+                continue;
+            }
+
+            if ($currentFile === null) continue;
+
+            if (str_starts_with($line, '+++ b/')) {
+                $currentFile['file'] = substr($line, 6);
+                continue;
+            }
+            if (str_starts_with($line, '--- ') || str_starts_with($line, '+++ ') || str_starts_with($line, 'index ') || str_starts_with($line, 'new file') || str_starts_with($line, 'deleted file')) {
+                continue;
+            }
+
+            if (preg_match('/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/', $line, $m)) {
+                if ($currentHunk !== null) {
+                    $currentFile['hunks'][] = $currentHunk;
+                }
+                $oldLine     = (int) $m[1];
+                $newLine     = (int) $m[2];
+                $currentHunk = ['old_start' => $oldLine, 'new_start' => $newLine, 'lines' => []];
+                continue;
+            }
+
+            if ($currentHunk === null) continue;
+
+            if (str_starts_with($line, '+')) {
+                $currentHunk['lines'][]  = ['type' => 'added',   'old_line' => null,     'new_line' => $newLine, 'content' => substr($line, 1)];
+                $currentFile['additions']++;
+                $newLine++;
+            } elseif (str_starts_with($line, '-')) {
+                $currentHunk['lines'][]  = ['type' => 'removed',  'old_line' => $oldLine, 'new_line' => null,     'content' => substr($line, 1)];
+                $currentFile['deletions']++;
+                $oldLine++;
+            } elseif (str_starts_with($line, ' ')) {
+                $currentHunk['lines'][]  = ['type' => 'context',  'old_line' => $oldLine, 'new_line' => $newLine, 'content' => substr($line, 1)];
+                $oldLine++;
+                $newLine++;
+            }
+        }
+
+        if ($currentFile !== null) {
+            if ($currentHunk !== null) {
+                $currentFile['hunks'][] = $currentHunk;
+            }
+            $files[] = $currentFile;
+        }
+
+        return $files;
+    }
+
     protected function runGit(Workspace $workspace, ...$args)
     {
         if (!is_dir($workspace->full_path)) {

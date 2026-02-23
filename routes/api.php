@@ -243,6 +243,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files
+        Route::get('files/search', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'search']);
         Route::get('files', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'files']);
         Route::get('files/list', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'listDirectory']);
         Route::get('files/read', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'readFile']);
@@ -264,6 +265,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('git/pull', [\App\Http\Controllers\Workspace\GitController::class, 'pull']);
         Route::get('git/log', [\App\Http\Controllers\Workspace\GitController::class, 'log']);
         Route::get('git/diff', [\App\Http\Controllers\Workspace\GitController::class, 'diff']);
+        Route::get('git/blame', [\App\Http\Controllers\Workspace\GitController::class, 'blame']);
+        Route::get('git/diff-parsed', [\App\Http\Controllers\Workspace\GitController::class, 'parsedDiff']);
+        Route::get('git/branches', [\App\Http\Controllers\Workspace\GitController::class, 'branches']);
+        Route::post('git/branch', [\App\Http\Controllers\Workspace\GitController::class, 'createBranch']);
+        Route::post('git/checkout', [\App\Http\Controllers\Workspace\GitController::class, 'checkout']);
 
         // AI Commands
         Route::post('ai/chat', [\App\Http\Controllers\Workspace\AICommandController::class, 'chat']);

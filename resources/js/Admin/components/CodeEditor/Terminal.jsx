@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import axios from 'axios';
-import { Terminal as TerminalIcon, X, Trash2 } from 'lucide-react';
-import { toast } from 'react-toastify';
+import { Terminal as TerminalIcon, X, Trash2, Plus } from 'lucide-react';
 
-export default function Terminal({ workspace, onClose, onTerminalApi }) {
+let tabCounter = 0;
+function makeTabMeta() {
+    tabCounter++;
+    return { id: tabCounter, label: 'bash' };
+}
+
+// ─── Single terminal instance ────────────────────────────────────────────────
+
+function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegisterClear, onClick }) {
     const [history, setHistory] = useState([]);
     const [command, setCommand] = useState('');
     const [executing, setExecuting] = useState(false);
@@ -15,16 +21,30 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
     const inputRef = useRef(null);
     const abortRef = useRef(null);
 
+    // Scroll to bottom when history changes (only if active)
     useEffect(() => {
-        scrollToBottom();
-    }, [history]);
+        if (active && terminalBodyRef.current) {
+            terminalBodyRef.current.scrollTop = terminalBodyRef.current.scrollHeight;
+        }
+    }, [history, active]);
 
+    // Focus input when tab becomes active
     useEffect(() => {
-        focusInput();
-    }, [executing, workspace]);
+        if (active && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [active, executing, workspace]);
 
+    // Register clear callback with parent
     useEffect(() => {
-        if (!onTerminalApi) return;
+        if (onRegisterClear) {
+            onRegisterClear(tabMeta.id, () => setHistory([]));
+        }
+    }, [onRegisterClear, tabMeta.id]);
+
+    // Expose terminal API to parent (only when active)
+    useEffect(() => {
+        if (!onTerminalApi || !active) return;
         onTerminalApi({
             appendEntries: (entries) => {
                 const list = Array.isArray(entries) ? entries : [entries];
@@ -35,26 +55,10 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
             },
             appendOutput: (text, type = 'output') => {
                 if (!text) return;
-                setHistory(prev => [...prev, {
-                    type,
-                    content: text,
-                    timestamp: new Date(),
-                }]);
+                setHistory(prev => [...prev, { type, content: text, timestamp: new Date() }]);
             },
         });
-    }, [onTerminalApi]);
-
-    function scrollToBottom() {
-        if (terminalBodyRef.current) {
-            terminalBodyRef.current.scrollTop = terminalBodyRef.current.scrollHeight;
-        }
-    }
-
-    function focusInput() {
-        if (inputRef.current) {
-            inputRef.current.focus();
-        }
-    }
+    }, [onTerminalApi, active]);
 
     const executeCommand = useCallback(async (e) => {
         e?.preventDefault();
@@ -62,7 +66,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
 
         const cmd = command.trim();
 
-        // Add to command history
         setCommandHistory(prev => {
             const filtered = prev.filter(c => c !== cmd);
             return [cmd, ...filtered].slice(0, 100);
@@ -70,7 +73,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         setHistoryIndex(-1);
         setSavedInput('');
 
-        // Show command in terminal
         setHistory(prev => [...prev, {
             type: 'command',
             content: cmd,
@@ -80,7 +82,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         setCommand('');
         setExecuting(true);
 
-        // Handle local 'clear' command
         if (cmd === 'clear' || cmd === 'cls') {
             setHistory([]);
             setExecuting(false);
@@ -88,7 +89,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         }
 
         try {
-            // Streaming terminal execution
             const url = `/api/workspaces/${workspace.id}/terminal/execute-stream`;
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
             const controller = new AbortController();
@@ -100,7 +100,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                     'Accept': 'text/event-stream',
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
                 },
                 body: JSON.stringify({
                     command: cmd,
@@ -110,9 +110,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                 signal: controller.signal,
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -143,65 +141,43 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
             }
         } catch (error) {
             if (error.name === 'AbortError') {
-                setHistory(prev => [...prev, {
-                    type: 'warning',
-                    content: 'Command cancelled',
-                    timestamp: new Date(),
-                }]);
+                setHistory(prev => [...prev, { type: 'warning', content: 'Command cancelled', timestamp: new Date() }]);
                 return;
             }
-            const errorMsg = error.response?.data?.error || error.message || 'Command failed';
-            setHistory(prev => [...prev, {
-                type: 'error',
-                content: errorMsg,
-                timestamp: new Date(),
-            }]);
+            const msg = error.response?.data?.error || error.message || 'Command failed';
+            setHistory(prev => [...prev, { type: 'error', content: msg, timestamp: new Date() }]);
         } finally {
             setExecuting(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [command, executing, workspace, currentDir]);
 
     function handleTerminalEvent(event, data) {
         switch (event) {
             case 'stdout':
-                if (data.text) {
-                    setHistory(prev => [...prev, { type: 'output', content: data.text, timestamp: new Date() }]);
-                }
+                if (data.text) setHistory(prev => [...prev, { type: 'output', content: data.text, timestamp: new Date() }]);
                 break;
             case 'stderr':
-                if (data.text) {
-                    setHistory(prev => [...prev, { type: 'stderr', content: data.text, timestamp: new Date() }]);
-                }
+                if (data.text) setHistory(prev => [...prev, { type: 'stderr', content: data.text, timestamp: new Date() }]);
                 break;
             case 'approval_required':
-                setHistory(prev => [...prev, {
-                    type: 'warning',
-                    content: 'This command requires approval. Use the Approvals panel to approve it.',
-                    timestamp: new Date(),
-                }]);
+                setHistory(prev => [...prev, { type: 'warning', content: 'This command requires approval. Use the Approvals panel to approve it.', timestamp: new Date() }]);
                 break;
             case 'exit':
                 if (data.working_directory) setCurrentDir(data.working_directory);
                 break;
             case 'error':
-                setHistory(prev => [...prev, {
-                    type: 'error',
-                    content: data.error || 'Command failed',
-                    timestamp: new Date(),
-                }]);
+                setHistory(prev => [...prev, { type: 'error', content: data.error || 'Command failed', timestamp: new Date() }]);
                 break;
         }
     }
 
     function handleKeyDown(e) {
-        // Ctrl+L: Clear
         if (e.key === 'l' && e.ctrlKey) {
             e.preventDefault();
             setHistory([]);
             return;
         }
-
-        // Ctrl+C: Cancel running command OR current input
         if (e.key === 'c' && e.ctrlKey) {
             e.preventDefault();
             if (executing && abortRef.current) {
@@ -209,18 +185,11 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                 return;
             }
             if (command) {
-                setHistory(prev => [...prev, {
-                    type: 'command',
-                    content: command + '^C',
-                    dir: currentDir,
-                    timestamp: new Date(),
-                }]);
+                setHistory(prev => [...prev, { type: 'command', content: command + '^C', dir: currentDir, timestamp: new Date() }]);
                 setCommand('');
             }
             return;
         }
-
-        // Up arrow: Previous command
         if (e.key === 'ArrowUp') {
             e.preventDefault();
             if (commandHistory.length === 0) return;
@@ -230,8 +199,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
             setCommand(commandHistory[newIndex]);
             return;
         }
-
-        // Down arrow: Next command
         if (e.key === 'ArrowDown') {
             e.preventDefault();
             if (historyIndex <= 0) {
@@ -246,10 +213,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         }
     }
 
-    function clearHistory() {
-        setHistory([]);
-    }
-
     function getPromptPath() {
         if (currentDir === '/' || currentDir === '~') return '~';
         const parts = currentDir.replace(/^\//, '').split('/');
@@ -257,42 +220,12 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         return '.../' + parts.slice(-2).join('/');
     }
 
-    if (!workspace) {
-        return (
-            <div className="terminal-panel">
-                <div className="terminal-header">
-                    <div className="d-flex align-items-center gap-2">
-                        <TerminalIcon size={16} />
-                        <span>Terminal</span>
-                    </div>
-                    <button className="btn-icon" onClick={onClose}><X size={16} /></button>
-                </div>
-                <div className="terminal-body">
-                    <div className="text-center text-muted p-3">
-                        <p>Select a workspace to use terminal</p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     return (
-        <div className="terminal-panel" onClick={focusInput}>
-            <div className="terminal-header">
-                <div className="d-flex align-items-center gap-2">
-                    <TerminalIcon size={16} />
-                    <span className="terminal-title">Terminal</span>
-                    <span className="terminal-workspace-badge">{workspace.name}</span>
-                </div>
-                <div className="d-flex gap-1">
-                    <button className="btn-icon" onClick={clearHistory} title="Clear (Ctrl+L)">
-                        <Trash2 size={14} />
-                    </button>
-                    <button className="btn-icon" onClick={onClose}><X size={16} /></button>
-                </div>
-            </div>
-
-            <div className="terminal-body" ref={terminalBodyRef}>
+        <div
+            style={{ display: active ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}
+            onClick={onClick}
+        >
+            <div className="terminal-body" ref={terminalBodyRef} style={{ flex: 1, overflowY: 'auto' }}>
                 <div className="terminal-output">
                     {history.length === 0 && (
                         <div className="terminal-welcome">
@@ -301,7 +234,6 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                             </span>
                         </div>
                     )}
-
                     {history.map((entry, idx) => (
                         <div key={idx} className={`terminal-line terminal-${entry.type}`}>
                             {entry.type === 'command' && (
@@ -315,18 +247,10 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                                     <span className="terminal-cmd-text">{entry.content}</span>
                                 </div>
                             )}
-                            {entry.type === 'output' && (
-                                <pre className="terminal-output-text">{entry.content}</pre>
-                            )}
-                            {entry.type === 'stderr' && (
-                                <pre className="terminal-stderr-text">{entry.content}</pre>
-                            )}
-                            {entry.type === 'error' && (
-                                <pre className="terminal-error-text">{entry.content}</pre>
-                            )}
-                            {entry.type === 'warning' && (
-                                <div className="terminal-warning-text">{entry.content}</div>
-                            )}
+                            {entry.type === 'output' && <pre className="terminal-output-text">{entry.content}</pre>}
+                            {entry.type === 'stderr' && <pre className="terminal-stderr-text">{entry.content}</pre>}
+                            {entry.type === 'error' && <pre className="terminal-error-text">{entry.content}</pre>}
+                            {entry.type === 'warning' && <div className="terminal-warning-text">{entry.content}</div>}
                         </div>
                     ))}
                 </div>
@@ -343,18 +267,182 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                         type="text"
                         className="terminal-input-field"
                         value={command}
-                        onChange={(e) => {
-                            setCommand(e.target.value);
-                            setHistoryIndex(-1);
-                        }}
+                        onChange={(e) => { setCommand(e.target.value); setHistoryIndex(-1); }}
                         onKeyDown={handleKeyDown}
                         disabled={executing}
                         autoComplete="off"
                         spellCheck="false"
-                        autoFocus
                     />
                     {executing && <span className="terminal-spinner" />}
                 </form>
+            </div>
+        </div>
+    );
+}
+
+// ─── Multi-tab Terminal container ────────────────────────────────────────────
+
+export default function Terminal({ workspace, onClose, onTerminalApi }) {
+    const [tabs, setTabs] = useState(() => [makeTabMeta()]);
+    const [activeId, setActiveId] = useState(() => tabs[0].id);
+    const clearCallbacks = useRef({});
+    const activeInputRef = useRef(null);
+
+    function addTab() {
+        const meta = makeTabMeta();
+        setTabs(prev => [...prev, meta]);
+        setActiveId(meta.id);
+    }
+
+    function closeTab(id) {
+        if (tabs.length <= 1) return;
+        setTabs(prev => {
+            const idx = prev.findIndex(t => t.id === id);
+            const next = prev.filter(t => t.id !== id);
+            if (id === activeId) {
+                setActiveId(next[Math.max(0, idx - 1)].id);
+            }
+            delete clearCallbacks.current[id];
+            return next;
+        });
+    }
+
+    function registerClear(id, fn) {
+        clearCallbacks.current[id] = fn;
+    }
+
+    function clearActive() {
+        clearCallbacks.current[activeId]?.();
+    }
+
+    function focusActive() {
+        activeInputRef.current?.focus();
+    }
+
+    if (!workspace) {
+        return (
+            <div className="terminal-panel">
+                <div className="terminal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <TerminalIcon size={14} />
+                        <span style={{ fontSize: '11px' }}>Terminal</span>
+                    </div>
+                    <button className="btn-icon" onClick={onClose}><X size={16} /></button>
+                </div>
+                <div className="terminal-body">
+                    <div className="text-center text-muted p-3">
+                        <p>Select a workspace to use terminal</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="terminal-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {/* Tab Bar */}
+            <div
+                className="terminal-header"
+                style={{
+                    display: 'flex',
+                    alignItems: 'stretch',
+                    height: '34px',
+                    flexShrink: 0,
+                    overflowX: 'auto',
+                    overflowY: 'hidden',
+                }}
+            >
+                {/* Tabs */}
+                <div style={{ display: 'flex', alignItems: 'stretch', flex: 1, overflow: 'hidden' }}>
+                    {tabs.map(tab => {
+                        const isActive = tab.id === activeId;
+                        return (
+                            <div
+                                key={tab.id}
+                                onClick={() => setActiveId(tab.id)}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '0 10px',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    whiteSpace: 'nowrap',
+                                    background: isActive ? 'rgba(255,107,53,0.08)' : 'transparent',
+                                    color: isActive ? '#c9d1d9' : '#8b949e',
+                                    borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
+                                    borderRight: '1px solid #1c2128',
+                                    userSelect: 'none',
+                                    flexShrink: 0,
+                                }}
+                            >
+                                <TerminalIcon size={11} style={{ color: isActive ? '#ff6b35' : '#8b949e' }} />
+                                <span>{tab.label}</span>
+                                {tabs.length > 1 && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: '#8b949e',
+                                            padding: '0 1px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            borderRadius: '2px',
+                                            lineHeight: 1,
+                                        }}
+                                        title="Close terminal"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    {/* New tab button */}
+                    <button
+                        onClick={addTab}
+                        title="New terminal"
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: '#8b949e',
+                            padding: '0 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            flexShrink: 0,
+                        }}
+                    >
+                        <Plus size={12} />
+                    </button>
+                </div>
+
+                {/* Right controls */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '0 6px', flexShrink: 0, marginLeft: 'auto' }}>
+                    <button className="btn-icon" onClick={clearActive} title="Clear terminal (Ctrl+L)">
+                        <Trash2 size={13} />
+                    </button>
+                    <button className="btn-icon" onClick={onClose} title="Close terminal panel">
+                        <X size={14} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Terminal instances (all mounted, inactive hidden) */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={focusActive}>
+                {tabs.map(tab => (
+                    <TerminalInstance
+                        key={tab.id}
+                        workspace={workspace}
+                        active={tab.id === activeId}
+                        tabMeta={tab}
+                        onTerminalApi={tab.id === activeId ? onTerminalApi : undefined}
+                        onRegisterClear={registerClear}
+                    />
+                ))}
             </div>
         </div>
     );
