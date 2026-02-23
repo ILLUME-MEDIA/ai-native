@@ -12,14 +12,23 @@ class DoorDashService
     private string $keyId;
     private string $signingSecret;
     private string $baseUrl;
+    private string $env;  // "sandbox" or "production"
 
     public function __construct()
     {
-        $this->developerId   = (string) config('services.doordash.developer_id', '');
-        $this->keyId         = (string) config('services.doordash.key_id', '');
-        $this->signingSecret = (string) config('services.doordash.signing_secret', '');
-        $this->baseUrl       = rtrim((string) config('services.doordash.base_url', 'https://openapi.doordash.com'), '/');
+        // Pick credential set based on DOORDASH_ENV
+        $this->env = config('services.doordash.env', 'sandbox');
+        $cfg = config("services.doordash.{$this->env}") ?? [];
+
+        $this->developerId   = (string) ($cfg['developer_id']   ?? '');
+        $this->keyId         = (string) ($cfg['key_id']          ?? '');
+        $this->signingSecret = (string) ($cfg['signing_secret']  ?? '');
+        $this->baseUrl       = rtrim((string) ($cfg['base_url']  ?? 'https://openapi.doordash.com/drive/v1'), '/');
     }
+
+    /** Returns "sandbox" or "production" */
+    public function getEnv(): string { return $this->env; }
+    public function isSandbox(): bool { return $this->env === 'sandbox'; }
 
     // ── JWT ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +109,7 @@ class DoorDashService
             $business->zip ?? '',
         ]));
 
-        return $this->request('post', '/drive/v2/deliveries', [
+        return $this->request('post', '/deliveries', [
             'external_delivery_id'  => $order->order_number,
             'pickup_address'        => $pickupAddress,
             'pickup_business_name'  => $business->name,
@@ -116,11 +125,59 @@ class DoorDashService
     }
 
     /**
+     * Get a delivery fee quote without creating a delivery.
+     * Returns the DoorDash quote object including fee, currency, expiry.
+     *
+     * @param  string  $pickupAddress   Full pickup address string
+     * @param  string  $dropoffAddress  Full dropoff address string
+     * @param  int     $orderValue      Order value in cents
+     */
+    public function getQuote(string $pickupAddress, string $dropoffAddress, int $orderValue = 0): array
+    {
+        // DoorDash quotes endpoint lives in v2 regardless of the configured base URL.
+        // Derive the host from baseUrl and always use the known v2 quotes path.
+        $parsed    = parse_url($this->baseUrl);
+        $host      = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? 'openapi.doordash.com');
+        $quoteUrl  = $host . '/drive/v2/deliveries/quotes';
+
+        $jwt      = $this->generateJwt();
+        $payload  = [
+            'external_delivery_id' => 'quote-' . uniqid(),
+            'pickup_address'       => $pickupAddress,
+            'dropoff_address'      => $dropoffAddress,
+            'order_value'          => $orderValue,
+            'currency'             => 'USD',
+        ];
+
+        $response = Http::withHeaders([
+            'Authorization' => "Bearer {$jwt}",
+            'Content-Type'  => 'application/json',
+        ])->post($quoteUrl, $payload);
+
+        if ($response->failed()) {
+            $body = $response->body();
+            $json = json_decode($body, true);
+            // Detect when credentials only allow Classic (v1) — no quote support
+            if (isset($json['code']) && $json['code'] === 'authorization_error') {
+                throw new \RuntimeException(
+                    'Delivery quotes require DoorDash Drive API v2. ' .
+                    'Your current credentials only support Classic API (v1). ' .
+                    'You can still dispatch deliveries; quotes are not available with this plan.'
+                );
+            }
+            Log::error("DoorDash quote API error: {$body}");
+            throw new \RuntimeException($json['message'] ?? $body);
+        }
+
+        return $response->json() ?? [];
+    }
+
+    /**
      * Get live delivery status from DoorDash.
      */
     public function getDelivery(string $externalDeliveryId): array
     {
-        return $this->request('get', "/drive/v2/deliveries/{$externalDeliveryId}");
+        return $this->request('get', "/deliveries/{$externalDeliveryId}");
     }
 
     /**
@@ -128,7 +185,7 @@ class DoorDashService
      */
     public function cancelDelivery(string $externalDeliveryId): array
     {
-        return $this->request('put', "/drive/v2/deliveries/{$externalDeliveryId}/cancel");
+        return $this->request('put', "/deliveries/{$externalDeliveryId}/cancel");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

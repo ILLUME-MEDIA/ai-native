@@ -766,33 +766,37 @@ class OtpAuthController extends Controller
     private function captureDiscoveryUser(string $email, array $info, Request $request): void
     {
         try {
+            // Helper: return numeric value or null (prevents string→int column errors)
+            $int   = fn($v) => isset($v) && is_numeric($v) ? (int)   $v : null;
+            $float = fn($v) => isset($v) && is_numeric($v) ? (float) $v : null;
+
             // Device-level fields stored on discovery_users
             $deviceFields = [
                 'email'                => $email,
                 'ip_address'           => $info['ip_address']           ?? $request->ip(),
                 'isp'                  => $info['isp']                  ?? null,
                 'connection_type'      => $info['connection_type']       ?? null,
-                'downlink'             => $info['downlink']              ?? null,
-                'rtt'                  => $info['rtt']                   ?? null,
+                'downlink'             => $float($info['downlink']       ?? null),
+                'rtt'                  => $int($info['rtt']              ?? null),
                 'browser'              => $info['browser']               ?? null,
                 'browser_version'      => $info['browser_version']       ?? null,
                 'user_agent'           => $info['user_agent']            ?? $request->userAgent(),
                 'language'             => $info['language']              ?? null,
                 'languages'            => $info['languages']             ?? null,
                 'timezone'             => $info['timezone']              ?? null,
-                'cookies_enabled'      => $info['cookies_enabled']       ?? null,
-                'do_not_track'         => $info['do_not_track']          ?? null,
+                'cookies_enabled'      => isset($info['cookies_enabled']) ? (bool) $info['cookies_enabled'] : null,
+                'do_not_track'         => isset($info['do_not_track'])   ? (bool) $info['do_not_track']   : null,
                 'referrer'             => $info['referrer']              ?? null,
                 'device_type'          => $info['device_type']           ?? null,
                 'os'                   => $info['os']                    ?? null,
                 'os_version'           => $info['os_version']            ?? null,
                 'platform'             => $info['platform']              ?? null,
-                'hardware_concurrency' => $info['hardware_concurrency']  ?? null,
-                'device_memory'        => $info['device_memory']         ?? null,
-                'screen_width'         => $info['screen_width']          ?? null,
-                'screen_height'        => $info['screen_height']         ?? null,
-                'pixel_ratio'          => $info['pixel_ratio']           ?? null,
-                'color_depth'          => $info['color_depth']           ?? null,
+                'hardware_concurrency' => $int($info['hardware_concurrency'] ?? null),
+                'device_memory'        => $int($info['device_memory']    ?? null),
+                'screen_width'         => $int($info['screen_width']     ?? null),
+                'screen_height'        => $int($info['screen_height']    ?? null),
+                'pixel_ratio'          => $float($info['pixel_ratio']    ?? null),
+                'color_depth'          => $int($info['color_depth']      ?? null),
                 'fingerprint'          => $info['fingerprint']           ?? null,
                 'webgl_renderer'       => $info['webgl_renderer']        ?? null,
                 'webgl_vendor'         => $info['webgl_vendor']          ?? null,

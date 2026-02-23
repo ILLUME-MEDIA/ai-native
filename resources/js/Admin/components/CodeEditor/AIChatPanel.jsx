@@ -219,6 +219,11 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     async function handleSend() {
         if (!input.trim() || loading) return;
 
+        if (!workspace?.id) {
+            toast.error('No workspace selected. Please open or create a workspace first.');
+            return;
+        }
+
         const looksLikeUiRequest = /(auth|login|register|signup|forgot|reset|page|pages|screen|ui|form|layout|dashboard)/i.test(input);
         if (looksLikeUiRequest && (uiTarget === 'ask' || !uiTarget)) {
             setSettingsOpen(true);
@@ -703,9 +708,14 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             </div>
 
             <div className="chat-input">
+                {!workspace?.id && (
+                    <div className="alert alert-warning py-2 px-3 mb-2 small mb-0">
+                        Select a workspace first to use AI chat.
+                    </div>
+                )}
                 <textarea
                     className="form-control"
-                    placeholder="Ask AI to help with your code..."
+                    placeholder={workspace?.id ? "Ask AI to help with your code..." : "No workspace selected..."}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -715,7 +725,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         }
                     }}
                     rows={3}
-                    disabled={loading}
+                    disabled={loading || !workspace?.id}
                 />
                 <div className="d-flex gap-2">
                     {loading ? (
@@ -726,7 +736,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     <button
                         className="btn btn-primary"
                         onClick={handleSend}
-                        disabled={loading || !input.trim()}
+                        disabled={loading || !input.trim() || !workspace?.id}
                     >
                         {loading ? <Loader size={18} className="spinning" /> : <Send size={18} />}
                     </button>

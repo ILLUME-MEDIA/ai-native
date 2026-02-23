@@ -136,11 +136,18 @@ class OrderController extends Controller
 
         CartItem::where('session_id', $sid)->where('business_id', $data['business_id'])->delete();
 
+        $order->load('business');
+
+        // ── Auto-accept: confirm + set preparing immediately ─────────────────
+        if ($order->business?->auto_accept) {
+            $order->update(['status' => 'preparing']);
+        }
+
         // ── Auto-dispatch DoorDash delivery ──────────────────────────────────
         if (($data['delivery_vendor'] ?? '') === 'doordash' && $order->delivery_address) {
             try {
                 $doorDash = app(DoorDashService::class);
-                $delivery = $doorDash->createDelivery($order->load('business'));
+                $delivery = $doorDash->createDelivery($order);
                 $order->update([
                     'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
                     'doordash_status'       => $delivery['delivery_status'] ?? 'created',

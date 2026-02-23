@@ -13,6 +13,58 @@ class DoorDashController extends Controller
 {
     public function __construct(private DoorDashService $doorDash) {}
 
+    // ── POST /api/delivery/doordash/quote ─────────────────────────────────────
+
+    /**
+     * Get a delivery fee quote from DoorDash.
+     * Accepts pickup_address, dropoff_address, and optional order_value (in dollars).
+     */
+    public function quote(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'pickup_address'  => 'required|string',
+            'dropoff_address' => 'required|string',
+            'order_value'     => 'nullable|numeric|min:0',
+        ]);
+
+        try {
+            $quote = $this->doorDash->getQuote(
+                $data['pickup_address'],
+                $data['dropoff_address'],
+                (int) round(($data['order_value'] ?? 0) * 100), // convert dollars → cents
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 502);
+        }
+
+        // Normalize the fee to dollars for the response
+        $feeCents = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
+
+        return response()->json([
+            'success'          => true,
+            'fee'              => $feeCents !== null ? round($feeCents / 100, 2) : null,
+            'fee_cents'        => $feeCents,
+            'currency'         => $quote['currency'] ?? 'USD',
+            'expires_at'       => $quote['expires_at'] ?? null,
+            'quote_id'         => $quote['external_delivery_id'] ?? null,
+            'raw'              => $quote,
+        ]);
+    }
+
+    // ── GET /api/delivery/doordash/env ───────────────────────────────────────
+
+    /** Returns the current DoorDash environment (sandbox / production). */
+    public function env(): JsonResponse
+    {
+        return response()->json([
+            'env'        => $this->doorDash->getEnv(),
+            'is_sandbox' => $this->doorDash->isSandbox(),
+        ]);
+    }
+
     // ── GET /api/delivery/doordash/status/{order} ─────────────────────────────
 
     /**

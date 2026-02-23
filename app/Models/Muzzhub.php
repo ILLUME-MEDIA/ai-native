@@ -39,7 +39,7 @@ class Muzzhub extends Model
         'capacity', 'to_go', 'demographics', 'kitchen',
         'restrict_checkin', 'created_app_user', 'createdByUserNum', 'updatedByUserNum',
         'checkin_start', 'checkin_end', 'start_date', 'end_date', 'closedDate',
-        'is_active',
+        'is_active', 'auto_accept',
     ];
 
     protected $casts = [
@@ -64,6 +64,7 @@ class Muzzhub extends Model
         'is_online'         => 'boolean',
         'restrict_checkin'  => 'boolean',
         'created_app_user'  => 'boolean',
+        'auto_accept'       => 'boolean',
     ];
 
     public function category(): BelongsTo

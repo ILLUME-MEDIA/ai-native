@@ -1,7 +1,7 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
     Card, CardBody, CardHeader, Col,
@@ -119,8 +119,8 @@ export default function OrdersPage() {
                             </thead>
                             <tbody>
                                 {orders.map(order => (
-                                    <>
-                                        <tr key={order.id} onClick={() => setExpandedId(expandedId === order.id ? null : order.id)} style={{ cursor: 'pointer' }}>
+                                    <React.Fragment key={order.id}>
+                                        <tr onClick={() => setExpandedId(expandedId === order.id ? null : order.id)} style={{ cursor: 'pointer' }}>
                                             <td><strong className="font-monospace">{order.order_number}</strong></td>
                                             <td><small>{order.business?.name || `#${order.business_id}`}</small></td>
                                             <td>
@@ -202,7 +202,7 @@ export default function OrdersPage() {
                                                 </td>
                                             </tr>
                                         )}
-                                    </>
+                                    </React.Fragment>
                                 ))}
                             </tbody>
                         </table>

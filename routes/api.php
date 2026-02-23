@@ -317,6 +317,8 @@ Route::prefix('ecommerce')->group(function () {
 
 // ── DoorDash Drive Delivery Routes ───────────────────────────────────────────
 Route::prefix('delivery/doordash')->group(function () {
+    Route::get('env',               [DoorDashController::class, 'env']);
+    Route::post('quote',            [DoorDashController::class, 'quote']);
     Route::get('status/{order}',    [DoorDashController::class, 'status']);
     Route::post('dispatch/{order}', [DoorDashController::class, 'dispatch']);
     Route::post('cancel/{order}',   [DoorDashController::class, 'cancel']);

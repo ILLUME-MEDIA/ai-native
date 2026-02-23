@@ -65,6 +65,10 @@ export const menuItems = [{
         url: "/apps/ecommerce/order-add",
         slug: "pages:apps-ecommerce-order-add",
         label: "Add/Edit Order"
+      }, {
+        url: "/apps/ecommerce/deliveries",
+        slug: "pages:apps-ecommerce-deliveries",
+        label: "DoorDash Deliveries"
       }]
     }, {
       url: "/apps/ecommerce/customers",
@@ -89,10 +93,6 @@ export const menuItems = [{
         url: "/apps/ecommerce/seller-details",
         slug: "pages:apps-ecommerce-seller-details",
         label: "Sellers Details"
-      }, {
-        url: "/apps/ecommerce/data-sources",
-        slug: "pages:apps-ecommerce-data-sources",
-        label: "Data Source Hub"
       }, {
         url: "/apps/ecommerce/registrations",
         slug: "pages:apps-ecommerce-registrations",

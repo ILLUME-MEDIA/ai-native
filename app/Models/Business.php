@@ -16,15 +16,16 @@ class Business extends Model
         'address','address_2','city','state','zip','country',
         'phone','email','website',
         'logo','cover_image','latitude','longitude',
-        'price','delivery','featured','is_active',
+        'price','delivery','featured','is_active','auto_accept',
     ];
 
     protected $casts = [
-        'is_active' => 'boolean',
-        'latitude'  => 'float',
-        'longitude' => 'float',
-        'delivery'  => 'boolean',
-        'featured'  => 'boolean',
+        'is_active'   => 'boolean',
+        'latitude'    => 'float',
+        'longitude'   => 'float',
+        'delivery'    => 'boolean',
+        'featured'    => 'boolean',
+        'auto_accept' => 'boolean',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────

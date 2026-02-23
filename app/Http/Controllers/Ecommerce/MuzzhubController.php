@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Ecommerce;
 
 use App\Http\Controllers\Controller;
+use App\Models\Business;
 use App\Models\Muzzhub;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,6 +37,7 @@ class MuzzhubController extends Controller
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name']);
         $record = Muzzhub::create($data);
+        $this->syncAutoAcceptToBusiness($record);
         return response()->json($record, 201);
     }
 
@@ -46,7 +48,20 @@ class MuzzhubController extends Controller
             $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name'] ?? $muzzhub->name, $muzzhub->id);
         }
         $muzzhub->update($data);
+        $this->syncAutoAcceptToBusiness($muzzhub->fresh());
         return response()->json($muzzhub);
+    }
+
+    /**
+     * When auto_accept changes on a Muzzhub listing, sync it to the linked Business
+     * so that OrderController can check $order->business->auto_accept.
+     */
+    private function syncAutoAcceptToBusiness(Muzzhub $muzzhub): void
+    {
+        if ($muzzhub->business_id) {
+            Business::where('id', $muzzhub->business_id)
+                ->update(['auto_accept' => (bool) $muzzhub->auto_accept]);
+        }
     }
 
     public function destroy(Muzzhub $muzzhub): JsonResponse
@@ -132,6 +147,7 @@ class MuzzhubController extends Controller
             'is_online'          => 'boolean',
             'restrict_checkin'   => 'boolean',
             'created_app_user'   => 'boolean',
+            'auto_accept'        => 'boolean',
             // Text features
             'shisha'          => 'nullable|string',
             'drive_thru'      => 'nullable|string',

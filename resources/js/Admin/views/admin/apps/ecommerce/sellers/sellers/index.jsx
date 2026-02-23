@@ -42,7 +42,7 @@ const emptyForm = {
   cash_only: false, pork: false, featured: false, sponsored: false,
   enable_order: false, enable_order_print: false, enable_stripe: false,
   adjust_platform_fee: false, is_online: false, restrict_checkin: false,
-  created_app_user: false,
+  created_app_user: false, auto_accept: false,
   // Text features
   shisha: '', drive_thru: '', reservations: '', outdoor_seating: '',
   prayer: '', restrooms: '', wheelchair: '', credit_cards: '', amenities: '',
@@ -89,6 +89,7 @@ const BOOL_FEATURES = [
   { key: 'restrict_checkin',  label: 'Restrict Check-in' },
   { key: 'created_app_user',  label: 'Created App User' },
   { key: 'yelp_verified',     label: 'Yelp Verified' },
+  { key: 'auto_accept',      label: 'Auto-Accept Orders' },
 ];
 
 const columnHelper = createColumnHelper();

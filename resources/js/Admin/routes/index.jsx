@@ -159,14 +159,14 @@ export const routes = [
     path: '/apps/ecommerce/sellers',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/sellers/sellers'))
   }, {
-    path: '/apps/ecommerce/data-sources',
-    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/data-sources'))
-  }, {
     path: '/apps/ecommerce/registrations',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/registrations'))
   }, {
     path: '/apps/ecommerce/muzzhub-categories',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/muzzhub-categories'))
+  }, {
+    path: '/apps/ecommerce/deliveries',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/deliveries'))
   }, {
     path: '/apps/ecommerce/settings',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/settings'))

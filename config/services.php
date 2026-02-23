@@ -50,10 +50,21 @@ return [
     ],
 
     'doordash' => [
-        'developer_id'   => env('DOORDASH_DEVELOPER_ID'),
-        'key_id'         => env('DOORDASH_KEY_ID'),
-        'signing_secret' => env('DOORDASH_SIGNING_SECRET'),
-        'base_url'       => env('DOORDASH_BASE_URL', 'https://openapi.doordash.com'),
+        'env' => env('DOORDASH_ENV', 'sandbox'), // "sandbox" or "production"
+
+        'sandbox' => [
+            'developer_id'   => env('DOORDASH_SANDBOX_DEVELOPER_ID'),
+            'key_id'         => env('DOORDASH_SANDBOX_KEY_ID'),
+            'signing_secret' => env('DOORDASH_SANDBOX_SIGNING_SECRET'),
+            'base_url'       => env('DOORDASH_SANDBOX_BASE_URL', 'https://openapi.doordash.com/drive/v1'),
+        ],
+
+        'production' => [
+            'developer_id'   => env('DOORDASH_PROD_DEVELOPER_ID'),
+            'key_id'         => env('DOORDASH_PROD_KEY_ID'),
+            'signing_secret' => env('DOORDASH_PROD_SIGNING_SECRET'),
+            'base_url'       => env('DOORDASH_PROD_BASE_URL', 'https://openapi.doordash.com/drive/v1'),
+        ],
     ],
 
 ];
