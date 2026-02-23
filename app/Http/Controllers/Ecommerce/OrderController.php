@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Services\DoorDashService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class OrderController extends Controller
@@ -134,7 +136,23 @@ class OrderController extends Controller
 
         CartItem::where('session_id', $sid)->where('business_id', $data['business_id'])->delete();
 
-        return response()->json($order->load(['business', 'items']), 201);
+        // ── Auto-dispatch DoorDash delivery ──────────────────────────────────
+        if (($data['delivery_vendor'] ?? '') === 'doordash' && $order->delivery_address) {
+            try {
+                $doorDash = app(DoorDashService::class);
+                $delivery = $doorDash->createDelivery($order->load('business'));
+                $order->update([
+                    'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
+                    'doordash_status'       => $delivery['delivery_status'] ?? 'created',
+                    'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
+                ]);
+            } catch (\Throwable $e) {
+                // Don't fail the order — log the error and let admin manually dispatch
+                Log::warning("DoorDash auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
+            }
+        }
+
+        return response()->json($order->fresh()->load(['business', 'items']), 201);
     }
 
     public function updateStatus(Request $request, Order $order): JsonResponse

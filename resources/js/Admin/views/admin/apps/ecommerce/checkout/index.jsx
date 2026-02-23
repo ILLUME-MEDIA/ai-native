@@ -337,19 +337,45 @@ export default function CheckoutPage() {
                     </div>
                   )}
                   {successOrder.delivery_vendor && (
-                    <div className="d-flex justify-content-between">
+                    <div className="d-flex justify-content-between mb-1">
                       <span className="text-muted">Via</span>
                       <Badge bg="info" className="text-capitalize">
                         {successOrder.delivery_vendor.replace('_', ' ')}
                       </Badge>
                     </div>
                   )}
+                  {successOrder.doordash_delivery_id && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">DoorDash ID</span>
+                      <span className="text-muted" style={{ fontSize: '0.85rem' }}>{successOrder.doordash_delivery_id}</span>
+                    </div>
+                  )}
+                  {successOrder.doordash_status && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Delivery Status</span>
+                      <Badge bg="primary" className="text-capitalize">
+                        {successOrder.doordash_status.replace(/_/g, ' ')}
+                      </Badge>
+                    </div>
+                  )}
                 </div>
-                <div className="d-flex gap-2 justify-content-center">
+                <div className="d-flex gap-2 justify-content-center flex-wrap">
                   <Button variant="outline-primary" onClick={() => navigate('/apps/ecommerce/orders')}>
                     <Icon name="list" size={15} className="me-1" />
                     View Orders
                   </Button>
+                  {successOrder.doordash_tracking_url && (
+                    <Button
+                      variant="warning"
+                      as="a"
+                      href={successOrder.doordash_tracking_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Icon name="map-pin" size={15} className="me-1" />
+                      Track Delivery
+                    </Button>
+                  )}
                   <Button variant="primary" onClick={() => navigate('/apps/ecommerce/cart')}>
                     <Icon name="shopping-cart" size={15} className="me-1" />
                     New Order

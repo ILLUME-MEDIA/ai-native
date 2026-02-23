@@ -19,6 +19,7 @@ use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
 use App\Http\Controllers\Ecommerce\DataSourceController;
 use App\Http\Controllers\Ecommerce\BusinessRegistrationController;
+use App\Http\Controllers\Ecommerce\DoorDashController;
 use App\Http\Controllers\Ecommerce\StripeController;
 use Illuminate\Support\Facades\Route;
 
@@ -312,6 +313,14 @@ Route::prefix('ecommerce')->group(function () {
 
     // Order placement — convert cart to order (session-based, no auth required)
     Route::post('orders',           [OrderController::class, 'store']);
+});
+
+// ── DoorDash Drive Delivery Routes ───────────────────────────────────────────
+Route::prefix('delivery/doordash')->group(function () {
+    Route::get('status/{order}',    [DoorDashController::class, 'status']);
+    Route::post('dispatch/{order}', [DoorDashController::class, 'dispatch']);
+    Route::post('cancel/{order}',   [DoorDashController::class, 'cancel']);
+    Route::post('webhook',          [DoorDashController::class, 'webhook']);
 });
 
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────

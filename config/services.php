@@ -44,9 +44,16 @@ return [
     ],
 
     'stripe' => [
-        'secret'      => env('STRIPE_SECRET_KEY'),
-        'publishable' => env('STRIPE_PUBLISHABLE_KEY'),
+        'secret'         => env('STRIPE_SECRET_KEY'),
+        'publishable'    => env('STRIPE_PUBLISHABLE_KEY'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+    ],
+
+    'doordash' => [
+        'developer_id'   => env('DOORDASH_DEVELOPER_ID'),
+        'key_id'         => env('DOORDASH_KEY_ID'),
+        'signing_secret' => env('DOORDASH_SIGNING_SECRET'),
+        'base_url'       => env('DOORDASH_BASE_URL', 'https://openapi.doordash.com'),
     ],
 
 ];
