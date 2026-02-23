@@ -5,45 +5,126 @@ info:
   description: |
     Complete API for the MyApps platform.
 
-    ## Order flow (Menu & Muzzhub)
-    Menu and orders are tied to **Business**. Muzzhub sellers can be linked to a Business via `business_id` on the Muzzhub record. Then:
-    - **Menu**: Use `GET /ecommerce/muzzhub/{id}/menu-categories` and `.../menu-items` (they use the linked Business), or manage menu via `GET /ecommerce/businesses/{businessId}/menu-*`.
-    - **Cart**: Add items by `menu_item_id`; cart stores `business_id` from the menu item.
-    - **Place order**: Send `business_id` (from Muzzhub's linked business or the Business directly). Order and OrderItems reference that business and its menu items.
+    ---
 
-    ## Add to cart flow (testable)
-    1. **Get menu items** — `GET /ecommerce/menu-items?business_id={id}` or `GET /ecommerce/businesses/{businessId}/menu-items` to list items. Note a `menu_item_id` and the item's `business_id`.
-    2. **Optional: same session** — Send header `X-Session-Id: <uuid>` on all cart/order requests to keep the same cart (e.g. from a mobile app or SPA). If omitted, server uses cookie session or generates a new UUID.
-    3. **Add to cart** — `POST /ecommerce/cart` with body `{ "menu_item_id": <id>, "quantity": 1, "notes": "" }`. Returns the cart row with `menu_item` and `business`.
-    4. **Get cart** — `GET /ecommerce/cart` (same `X-Session-Id` if used). Response: `{ "items": [...], "subtotal": 12.99, "count": 1 }`.
-    5. **Place order** — `POST /ecommerce/orders` with `{ "business_id": <id> }` (must match the business of the items you want to checkout). Cart items for that business are converted to an order and removed from cart.
+    ## Customer Flow — OTP Login + Cart + Order
+
+    ### Step 1 — Send OTP and get token
+
+    ```
+    POST /api/otp-auth/send
+    Body: { "email": "customer@example.com" }
+    ```
+    An OTP will be sent to the provided email address.
+
+    ```
+    POST /api/otp-auth/verify
+    Body: { "email": "customer@example.com", "otp": "1234" }
+    ```
+    Response:
+    ```json
+    {
+      "status": "authenticated",
+      "token": "eyJpd...(encrypted)",
+      "user": { "id": 5, "name": "Ali", "email": "customer@example.com" }
+    }
+    ```
+    **Save this `token` — send it as a Bearer token in all cart/order requests.**
+
+    ### Step 2 — Fetch user details (optional)
+
+    ```
+    GET /api/otp-auth/profile
+    Authorization: Bearer <token>
+    ```
+    Response: `{ "user": { "id": 5, "name": "Ali", "email": "..." }, "table": "users" }`
+
+    ### Step 3 — Browse menu items (no auth needed)
+
+    ```
+    GET /api/ecommerce/businesses
+    GET /api/ecommerce/menu-items?business_id=1
+    ```
+
+    ### Step 4 — Add item to cart
+
+    ```
+    POST /api/ecommerce/cart
+    Authorization: Bearer <token>
+    Body: { "menu_item_id": 1, "quantity": 2, "notes": "No onions" }
+    ```
+    The user is identified by the token — send the same token from any device and you get the same cart.
+
+    ### Step 5 — View cart
+
+    ```
+    GET /api/ecommerce/cart
+    Authorization: Bearer <token>
+    ```
+    Response: `{ "items": [...], "subtotal": 9.98, "count": 1 }`
+
+    ### Step 6 — Place order
+
+    ```
+    POST /api/ecommerce/orders
+    Authorization: Bearer <token>
+    Body: { "business_id": 1, "customer_name": "Ali", "customer_phone": "0300..." }
+    ```
+    Cart items are converted into an order and the cart is cleared.
+
+    ---
+
+    ## Guest Flow — without login (using X-Session-Id)
+
+    If you do not want to log in, generate a UUID and send it in all requests:
+    ```
+    Header: X-Session-Id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    ```
+    Generate this UUID yourself (using any UUID generator or `crypto.randomUUID()` in JS).
+    This is the fallback when no JWT/OTP token is present.
+
+    ---
+
+    ## Admin endpoints (require Sanctum Bearer token)
+
+    A Sanctum Bearer token is required for admin CRUD (create/update/delete businesses, menu items, order status, etc.).
+    Get it via `POST /api/auth/token` with email+password,
+    then paste it into the **Authorize** button.
+
+    ---
+
+    ## Authentication summary
+
+    | Endpoint type | Auth |
+    |---------------|------|
+    | Browse (GET businesses, menu, sellers) | None |
+    | Cart + Order (OTP user) | `Authorization: Bearer <otp-token>` |
+    | Cart + Order (guest) | `X-Session-Id: <uuid>` header |
+    | Admin CRUD | `Authorization: Bearer <sanctum-token>` |
+
+    ---
 
     ## Query filters (quick reference)
     | Endpoint | Filters |
     |----------|---------|
-    | **Restaurants (Businesses)** | `search`, `active_only`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
+    | **Businesses** | `search`, `active_only`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
     | **Muzzhub (Sellers)** | `search`, `active_only`, `category_id`, `type`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
-    | **Menu items (global)** | `business_id`, `category_id` (menu_category_id), `search` (name/description), `is_available`, `page`, `per_page` |
-    | **Menu by business** | `category_id` (for items only) |
-    | **Menu by Muzzhub** | `category_id` (for items only) |
-    | **Muzzhub categories** | `active_only`, `search`, `all` (no pagination), `per_page` |
+    | **Menu items (global)** | `business_id`, `category_id`, `search`, `is_available`, `page`, `per_page` |
+    | **Menu by business** | `category_id` |
+    | **Muzzhub categories** | `active_only`, `search`, `all`, `per_page` |
 
-    ## Authentication
-
-    Two methods are supported:
-
-    ### 1. Bearer Token (Admin / Sanctum)
+    ### Admin Bearer Token (Sanctum)
     ```
     Authorization: Bearer <sanctum-token>
     ```
-    Get a token via `POST /api/auth/token` below.
+    Get via `POST /api/auth/token` with email + password.
 
-    ### 2. Site API Key (external site integration)
-    Required for the **public** `POST /api/register-business` endpoint.
+    ### Site API Key (external site integration)
+    Required only for `POST /api/register-business`.
     ```
     Authorization: Bearer sk_site_t7Q2Ls9HcD4Xp1Bv
     ```
-    Use your `SITE_API_KEY` from the `.env` file.
+    Use your `SITE_API_KEY` from `.env`.
 
 servers:
   - url: http://127.0.0.1:8000/api
@@ -80,6 +161,26 @@ tags:
     description: Upload images, videos, audio
   - name: Data Source Hub
     description: Multi-source data import and sync
+  - name: Stripe Payments
+    description: |
+      Save cards and charge customers using Stripe.
+
+      **All endpoints require OTP Bearer token** (from `POST /api/otp-auth/verify`).
+
+      ### Card Save Flow
+      1. `POST /api/payment/stripe/setup-intent` → get `client_secret`
+      2. Frontend: `stripe.confirmCardSetup(client_secret, { payment_method: { card: cardElement } })`
+      3. `POST /api/payment/stripe/save-method` with `payment_method_id` from Stripe
+      4. Card is saved and ready for future charges.
+
+      ### Charge Flow
+      1. Place an order → get `order_id`
+      2. `POST /api/payment/stripe/charge` with `order_id`
+      3. Order `payment_status` becomes `paid`.
+
+      ### Webhook
+      Configure `POST /api/payment/stripe/webhook` in your Stripe Dashboard
+      to receive `payment_intent.succeeded` and `payment_intent.payment_failed` events.
 
 paths:
 
@@ -742,6 +843,7 @@ paths:
     get:
       tags:
         - Muzzhub
+      security: []
       summary: List Muzzhub sellers (restaurants)
       description: |
         **Query filters** — all optional; combine to fetch exactly what you need:
@@ -860,6 +962,7 @@ paths:
     get:
       tags:
         - Muzzhub
+      security: []
       summary: Get Muzzhub seller detail
       parameters:
         - name: id
@@ -921,6 +1024,7 @@ paths:
     get:
       tags:
         - Muzzhub
+      security: []
       summary: List Muzzhub categories
       description: |
         **Query filters** — for dropdowns use `all=1` to get full list without pagination.
@@ -1029,6 +1133,7 @@ paths:
     get:
       tags:
         - Businesses
+      security: []
       summary: List businesses (restaurants)
       description: |
         **Query filters** — all optional; combine for narrow results:
@@ -1094,6 +1199,7 @@ paths:
     get:
       tags:
         - Businesses
+      security: []
       summary: Get business detail
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -1192,6 +1298,7 @@ paths:
     get:
       tags:
         - Menu
+      security: []
       summary: List all menu items (with filters)
       description: |
         **Query filters** — use to fetch by restaurant, category, availability or search:
@@ -1235,6 +1342,7 @@ paths:
       tags:
         - Menu
         - Muzzhub
+      security: []
       summary: List menu categories for a Muzzhub seller
       description: |
         Uses the Muzzhub's linked Business. Returns 404 if no business_id is set.
@@ -1257,6 +1365,7 @@ paths:
       tags:
         - Menu
         - Muzzhub
+      security: []
       summary: List menu items for a Muzzhub seller
       description: Uses the Muzzhub's linked Business. 404 if no business linked.
       parameters:
@@ -1281,6 +1390,7 @@ paths:
     get:
       tags:
         - Menu
+      security: []
       summary: List menu categories for a business
       description: Returns categories with menu item counts. No query filters (path businessId only).
       parameters:
@@ -1322,8 +1432,9 @@ paths:
     get:
       tags:
         - Menu
+      security: []
       summary: List menu items for a business
-      description: **Filter** — optional `category_id` (menu_category_id) to filter by category.
+      description: 'Optional category_id (menu_category_id) query param to filter by category.'
       parameters:
         - name: businessId
           in: path
@@ -1387,6 +1498,7 @@ paths:
     get:
       tags:
         - Menu
+      security: []
       summary: List menu category types (Kids Cuisine, Vegetarian, etc.)
       description: Global types for menu items. Use `?all=1&active_only=1` for dropdowns.
       parameters:
@@ -1486,9 +1598,22 @@ paths:
     get:
       tags:
         - Cart
+      security: []
       summary: Get cart items
       description: |
-        Returns all cart items for the current session. Use the same `X-Session-Id` header as when adding items to keep the same cart.
+        Returns all cart items. Two ways to identify your cart:
+
+        **Option A — OTP Bearer token (recommended for apps):**
+        ```
+        Authorization: Bearer <token-from-otp-verify>
+        ```
+        The user ID is automatically identified from the token. Same token from any device = same cart.
+
+        **Option B — Guest (X-Session-Id):**
+        ```
+        X-Session-Id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+        ```
+        Send the same UUID in every request.
       parameters:
         - name: X-Session-Id
           in: header
@@ -1536,16 +1661,39 @@ paths:
     post:
       tags:
         - Cart
+      security: []
       summary: Add item to cart
       description: |
-        Add a menu item to the cart. Use `menu_item_id` from `GET /ecommerce/menu-items` or `GET /ecommerce/businesses/{id}/menu-items`. Same item + session updates quantity (updateOrCreate). Send `X-Session-Id` to tie to a session.
+        Add a menu item to the cart. Two ways to identify your session:
+
+        **Option A — OTP Bearer token (recommended):**
+        ```
+        Authorization: Bearer <token-from-otp-verify>
+        ```
+        User-bound cart — same cart on all devices with the same token.
+
+        **Option B — Guest (X-Session-Id):**
+        ```
+        X-Session-Id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+        ```
+
+        Get `menu_item_id` from `GET /ecommerce/menu-items`. Adding the same item again updates quantity.
       parameters:
+        - name: Authorization
+          in: header
+          required: false
+          description: 'Bearer <token> — OTP token from POST /otp-auth/verify'
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
         - name: X-Session-Id
           in: header
           required: false
+          description: Guest UUID — use if no Bearer token
           schema:
             type: string
             format: uuid
+            example: f47ac10b-58cc-4372-a567-0e02b2c3d479
       requestBody:
         required: true
         content:
@@ -1601,6 +1749,7 @@ paths:
     patch:
       tags:
         - Cart
+      security: []
       summary: Update cart item quantity or notes
       parameters:
         - name: cartItem
@@ -1608,7 +1757,7 @@ paths:
           required: true
           schema:
             type: integer
-            description: Cart item ID (from GET /ecommerce/cart response)
+          description: Cart item ID (from GET /ecommerce/cart response)
       requestBody:
         required: true
         content:
@@ -1631,6 +1780,7 @@ paths:
     delete:
       tags:
         - Cart
+      security: []
       summary: Remove one item from cart
       parameters:
         - name: cartItem
@@ -1647,8 +1797,17 @@ paths:
     delete:
       tags:
         - Cart
+      security: []
       summary: Clear entire cart for current session
-      description: Deletes all cart rows for the session (same `X-Session-Id` or cookie).
+      description: Deletes all cart rows for the session (same `X-Session-Id` or cookie). No auth required.
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Your session UUID — same one used when adding items
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
@@ -1659,7 +1818,7 @@ paths:
     get:
       tags:
         - Orders
-      summary: List orders
+      summary: List orders (admin)
       parameters:
         - name: status
           in: query
@@ -1698,17 +1857,34 @@ paths:
     post:
       tags:
         - Orders
+      security: []
       summary: Place an order
       description: |
-        Converts cart items for the given `business_id` into an order. Use the same `X-Session-Id` header as used for cart so the server finds your cart items. Use Muzzhub's `business_id` when ordering from a Muzzhub seller.
+        Converts cart items for the given `business_id` into an order.
+
+        **Use the same session identifier you used for cart:**
+
+        - OTP Bearer token: `Authorization: Bearer <token-from-otp-verify>`
+        - Guest: `X-Session-Id: <your-uuid>`
+
+        Server finds cart items by session → creates order → clears cart for that business.
+        Use Muzzhub seller's linked `business_id` when ordering from a Muzzhub seller.
       parameters:
+        - name: Authorization
+          in: header
+          required: false
+          description: 'Bearer <otp-token> — same token used for cart'
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
         - name: X-Session-Id
           in: header
           required: false
           schema:
             type: string
             format: uuid
-          description: Must match the session used when adding to cart
+            example: f47ac10b-58cc-4372-a567-0e02b2c3d479
+          description: Guest UUID — same one used when adding to cart
       requestBody:
         required: true
         content:
@@ -2023,6 +2199,293 @@ paths:
       responses:
         "200":
           description: Sync logs
+
+  # ── STRIPE PAYMENTS ───────────────────────────────────────────────────────
+
+  /payment/stripe/setup-intent:
+    post:
+      tags:
+        - Stripe Payments
+      summary: Step 1 — Create SetupIntent (to save card without charging)
+      description: |
+        Creates a Stripe SetupIntent. Use the returned `client_secret` on the frontend
+        with `stripe.confirmCardSetup()` to securely collect and confirm the card.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      responses:
+        "200":
+          description: SetupIntent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  client_secret:
+                    type: string
+                    example: seti_1...secret_...
+                    description: Pass this to stripe.confirmCardSetup() on the frontend
+                  stripe_customer_id:
+                    type: string
+                    example: cus_abc123
+        "401":
+          description: OTP token missing or expired
+
+  /payment/stripe/save-method:
+    post:
+      tags:
+        - Stripe Payments
+      summary: Step 2 — Save payment method after confirmCardSetup
+      description: |
+        After the frontend calls `stripe.confirmCardSetup()` and gets a `payment_method` id,
+        call this endpoint to attach it to the customer and save it in the database.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_method_id
+              properties:
+                payment_method_id:
+                  type: string
+                  example: pm_1ABC...
+                  description: The payment_method id from Stripe (starts with pm_)
+                set_default:
+                  type: boolean
+                  default: false
+                  description: Whether to set this as the default payment method
+            example:
+              payment_method_id: pm_1ABC...
+              set_default: true
+      responses:
+        "201":
+          description: Payment method saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  payment_method:
+                    $ref: "#/components/schemas/StripePaymentMethod"
+        "401":
+          description: OTP token missing or expired
+        "422":
+          description: Validation error
+
+  /payment/stripe/methods:
+    get:
+      tags:
+        - Stripe Payments
+      summary: List saved payment methods
+      description: |
+        Returns all saved cards for the authenticated user.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      responses:
+        "200":
+          description: List of saved payment methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  payment_methods:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StripePaymentMethod"
+        "401":
+          description: OTP token missing or expired
+
+  /payment/stripe/methods/{id}:
+    delete:
+      tags:
+        - Stripe Payments
+      summary: Delete a saved payment method
+      description: |
+        Detaches the payment method from Stripe and removes it from the database.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local DB id of the payment method (from list response)
+      responses:
+        "200":
+          description: Payment method removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Payment method removed.
+        "401":
+          description: OTP token missing or expired
+        "404":
+          description: Payment method not found or does not belong to this user
+
+  /payment/stripe/methods/{id}/set-default:
+    post:
+      tags:
+        - Stripe Payments
+      summary: Set a payment method as default
+      description: |
+        Marks the specified payment method as the default for future charges.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local DB id of the payment method
+      responses:
+        "200":
+          description: Default updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  payment_method:
+                    $ref: "#/components/schemas/StripePaymentMethod"
+        "401":
+          description: OTP token missing or expired
+        "404":
+          description: Payment method not found
+
+  /payment/stripe/charge:
+    post:
+      tags:
+        - Stripe Payments
+      summary: Charge a saved card for an order
+      description: |
+        Charges the customer's saved card for an existing order.
+        Uses the default payment method unless `payment_method_id` is specified.
+
+        On success, the order's `payment_status` is set to `paid`.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - order_id
+              properties:
+                order_id:
+                  type: integer
+                  description: ID of the order to charge
+                  example: 42
+                payment_method_id:
+                  type: string
+                  description: Stripe pm_ id to use (optional — uses default if omitted)
+                  example: pm_1ABC...
+            example:
+              order_id: 42
+      responses:
+        "200":
+          description: Charge result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  payment_status:
+                    type: string
+                    enum:
+                      - paid
+                      - failed
+                  payment_intent_id:
+                    type: string
+                    example: pi_1ABC...
+                  amount_charged:
+                    type: number
+                    example: 29.99
+                  order_number:
+                    type: string
+                    example: ORD-A1B2C3D4
+        "401":
+          description: OTP token missing or expired
+        "409":
+          description: Order is already paid
+        "422":
+          description: No saved payment method found — save a card first
+
+  /payment/stripe/webhook:
+    post:
+      tags:
+        - Stripe Payments
+      summary: Stripe webhook receiver
+      description: |
+        Stripe sends payment events to this endpoint.
+        Configure this URL in your **Stripe Dashboard → Developers → Webhooks**.
+
+        **Supported events:**
+        - `payment_intent.succeeded` → sets order `payment_status` to `paid`
+        - `payment_intent.payment_failed` → sets order `payment_status` to `failed`
+
+        Requires `STRIPE_WEBHOOK_SECRET` in `.env` for signature verification.
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Stripe webhook signature header
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw Stripe event payload
+      responses:
+        "200":
+          description: Event processed
+        "400":
+          description: Invalid signature or malformed event
 
 # ── COMPONENTS ────────────────────────────────────────────────────────────────
 
@@ -2486,3 +2949,35 @@ components:
         is_active:
           type: boolean
           default: true
+
+    # ── STRIPE ────────────────────────────────────────────────────────────────
+
+    StripePaymentMethod:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Local DB id — use this in delete / set-default endpoints
+          example: 3
+        stripe_pm_id:
+          type: string
+          description: Stripe PaymentMethod id
+          example: pm_1ABC...
+        brand:
+          type: string
+          example: visa
+        last4:
+          type: string
+          example: "4242"
+        exp_month:
+          type: integer
+          example: 12
+        exp_year:
+          type: integer
+          example: 2027
+        cardholder_name:
+          type: string
+          example: John Doe
+        is_default:
+          type: boolean
+          example: true

@@ -7,19 +7,62 @@ use App\Models\CartItem;
 use App\Models\MenuItem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 class CartController extends Controller
 {
+    /**
+     * Resolve the session identifier for this request.
+     *
+     * Priority:
+     *  1. OTP Bearer token (Authorization: Bearer <encrypted-otp-token>)
+     *     → decrypts to { type:'otp_auth', table, id, exp }
+     *     → returns "otp_{table}_{id}"  e.g. "otp_users_5"
+     *     → same cart on every device as long as they use the same token
+     *  2. X-Session-Id header (UUID) — anonymous / guest
+     *  3. Laravel cookie session ID (browser fallback)
+     */
     protected function sessionId(Request $request): string
     {
+        $bearer = $this->extractBearer($request);
+
+        if ($bearer) {
+            try {
+                $payload = decrypt($bearer);
+
+                if (
+                    isset($payload['type'], $payload['id'], $payload['exp']) &&
+                    $payload['type'] === 'otp_auth' &&
+                    ! Carbon::createFromTimestamp($payload['exp'])->isPast()
+                ) {
+                    $table = $payload['table'] ?? 'users';
+                    return "otp_{$table}_{$payload['id']}";
+                }
+            } catch (\Throwable) {
+                // Invalid/tampered token — fall through to X-Session-Id
+            }
+        }
+
         return $request->header('X-Session-Id')
-            ?? (session()->isStarted() ? session()->getId() : \Illuminate\Support\Str::uuid());
+            ?? (session()->isStarted() ? session()->getId() : Str::uuid());
+    }
+
+    /**
+     * Extract the raw Bearer token string from Authorization header, or null.
+     */
+    private function extractBearer(Request $request): ?string
+    {
+        $auth = $request->header('Authorization', '');
+        return str_starts_with($auth, 'Bearer ')
+            ? substr($auth, 7)
+            : null;
     }
 
     public function index(Request $request): JsonResponse
     {
         $items = CartItem::where('session_id', $this->sessionId($request))
-            ->with(['menuItem', 'business.category'])
+            ->with(['menuItem', 'business'])
             ->get();
 
         $subtotal = $items->sum(fn ($i) => ($i->menuItem->price ?? 0) * $i->quantity);

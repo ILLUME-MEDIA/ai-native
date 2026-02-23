@@ -10,6 +10,7 @@ class Order extends Model
 {
     protected $fillable = [
         'order_number','business_id','session_id','user_id','status',
+        'payment_status','payment_method','stripe_payment_intent_id','paid_at',
         'subtotal','tax','delivery_fee','total',
         'customer_name','customer_phone','customer_email',
         'delivery_address','notes','order_type',
@@ -17,10 +18,11 @@ class Order extends Model
     ];
 
     protected $casts = [
-        'subtotal' => 'float',
-        'tax' => 'float',
+        'subtotal'  => 'float',
+        'tax'       => 'float',
         'delivery_fee' => 'float',
-        'total' => 'float',
+        'total'     => 'float',
+        'paid_at'   => 'datetime',
     ];
 
     public function business(): BelongsTo

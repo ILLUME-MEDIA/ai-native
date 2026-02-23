@@ -19,6 +19,7 @@ use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
 use App\Http\Controllers\Ecommerce\DataSourceController;
 use App\Http\Controllers\Ecommerce\BusinessRegistrationController;
+use App\Http\Controllers\Ecommerce\StripeController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -67,74 +68,53 @@ Route::middleware('auth:sanctum')->group(function () {
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.fields.reorder');
 
-    // ── Ecommerce / Order Flow ───────────────────────────────────────────────
+    // ── Ecommerce Admin (write operations + admin-only reads) ───────────────
     Route::prefix('ecommerce')->group(function () {
-        // Muzzhub listings
-        Route::get('muzzhub',                  [MuzzhubController::class, 'index']);
+        // Muzzhub write (admin)
         Route::post('muzzhub',                 [MuzzhubController::class, 'store']);
-        Route::get('muzzhub/{muzzhub}',        [MuzzhubController::class, 'show']);
         Route::patch('muzzhub/{muzzhub}',      [MuzzhubController::class, 'update']);
         Route::delete('muzzhub/{muzzhub}',     [MuzzhubController::class, 'destroy']);
 
-        // Muzzhub categories
-        Route::get('muzzhub-categories',                             [MuzzhubCategoryController::class, 'index']);
+        // Muzzhub categories write (admin)
         Route::post('muzzhub-categories',                            [MuzzhubCategoryController::class, 'store']);
         Route::patch('muzzhub-categories/{muzzhubCategory}',         [MuzzhubCategoryController::class, 'update']);
         Route::delete('muzzhub-categories/{muzzhubCategory}',        [MuzzhubCategoryController::class, 'destroy']);
 
-        // Menu by Muzzhub (uses linked Business for order flow)
-        Route::get('muzzhub/{muzzhub}/menu-categories',             [MenuController::class, 'muzzhubCategories']);
-        Route::get('muzzhub/{muzzhub}/menu-items',                  [MenuController::class, 'muzzhubItems']);
-
-        // Businesses
-        Route::get('businesses',                    [BusinessController::class, 'index']);
+        // Business write (admin)
         Route::post('businesses',                   [BusinessController::class, 'store']);
-        Route::get('businesses/{business}',         [BusinessController::class, 'show']);
         Route::patch('businesses/{business}',       [BusinessController::class, 'update']);
         Route::delete('businesses/{business}',      [BusinessController::class, 'destroy']);
 
-        // Menu categories per business
-        Route::get('businesses/{business}/menu-categories',               [MenuController::class, 'categories']);
+        // Menu categories write (admin)
         Route::post('businesses/{business}/menu-categories',              [MenuController::class, 'storeCategory']);
         Route::patch('businesses/{business}/menu-categories/{category}',  [MenuController::class, 'updateCategory']);
         Route::delete('businesses/{business}/menu-categories/{category}', [MenuController::class, 'destroyCategory']);
 
-        // Menu category types (e.g. Kids Cuisine, Vegetarian) — global list for menu items
-        Route::get('menu-category-types',                           [MenuCategoryTypeController::class, 'index']);
+        // Menu category types write (admin)
         Route::post('menu-category-types',                          [MenuCategoryTypeController::class, 'store']);
         Route::patch('menu-category-types/{menuCategoryType}',      [MenuCategoryTypeController::class, 'update']);
         Route::delete('menu-category-types/{menuCategoryType}',     [MenuCategoryTypeController::class, 'destroy']);
 
-        // Menu items
-        Route::get('menu-items',                                    [MenuController::class, 'allItems']);
-        Route::get('businesses/{business}/menu-items',              [MenuController::class, 'items']);
+        // Menu items write (admin)
         Route::post('businesses/{business}/menu-items',             [MenuController::class, 'storeItem']);
         Route::patch('businesses/{business}/menu-items/{item}',     [MenuController::class, 'updateItem']);
         Route::delete('businesses/{business}/menu-items/{item}',    [MenuController::class, 'destroyItem']);
 
-        // Cart
-        Route::get('cart',              [CartController::class, 'index']);
-        Route::post('cart',             [CartController::class, 'store']);
-        Route::patch('cart/{cartItem}', [CartController::class, 'update']);
-        Route::delete('cart/clear',     [CartController::class, 'clear']);
-        Route::delete('cart/{cartItem}',[CartController::class, 'destroy']);
-
-        // Orders
+        // Orders admin (list all + status update)
         Route::get('orders',                        [OrderController::class, 'index']);
-        Route::post('orders',                       [OrderController::class, 'store']);
         Route::get('orders/{order}',                [OrderController::class, 'show']);
         Route::patch('orders/{order}/status',       [OrderController::class, 'updateStatus']);
 
-        // Discovery Users (Customers)
+        // Discovery Users (admin)
         Route::get('discovery-users',                    [DiscoveryUserController::class, 'index']);
         Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show']);
         Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']);
         Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy']);
 
-        // Media Upload (image / audio)
+        // Media Upload (admin)
         Route::post('upload', [MediaUploadController::class, 'upload']);
 
-        // Data Source Hub (multi-source import/sync)
+        // Data Source Hub (admin)
         Route::get('data-sources',                          [DataSourceController::class, 'index']);
         Route::post('data-sources',                         [DataSourceController::class, 'store']);
         Route::get('data-sources/{dataSource}',             [DataSourceController::class, 'show']);
@@ -143,7 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('data-sources/{dataSource}/sync',       [DataSourceController::class, 'sync']);
         Route::get('data-sources/{dataSource}/logs',        [DataSourceController::class, 'logs']);
 
-        // Business Registrations / Get Started (admin management)
+        // Business Registrations (admin management)
         Route::get('registrations',                                     [BusinessRegistrationController::class, 'index']);
         Route::get('registrations/{registration}',                      [BusinessRegistrationController::class, 'show']);
         Route::post('registrations/{registration}/approve',             [BusinessRegistrationController::class, 'approve']);
@@ -299,6 +279,51 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('generate-genres', [\App\Http\Controllers\AI\AiScraperController::class, 'generateGenres']);
         Route::post('post-to-site', [\App\Http\Controllers\AI\AiScraperController::class, 'postToSite']);
     });
+});
+
+// ── Public Ecommerce Routes (no auth required — X-Session-Id or Bearer token) ──
+// Storefront browsing, cart management, and order placement.
+// Supports: anonymous (X-Session-Id only), Sanctum Bearer token, or OTP Bearer token.
+Route::prefix('ecommerce')->group(function () {
+    // Public browsing — sellers / restaurants
+    Route::get('muzzhub',                               [MuzzhubController::class, 'index']);
+    Route::get('muzzhub/{muzzhub}',                     [MuzzhubController::class, 'show']);
+    Route::get('muzzhub-categories',                    [MuzzhubCategoryController::class, 'index']);
+    Route::get('muzzhub/{muzzhub}/menu-categories',     [MenuController::class, 'muzzhubCategories']);
+    Route::get('muzzhub/{muzzhub}/menu-items',          [MenuController::class, 'muzzhubItems']);
+
+    // Public browsing — businesses / restaurants
+    Route::get('businesses',                            [BusinessController::class, 'index']);
+    Route::get('businesses/{business}',                 [BusinessController::class, 'show']);
+    Route::get('businesses/{business}/menu-categories', [MenuController::class, 'categories']);
+    Route::get('businesses/{business}/menu-items',      [MenuController::class, 'items']);
+
+    // Public menu listings
+    Route::get('menu-items',                            [MenuController::class, 'allItems']);
+    Route::get('menu-category-types',                   [MenuCategoryTypeController::class, 'index']);
+
+    // Cart — session-based (X-Session-Id header or cookie session)
+    // No auth required; pass X-Session-Id UUID to keep same cart across requests.
+    Route::get('cart',              [CartController::class, 'index']);
+    Route::post('cart',             [CartController::class, 'store']);
+    Route::patch('cart/{cartItem}', [CartController::class, 'update']);
+    Route::delete('cart/clear',     [CartController::class, 'clear']);
+    Route::delete('cart/{cartItem}',[CartController::class, 'destroy']);
+
+    // Order placement — convert cart to order (session-based, no auth required)
+    Route::post('orders',           [OrderController::class, 'store']);
+});
+
+// ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
+// Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
+Route::prefix('payment/stripe')->group(function () {
+    Route::post('setup-intent',            [StripeController::class, 'setupIntent']);
+    Route::post('save-method',             [StripeController::class, 'saveMethod']);
+    Route::get('methods',                  [StripeController::class, 'listMethods']);
+    Route::delete('methods/{id}',          [StripeController::class, 'deleteMethod']);
+    Route::post('methods/{id}/set-default',[StripeController::class, 'setDefault']);
+    Route::post('charge',                  [StripeController::class, 'charge']);
+    Route::post('webhook',                 [StripeController::class, 'webhook']);
 });
 
 // MCP API: OpenAI / external clients can use Bearer token (MCP_API_KEY). Admin can use Sanctum.
