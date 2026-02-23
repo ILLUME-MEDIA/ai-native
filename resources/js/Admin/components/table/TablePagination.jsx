@@ -1,6 +1,32 @@
 import clsx from 'clsx';
 import { Col, Row } from 'react-bootstrap';
 import Icon from '../wrappers/Icon';
+
+const WINDOW = 2; // pages to show around current
+
+function getPageNumbers(pageIndex, pageCount) {
+  if (pageCount <= 1) return [];
+
+  const pages = [];
+  const first = 0;
+  const last  = pageCount - 1;
+
+  const rangeStart = Math.max(first + 1, pageIndex - WINDOW);
+  const rangeEnd   = Math.min(last  - 1, pageIndex + WINDOW);
+
+  pages.push(first);
+
+  if (rangeStart > first + 1) pages.push('...');
+
+  for (let i = rangeStart; i <= rangeEnd; i++) pages.push(i);
+
+  if (rangeEnd < last - 1) pages.push('...');
+
+  if (last !== first) pages.push(last);
+
+  return pages;
+}
+
 const TablePagination = ({
   totalItems,
   start,
@@ -13,41 +39,87 @@ const TablePagination = ({
   pageIndex,
   setPageIndex,
   nextPage,
-  canNextPage
+  canNextPage,
+  // per-page
+  perPage,
+  onPerPageChange,
+  perPageOptions = [15, 25, 50, 100],
 }) => {
-  return <Row className={clsx('align-items-center text-center text-sm-start', showInfo ? 'justify-content-between' : 'justify-content-end')}>
-      {showInfo && <Col sm>
-          <div className="text-muted">
-            Showing <span className="fw-semibold">{start}</span> to <span className="fw-semibold">{end}</span> of <span className="fw-semibold">{totalItems}</span> {itemsName}
+  const pages = getPageNumbers(pageIndex, pageCount);
+
+  return (
+    <Row className={clsx('align-items-center text-center text-sm-start g-2',
+      showInfo ? 'justify-content-between' : 'justify-content-end')}>
+
+      {showInfo && (
+        <Col sm="auto">
+          <div className="text-muted small">
+            Showing <span className="fw-semibold">{start}</span>–<span className="fw-semibold">{end}</span> of{' '}
+            <span className="fw-semibold">{totalItems?.toLocaleString()}</span> {itemsName}
           </div>
-        </Col>}
-      <Col sm="auto" className="mt-3 mt-sm-0">
-        <div>
-          <ul className="pagination pagination-boxed mb-0 justify-content-center">
-            <li className="page-item">
-              <button className="page-link" onClick={() => previousPage()} disabled={!canPreviousPage}>
-                <span>
-                  <Icon icon="chevron-left" />
-                </span>
-              </button>
-            </li>
+        </Col>
+      )}
 
-            {Array.from({
-            length: pageCount
-          }).map((_, index) => <li key={index} className={`page-item ${pageIndex === index ? 'active' : ''}`}>
-                <button className="page-link" onClick={() => setPageIndex(index)}>
-                  {index + 1}
-                </button>
-              </li>)}
+      {onPerPageChange && (
+        <Col sm="auto">
+          <div className="d-flex align-items-center gap-1">
+            <span className="text-muted small">Show</span>
+            <select
+              className="form-select form-select-sm"
+              style={{ width: 72 }}
+              value={perPage}
+              onChange={e => onPerPageChange(Number(e.target.value))}
+            >
+              {perPageOptions.map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+        </Col>
+      )}
 
-            <li className="page-item">
-              <button className="page-link" onClick={() => nextPage()} disabled={!canNextPage}>
-                <Icon icon="chevron-right" />
-              </button>
-            </li>
-          </ul>
-        </div>
+      <Col sm="auto" className="mt-2 mt-sm-0">
+        <ul className="pagination pagination-boxed mb-0 justify-content-center">
+          <li className="page-item">
+            <button className="page-link" onClick={() => setPageIndex(0)} disabled={!canPreviousPage} title="First">
+              <Icon icon="chevrons-left" size={14} />
+            </button>
+          </li>
+          <li className="page-item">
+            <button className="page-link" onClick={() => previousPage()} disabled={!canPreviousPage} title="Previous">
+              <Icon icon="chevron-left" size={14} />
+            </button>
+          </li>
+
+          {pages.map((p, i) =>
+            p === '...'
+              ? (
+                <li key={`ellipsis-${i}`} className="page-item disabled">
+                  <span className="page-link px-2">…</span>
+                </li>
+              ) : (
+                <li key={p} className={`page-item ${pageIndex === p ? 'active' : ''}`}>
+                  <button className="page-link" onClick={() => setPageIndex(p)}>
+                    {p + 1}
+                  </button>
+                </li>
+              )
+          )}
+
+          <li className="page-item">
+            <button className="page-link" onClick={() => nextPage()} disabled={!canNextPage} title="Next">
+              <Icon icon="chevron-right" size={14} />
+            </button>
+          </li>
+          <li className="page-item">
+            <button className="page-link" onClick={() => setPageIndex(pageCount - 1)} disabled={!canNextPage} title="Last">
+              <Icon icon="chevrons-right" size={14} />
+            </button>
+          </li>
+        </ul>
       </Col>
-    </Row>;
+    </Row>
+  );
 };
+
 export default TablePagination;

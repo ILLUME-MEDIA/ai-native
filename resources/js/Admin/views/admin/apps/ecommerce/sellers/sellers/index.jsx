@@ -111,6 +111,7 @@ export default function SellersPage() {
   const [sorting, setSorting]       = useState([]);
   const [activeTab, setActiveTab]   = useState('basic');
   const [categories, setCategories] = useState([]);
+  const [perPage, setPerPage]       = useState(25);
 
   const toSlug = (str) => str.toLowerCase().trim()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -124,12 +125,12 @@ export default function SellersPage() {
 
   const load = useCallback(() => {
     setLoading(true);
-    const params = new URLSearchParams({ page, per_page: 15 });
+    const params = new URLSearchParams({ page, per_page: perPage });
     if (search) params.set('search', search);
     axios.get(`/api/ecommerce/muzzhub?${params}`)
       .then(r => { setBusinesses(r.data.data || []); setPagination(r.data); })
       .finally(() => setLoading(false));
-  }, [page, search]);
+  }, [page, search, perPage]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -185,8 +186,8 @@ export default function SellersPage() {
 
   const totalPages = pagination.last_page || 1;
   const totalItems = pagination.total || 0;
-  const start      = totalItems === 0 ? 0 : (page - 1) * 15 + 1;
-  const end        = Math.min(page * 15, totalItems);
+  const start      = totalItems === 0 ? 0 : (page - 1) * perPage + 1;
+  const end        = Math.min(page * perPage, totalItems);
 
   const columns = useMemo(() => [
     columnHelper.accessor('name', {
@@ -325,18 +326,18 @@ export default function SellersPage() {
           <DataTable table={table} emptyMessage={loading ? '' : 'No businesses found.'} />
         </CardBody>
 
-        {totalPages > 1 && (
-          <CardFooter className="border-0">
-            <TablePagination
-              totalItems={totalItems} start={start} end={end}
-              itemsName="businesses" showInfo
-              previousPage={() => setPage(p => p - 1)} canPreviousPage={page > 1}
-              pageCount={totalPages} pageIndex={page - 1}
-              setPageIndex={(idx) => setPage(idx + 1)}
-              nextPage={() => setPage(p => p + 1)} canNextPage={page < totalPages}
-            />
-          </CardFooter>
-        )}
+        <CardFooter className="border-0">
+          <TablePagination
+            totalItems={totalItems} start={start} end={end}
+            itemsName="businesses" showInfo
+            previousPage={() => setPage(p => p - 1)} canPreviousPage={page > 1}
+            pageCount={totalPages} pageIndex={page - 1}
+            setPageIndex={(idx) => setPage(idx + 1)}
+            nextPage={() => setPage(p => p + 1)} canNextPage={page < totalPages}
+            perPage={perPage}
+            onPerPageChange={(n) => { setPerPage(n); setPage(1); }}
+          />
+        </CardFooter>
       </Card>
 
       {/* Add / Edit Modal */}
