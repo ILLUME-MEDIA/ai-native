@@ -84,6 +84,15 @@ export default function CheckoutPage() {
   const [cardElement,    setCardElement]    = useState(null);
   const [cardError,      setCardError]      = useState(null);
 
+  // inline OTP login state
+  const [isOtpLoggedIn, setIsOtpLoggedIn]  = useState(() => !!getOtpToken());
+  const [otpStep,       setOtpStep]        = useState('email'); // 'email' | 'code' | 'done'
+  const [otpEmail,      setOtpEmail]       = useState('');
+  const [otpCode,       setOtpCode]        = useState('');
+  const [otpSending,    setOtpSending]     = useState(false);
+  const [otpVerifying,  setOtpVerifying]   = useState(false);
+  const [otpMsg,        setOtpMsg]         = useState(null); // { text, type }
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 5000);
@@ -108,25 +117,11 @@ export default function CheckoutPage() {
     document.head.appendChild(script);
   }, []);
 
-  // ── Load saved cards when Stripe tab selected ────────────────────────────
+  // ── Load saved cards when Stripe tab selected and logged in ─────────────
   useEffect(() => {
-    if (paymentMethod !== 'stripe') return;
-    if (!getOtpToken()) return;
-    setLoadingCards(true);
-    stripeApi('get', '/api/payment/stripe/methods').then(r => {
-      const cards = r.data.payment_methods || [];
-      setSavedCards(cards);
-      if (cards.length > 0) {
-        const def = cards.find(c => c.is_default) || cards[0];
-        setSelectedCard(def.stripe_pm_id);
-      } else {
-        setSelectedCard('new');
-      }
-    }).catch(() => {
-      setSavedCards([]);
-      setSelectedCard('new');
-    }).finally(() => setLoadingCards(false));
-  }, [paymentMethod]);
+    if (paymentMethod !== 'stripe' || !isOtpLoggedIn) return;
+    loadSavedCards();
+  }, [paymentMethod, isOtpLoggedIn]);
 
   // ── Mount / unmount Stripe card element ──────────────────────────────────
   useEffect(() => {
@@ -151,6 +146,69 @@ export default function CheckoutPage() {
   const tax         = subtotal * (TAX_RATE / 100);
   const deliveryFee = form.order_type === 'delivery' ? DELIVERY_FEE : 0;
   const total       = subtotal + tax + deliveryFee;
+
+  // Pre-fill OTP email from customer email field
+  useEffect(() => {
+    if (form.customer_email && !otpEmail) setOtpEmail(form.customer_email);
+  }, [form.customer_email]);
+
+  // ── Inline OTP login handlers ────────────────────────────────────────────
+  const loadSavedCards = () => {
+    setLoadingCards(true);
+    stripeApi('get', '/api/payment/stripe/methods').then(r => {
+      const cards = r.data.payment_methods || [];
+      setSavedCards(cards);
+      if (cards.length > 0) {
+        const def = cards.find(c => c.is_default) || cards[0];
+        setSelectedCard(def.stripe_pm_id);
+      } else {
+        setSelectedCard('new');
+      }
+    }).catch(() => {
+      setSavedCards([]);
+      setSelectedCard('new');
+    }).finally(() => setLoadingCards(false));
+  };
+
+  const handleSendOtp = async () => {
+    if (!otpEmail.trim()) return;
+    setOtpSending(true);
+    setOtpMsg(null);
+    try {
+      await axios.post('/api/otp-auth/send', { email: otpEmail.trim() });
+      setOtpStep('code');
+      setOtpMsg({ text: `OTP sent to ${otpEmail}. Check your inbox.`, type: 'success' });
+    } catch (err) {
+      setOtpMsg({ text: err.response?.data?.message || 'Failed to send OTP. Try again.', type: 'danger' });
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otpCode.trim()) return;
+    setOtpVerifying(true);
+    setOtpMsg(null);
+    try {
+      const res = await axios.post('/api/otp-auth/verify', {
+        email:        otpEmail.trim(),
+        otp:          otpCode.trim(),
+        on_not_found: 'create',
+        create_data:  { name: otpEmail.split('@')[0] },
+      });
+      const token = res.data.token;
+      if (!token) throw new Error(res.data.message || 'Verification failed. Please try again.');
+      localStorage.setItem('otp_auth_token', token);
+      setIsOtpLoggedIn(true);
+      setOtpStep('done');
+      setOtpMsg(null);
+      loadSavedCards();
+    } catch (err) {
+      setOtpMsg({ text: err.response?.data?.message || err.message || 'Invalid OTP.', type: 'danger' });
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
 
   const handleChange = (field, value) => {
     setForm(f => ({ ...f, [field]: value }));
@@ -499,23 +557,95 @@ export default function CheckoutPage() {
                         Stripe not configured. Add <code>VITE_STRIPE_PUBLISHABLE_KEY</code> to your <code>.env</code> file.
                       </Alert>
                     )}
-                    {!getOtpToken() && (
-                      <Alert variant="warning" className="mb-3">
-                        <Icon name="alert-triangle" size={14} className="me-1" />
-                        <strong>OTP login required</strong> for card payments.
-                        Please authenticate first via the OTP login flow, then return here to pay by card.
-                        <br />
-                        <span className="text-muted" style={{ fontSize: '0.85rem' }}>
-                          Alternatively, select <strong>Cash on Delivery</strong> above.
-                        </span>
-                      </Alert>
+                    {/* ── Inline OTP login when not authenticated ── */}
+                    {!isOtpLoggedIn && (
+                      <div className="border rounded p-3 mb-3" style={{ background: '#f8f9fa' }}>
+                        <div className="d-flex align-items-center gap-2 mb-3">
+                          <Icon name="lock" size={15} className="text-primary" />
+                          <span className="fw-semibold">Login to pay by card</span>
+                        </div>
+
+                        {otpMsg && (
+                          <Alert variant={otpMsg.type} className="py-2 mb-3" style={{ fontSize: '0.875rem' }}>
+                            {otpMsg.text}
+                          </Alert>
+                        )}
+
+                        {otpStep === 'email' && (
+                          <Row className="g-2 align-items-end">
+                            <Col>
+                              <FormLabel style={{ fontSize: '0.85rem' }}>Your email address</FormLabel>
+                              <FormControl
+                                type="email"
+                                size="sm"
+                                placeholder="you@example.com"
+                                value={otpEmail}
+                                onChange={e => setOtpEmail(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleSendOtp()}
+                              />
+                            </Col>
+                            <Col xs="auto">
+                              <Button
+                                size="sm"
+                                onClick={handleSendOtp}
+                                disabled={otpSending || !otpEmail.trim()}
+                              >
+                                {otpSending ? <Spinner size="sm" /> : 'Send OTP'}
+                              </Button>
+                            </Col>
+                          </Row>
+                        )}
+
+                        {otpStep === 'code' && (
+                          <>
+                            <div className="text-muted mb-2" style={{ fontSize: '0.85rem' }}>
+                              OTP sent to <strong>{otpEmail}</strong>
+                            </div>
+                            <Row className="g-2 align-items-end">
+                              <Col>
+                                <FormLabel style={{ fontSize: '0.85rem' }}>6-digit OTP code</FormLabel>
+                                <FormControl
+                                  type="text"
+                                  size="sm"
+                                  placeholder="123456"
+                                  maxLength={6}
+                                  value={otpCode}
+                                  onChange={e => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                                  onKeyDown={e => e.key === 'Enter' && handleVerifyOtp()}
+                                  autoFocus
+                                />
+                              </Col>
+                              <Col xs="auto">
+                                <Button
+                                  size="sm"
+                                  variant="success"
+                                  onClick={handleVerifyOtp}
+                                  disabled={otpVerifying || otpCode.length < 4}
+                                >
+                                  {otpVerifying ? <Spinner size="sm" /> : 'Verify'}
+                                </Button>
+                              </Col>
+                            </Row>
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="p-0 mt-2 text-muted"
+                              onClick={() => { setOtpStep('email'); setOtpCode(''); setOtpMsg(null); }}
+                            >
+                              Change email / Resend
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     )}
 
-                    {loadingCards ? (
+                    {/* ── Saved cards + new card (only when logged in) ── */}
+                    {isOtpLoggedIn && loadingCards && (
                       <div className="text-muted py-2">
                         <Spinner size="sm" className="me-2" />Loading saved cards...
                       </div>
-                    ) : (
+                    )}
+                    {isOtpLoggedIn && !loadingCards && (
                       <>
                         {savedCards.length > 0 && (
                           <div className="mb-3">
@@ -659,7 +789,7 @@ export default function CheckoutPage() {
                   type="submit"
                   variant="primary"
                   className="w-100"
-                  disabled={submitting || cartItems.length === 0 || (paymentMethod === 'stripe' && !getOtpToken())}
+                  disabled={submitting || cartItems.length === 0 || (paymentMethod === 'stripe' && !isOtpLoggedIn)}
                 >
                   {submitting ? (
                     <>
