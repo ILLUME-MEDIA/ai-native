@@ -1,7 +1,7 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
@@ -10,6 +10,9 @@ import {
 } from 'react-bootstrap';
 
 const SESSION_KEY = 'ecom_session_id';
+const STRIPE_PK   = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
+const TAX_RATE    = 10; // percent
+const DELIVERY_FEE = 3.99;
 
 function getSessionId() {
   let sid = localStorage.getItem(SESSION_KEY);
@@ -20,44 +23,73 @@ function getSessionId() {
   return sid;
 }
 
+function getOtpToken() {
+  return localStorage.getItem('otp_auth_token') || localStorage.getItem('otp_token') || null;
+}
+
+// Cart / order requests use X-Session-Id only — must stay consistent with cart page
 const api = (method, url, data = null) =>
   axios({ method, url, data, headers: { 'X-Session-Id': getSessionId() } });
 
+// Stripe-specific requests need OTP Bearer token
+const stripeApi = (method, url, data = null) => {
+  const token = getOtpToken();
+  return axios({
+    method, url, data,
+    headers: {
+      'X-Session-Id': getSessionId(),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+};
+
 const DELIVERY_VENDORS = [
-  { value: '', label: 'In-house / Self' },
-  { value: 'doordash', label: 'DoorDash' },
+  { value: '',          label: 'In-house / Self' },
+  { value: 'doordash',  label: 'DoorDash' },
   { value: 'uber_eats', label: 'Uber Eats' },
-  { value: 'grubhub', label: 'GrubHub' },
+  { value: 'grubhub',   label: 'GrubHub' },
   { value: 'instacart', label: 'Instacart' },
   { value: 'postmates', label: 'Postmates' },
 ];
 
 const initialForm = {
-  customer_name: '',
-  customer_email: '',
-  customer_phone: '',
-  order_type: 'delivery',
+  customer_name:      '',
+  customer_email:     '',
+  customer_phone:     '',
+  order_type:         'delivery',
   item_delivery_type: 'delivery',
-  delivery_vendor: '',
-  delivery_address: '',
-  notes: '',
+  delivery_vendor:    '',
+  delivery_address:   '',
+  notes:              '',
 };
 
 export default function CheckoutPage() {
-  const navigate = useNavigate();
-  const [cartItems, setCartItems] = useState([]);
-  const [loadingCart, setLoadingCart] = useState(true);
-  const [form, setForm] = useState(initialForm);
-  const [errors, setErrors] = useState({});
-  const [submitting, setSubmitting] = useState(false);
+  const navigate  = useNavigate();
+  const cardRef   = useRef(null);
+
+  const [cartItems,    setCartItems]    = useState([]);
+  const [loadingCart,  setLoadingCart]  = useState(true);
+  const [form,         setForm]         = useState(initialForm);
+  const [errors,       setErrors]       = useState({});
+  const [submitting,   setSubmitting]   = useState(false);
   const [successOrder, setSuccessOrder] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [toast,        setToast]        = useState(null);
+
+  // payment state
+  const [paymentMethod,  setPaymentMethod]  = useState('cod'); // 'cod' | 'stripe'
+  const [savedCards,     setSavedCards]     = useState([]);
+  const [loadingCards,   setLoadingCards]   = useState(false);
+  const [selectedCard,   setSelectedCard]   = useState('new'); // stripe_pm_id or 'new'
+  const [stripeObj,      setStripeObj]      = useState(null);
+  const [cardElement,    setCardElement]    = useState(null);
+  const [cardError,      setCardError]      = useState(null);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 5000);
   };
 
+  // ── Load cart ────────────────────────────────────────────────────────────
   useEffect(() => {
     setLoadingCart(true);
     api('get', '/api/ecommerce/cart')
@@ -65,12 +97,60 @@ export default function CheckoutPage() {
       .finally(() => setLoadingCart(false));
   }, []);
 
-  const subtotal = cartItems.reduce(
-    (sum, i) => sum + parseFloat(i.menu_item?.price || 0) * i.quantity, 0
-  );
-  const tax = subtotal * 0.1;
-  const deliveryFee = form.order_type === 'delivery' ? 3.99 : 0;
-  const total = subtotal + tax + deliveryFee;
+  // ── Load Stripe.js ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!STRIPE_PK) return;
+    if (window.Stripe) { setStripeObj(window.Stripe(STRIPE_PK)); return; }
+    const script = document.createElement('script');
+    script.src   = 'https://js.stripe.com/v3/';
+    script.async = true;
+    script.onload = () => setStripeObj(window.Stripe(STRIPE_PK));
+    document.head.appendChild(script);
+  }, []);
+
+  // ── Load saved cards when Stripe tab selected ────────────────────────────
+  useEffect(() => {
+    if (paymentMethod !== 'stripe') return;
+    if (!getOtpToken()) return;
+    setLoadingCards(true);
+    stripeApi('get', '/api/payment/stripe/methods').then(r => {
+      const cards = r.data.payment_methods || [];
+      setSavedCards(cards);
+      if (cards.length > 0) {
+        const def = cards.find(c => c.is_default) || cards[0];
+        setSelectedCard(def.stripe_pm_id);
+      } else {
+        setSelectedCard('new');
+      }
+    }).catch(() => {
+      setSavedCards([]);
+      setSelectedCard('new');
+    }).finally(() => setLoadingCards(false));
+  }, [paymentMethod]);
+
+  // ── Mount / unmount Stripe card element ──────────────────────────────────
+  useEffect(() => {
+    if (paymentMethod !== 'stripe' || selectedCard !== 'new' || !stripeObj || !cardRef.current) {
+      if (cardElement) { cardElement.unmount(); setCardElement(null); }
+      return;
+    }
+    const elements = stripeObj.elements();
+    const card = elements.create('card', {
+      style: { base: { fontSize: '16px', color: '#495057', '::placeholder': { color: '#6c757d' } } },
+    });
+    card.mount(cardRef.current);
+    card.on('change', e => setCardError(e.error?.message || null));
+    setCardElement(card);
+    return () => { card.unmount(); setCardElement(null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentMethod, selectedCard, stripeObj]);
+
+  // ── Totals ───────────────────────────────────────────────────────────────
+  const businessId  = cartItems[0]?.business_id ?? null;
+  const subtotal    = cartItems.reduce((s, i) => s + parseFloat(i.menu_item?.price || 0) * i.quantity, 0);
+  const tax         = subtotal * (TAX_RATE / 100);
+  const deliveryFee = form.order_type === 'delivery' ? DELIVERY_FEE : 0;
+  const total       = subtotal + tax + deliveryFee;
 
   const handleChange = (field, value) => {
     setForm(f => ({ ...f, [field]: value }));
@@ -79,7 +159,7 @@ export default function CheckoutPage() {
 
   const validate = () => {
     const errs = {};
-    if (!form.customer_name.trim()) errs.customer_name = 'Name is required';
+    if (!form.customer_name.trim())  errs.customer_name  = 'Name is required';
     if (!form.customer_email.trim()) errs.customer_email = 'Email is required';
     if (!form.customer_phone.trim()) errs.customer_phone = 'Phone is required';
     if (form.order_type === 'delivery' && !form.delivery_address.trim())
@@ -87,30 +167,80 @@ export default function CheckoutPage() {
     return errs;
   };
 
-  const handleSubmit = (e) => {
+  // ── Submit ───────────────────────────────────────────────────────────────
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    if (cartItems.length === 0) { showToast('Cart is empty', 'warning'); return; }
+    if (cartItems.length === 0)   { showToast('Cart is empty', 'warning'); return; }
+    if (!businessId)              { showToast('Could not determine business. Please reload your cart.', 'danger'); return; }
 
     setSubmitting(true);
-    api('post', '/api/ecommerce/orders', {
-      ...form,
-      subtotal: subtotal.toFixed(2),
-      tax: tax.toFixed(2),
-      delivery_fee: deliveryFee.toFixed(2),
-      total: total.toFixed(2),
-    }).then(r => {
-      setSuccessOrder(r.data);
+    try {
+      let pmId = null;
+
+      // Step 1 — new card: setup-intent → confirmCardSetup → save-method
+      if (paymentMethod === 'stripe' && selectedCard === 'new') {
+        if (!stripeObj || !cardElement) throw new Error('Stripe not loaded yet. Please wait a moment and try again.');
+        if (!getOtpToken()) throw new Error('OTP login required for card payment.');
+
+        const siRes = await stripeApi('post', '/api/payment/stripe/setup-intent');
+
+        const { error: confirmError, setupIntent } = await stripeObj.confirmCardSetup(
+          siRes.data.client_secret,
+          { payment_method: { card: cardElement } }
+        );
+        if (confirmError) throw new Error(confirmError.message);
+
+        const saveRes = await stripeApi('post', '/api/payment/stripe/save-method', {
+          payment_method_id: setupIntent.payment_method,
+          set_default: true,
+        });
+
+        pmId = saveRes.data.payment_method.stripe_pm_id;
+
+      } else if (paymentMethod === 'stripe' && selectedCard !== 'new') {
+        pmId = selectedCard;
+      }
+
+      // Step 2 — place order
+      const orderRes = await api('post', '/api/ecommerce/orders', {
+        business_id:        businessId,
+        customer_name:      form.customer_name,
+        customer_email:     form.customer_email,
+        customer_phone:     form.customer_phone,
+        order_type:         form.order_type,
+        item_delivery_type: form.item_delivery_type,
+        delivery_vendor:    form.delivery_vendor,
+        delivery_address:   form.delivery_address,
+        notes:              form.notes,
+        tax_rate:           TAX_RATE,
+        delivery_fee:       deliveryFee,
+      });
+      const order = orderRes.data;
+
+      // Step 3 — charge if Stripe
+      if (paymentMethod === 'stripe') {
+        const chargePayload = { order_id: order.id };
+        if (pmId) chargePayload.payment_method_id = pmId;
+        const chargeRes = await stripeApi('post', '/api/payment/stripe/charge', chargePayload);
+        order.payment_status = chargeRes.data.payment_status;
+      }
+
+      setSuccessOrder(order);
       setCartItems([]);
-    }).catch(err => {
-      const msg = err.response?.data?.message || 'Failed to place order';
+
+    } catch (err) {
+      const msg = err.response?.data?.message || err.response?.data?.error || err.message || 'Failed to place order';
       showToast(msg, 'danger');
-    }).finally(() => setSubmitting(false));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  // Success screen
+  // ── Success screen ────────────────────────────────────────────────────────
   if (successOrder) {
+    const ps = successOrder.payment_status;
     return (
       <>
         <PageBreadcrumb title="Order Placed" subtitle="Ecommerce" />
@@ -140,10 +270,20 @@ export default function CheckoutPage() {
                     <span className="text-muted">Status</span>
                     <Badge bg="warning" text="dark">{successOrder.status}</Badge>
                   </div>
+                  {ps && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Payment</span>
+                      <Badge bg={ps === 'paid' ? 'success' : ps === 'failed' ? 'danger' : 'secondary'}>
+                        {ps}
+                      </Badge>
+                    </div>
+                  )}
                   {successOrder.delivery_vendor && (
                     <div className="d-flex justify-content-between">
                       <span className="text-muted">Via</span>
-                      <Badge bg="info" className="text-capitalize">{successOrder.delivery_vendor.replace('_', ' ')}</Badge>
+                      <Badge bg="info" className="text-capitalize">
+                        {successOrder.delivery_vendor.replace('_', ' ')}
+                      </Badge>
                     </div>
                   )}
                 </div>
@@ -165,6 +305,7 @@ export default function CheckoutPage() {
     );
   }
 
+  // ── Main form ─────────────────────────────────────────────────────────────
   return (
     <>
       <PageBreadcrumb title="Checkout" subtitle="Ecommerce" />
@@ -181,8 +322,9 @@ export default function CheckoutPage() {
 
       <Form onSubmit={handleSubmit}>
         <Row>
-          {/* Left: Form */}
+          {/* ── Left column ── */}
           <Col lg={8}>
+
             {/* Customer Info */}
             <Card className="mb-3">
               <CardHeader>
@@ -259,7 +401,7 @@ export default function CheckoutPage() {
               </CardBody>
             </Card>
 
-            {/* Delivery Address + Vendor */}
+            {/* Delivery Details */}
             {form.order_type === 'delivery' && (
               <Card className="mb-3">
                 <CardHeader>
@@ -321,6 +463,121 @@ export default function CheckoutPage() {
               </Card>
             )}
 
+            {/* Payment Method */}
+            <Card className="mb-3">
+              <CardHeader>
+                <CardTitle as="h5" className="mb-0">
+                  <Icon name="credit-card" size={17} className="me-2" />
+                  Payment Method
+                </CardTitle>
+              </CardHeader>
+              <CardBody>
+                <div className="d-flex gap-3 mb-3">
+                  <Button
+                    type="button"
+                    variant={paymentMethod === 'cod' ? 'primary' : 'outline-secondary'}
+                    onClick={() => setPaymentMethod('cod')}
+                  >
+                    <Icon name="banknote" size={14} className="me-2" />
+                    Cash on Delivery
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={paymentMethod === 'stripe' ? 'primary' : 'outline-secondary'}
+                    onClick={() => setPaymentMethod('stripe')}
+                  >
+                    <Icon name="credit-card" size={14} className="me-2" />
+                    Credit / Debit Card
+                  </Button>
+                </div>
+
+                {paymentMethod === 'stripe' && (
+                  <>
+                    {!STRIPE_PK && (
+                      <Alert variant="warning" className="mb-3">
+                        <Icon name="alert-triangle" size={14} className="me-1" />
+                        Stripe not configured. Add <code>VITE_STRIPE_PUBLISHABLE_KEY</code> to your <code>.env</code> file.
+                      </Alert>
+                    )}
+                    {!getOtpToken() && (
+                      <Alert variant="warning" className="mb-3">
+                        <Icon name="alert-triangle" size={14} className="me-1" />
+                        <strong>OTP login required</strong> for card payments.
+                        Please authenticate first via the OTP login flow, then return here to pay by card.
+                        <br />
+                        <span className="text-muted" style={{ fontSize: '0.85rem' }}>
+                          Alternatively, select <strong>Cash on Delivery</strong> above.
+                        </span>
+                      </Alert>
+                    )}
+
+                    {loadingCards ? (
+                      <div className="text-muted py-2">
+                        <Spinner size="sm" className="me-2" />Loading saved cards...
+                      </div>
+                    ) : (
+                      <>
+                        {savedCards.length > 0 && (
+                          <div className="mb-3">
+                            <FormLabel className="fw-semibold mb-2">Saved Cards</FormLabel>
+                            <div className="d-flex flex-column gap-2">
+                              {savedCards.map(card => (
+                                <div
+                                  key={card.stripe_pm_id}
+                                  className={`border rounded p-2 d-flex align-items-center gap-2 ${selectedCard === card.stripe_pm_id ? 'border-primary bg-primary bg-opacity-10' : ''}`}
+                                  style={{ cursor: 'pointer' }}
+                                  onClick={() => setSelectedCard(card.stripe_pm_id)}
+                                >
+                                  <input type="radio" readOnly checked={selectedCard === card.stripe_pm_id} className="me-1" />
+                                  <Icon name="credit-card" size={14} className="text-muted" />
+                                  <span className="text-capitalize">{card.brand}</span>
+                                  <span className="text-muted">•••• {card.last4}</span>
+                                  <span className="text-muted ms-auto" style={{ fontSize: '0.8rem' }}>
+                                    {card.exp_month}/{card.exp_year}
+                                  </span>
+                                  {card.is_default && (
+                                    <Badge bg="success" className="ms-1">Default</Badge>
+                                  )}
+                                </div>
+                              ))}
+                              <div
+                                className={`border rounded p-2 d-flex align-items-center gap-2 ${selectedCard === 'new' ? 'border-primary bg-primary bg-opacity-10' : ''}`}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => setSelectedCard('new')}
+                              >
+                                <input type="radio" readOnly checked={selectedCard === 'new'} className="me-1" />
+                                <Icon name="plus-circle" size={14} className="text-muted" />
+                                <span>Use a new card</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {selectedCard === 'new' && STRIPE_PK && (
+                          <div>
+                            <FormLabel className="fw-semibold mb-2">Card Details</FormLabel>
+                            <div
+                              ref={cardRef}
+                              className="form-control"
+                              style={{ padding: '10px 12px', minHeight: 42 }}
+                            />
+                            {cardError && (
+                              <div className="text-danger mt-1" style={{ fontSize: '0.875rem' }}>{cardError}</div>
+                            )}
+                            {!stripeObj && (
+                              <div className="text-muted mt-1" style={{ fontSize: '0.875rem' }}>
+                                <Spinner size="sm" className="me-1" />Loading Stripe...
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </CardBody>
+            </Card>
+
             {/* Notes */}
             <Card className="mb-3">
               <CardHeader>
@@ -341,7 +598,7 @@ export default function CheckoutPage() {
             </Card>
           </Col>
 
-          {/* Right: Order Summary */}
+          {/* ── Right column — Order Summary ── */}
           <Col lg={4}>
             <Card className="sticky-top" style={{ top: 80 }}>
               <CardHeader>
@@ -375,7 +632,7 @@ export default function CheckoutPage() {
                       <span>${subtotal.toFixed(2)}</span>
                     </div>
                     <div className="d-flex justify-content-between mb-1 text-muted">
-                      <span>Tax (10%)</span>
+                      <span>Tax ({TAX_RATE}%)</span>
                       <span>${tax.toFixed(2)}</span>
                     </div>
                     {form.order_type === 'delivery' && (
@@ -385,10 +642,16 @@ export default function CheckoutPage() {
                       </div>
                     )}
                     <hr />
-                    <div className="d-flex justify-content-between fw-bold fs-5 mb-4">
+                    <div className="d-flex justify-content-between fw-bold fs-5 mb-3">
                       <span>Total</span>
                       <span>${total.toFixed(2)}</span>
                     </div>
+                    {paymentMethod === 'stripe' && (
+                      <div className="d-flex align-items-center gap-1 mb-3 text-muted" style={{ fontSize: '0.8rem' }}>
+                        <Icon name="lock" size={12} />
+                        Secured by Stripe
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -396,12 +659,18 @@ export default function CheckoutPage() {
                   type="submit"
                   variant="primary"
                   className="w-100"
-                  disabled={submitting || cartItems.length === 0}
+                  disabled={submitting || cartItems.length === 0 || (paymentMethod === 'stripe' && !getOtpToken())}
                 >
                   {submitting ? (
-                    <><Spinner size="sm" className="me-2" /> Placing Order...</>
+                    <>
+                      <Spinner size="sm" className="me-2" />
+                      {paymentMethod === 'stripe' ? 'Processing Payment...' : 'Placing Order...'}
+                    </>
                   ) : (
-                    <><Icon name="check-circle" size={16} className="me-2" />Place Order</>
+                    <>
+                      <Icon name="check-circle" size={16} className="me-2" />
+                      {paymentMethod === 'stripe' ? 'Pay & Place Order' : 'Place Order'}
+                    </>
                   )}
                 </Button>
 
