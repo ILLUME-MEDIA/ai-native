@@ -109,6 +109,16 @@ Route::get('/run-migrations', function () {
     }
 })->name('run-migrations');
 
+// ── Storage fallback (serves files directly if /public/storage symlink returns 403) ──
+Route::get('/storage/{path}', function ($path) {
+    $fullPath = storage_path('app/public/' . $path);
+    if (!file_exists($fullPath)) {
+        abort(404);
+    }
+    $mimeType = mime_content_type($fullPath) ?: 'application/octet-stream';
+    return response()->file($fullPath, ['Content-Type' => $mimeType]);
+})->where('path', '.*')->name('storage.serve');
+
 Route::get('/', function () {
     return Inertia::render('Welcome', [
         'canLogin' => Route::has('login'),
