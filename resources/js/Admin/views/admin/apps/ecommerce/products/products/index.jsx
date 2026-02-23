@@ -4,7 +4,7 @@ import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import MediaUpload from '../../_components/MediaUpload';
 import axios from 'axios';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Alert, Card, CardBody, CardFooter, CardHeader, Col,
     Form, Modal, ModalBody, ModalFooter, ModalHeader, ModalTitle,
@@ -18,9 +18,119 @@ const api = (path, opts = {}) => axios({ url: `/api/ecommerce/${path}`, ...opts 
 
 const columnHelper = createColumnHelper();
 
+// ── Searchable Business Selector ─────────────────────────────────────────────
+function BusinessSearch({ value, onChange, placeholder = 'Search business…', size }) {
+    const [query, setQuery]       = useState('');
+    const [results, setResults]   = useState([]);
+    const [open, setOpen]         = useState(false);
+    const [loading, setLoading]   = useState(false);
+    const [label, setLabel]       = useState('');
+    const timer                   = useRef(null);
+    const wrapRef                 = useRef(null);
+
+    // Pre-fill label when editing (value already set)
+    useEffect(() => {
+        if (value && !label) {
+            axios.get(`/api/ecommerce/muzzhub/${value}`)
+                .then(r => setLabel(r.data?.name || ''))
+                .catch(() => {});
+        }
+        if (!value) { setLabel(''); setQuery(''); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value]);
+
+    // Close on outside click
+    useEffect(() => {
+        const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    const search = (q) => {
+        clearTimeout(timer.current);
+        setQuery(q);
+        if (!q.trim()) { setResults([]); setOpen(false); return; }
+        timer.current = setTimeout(async () => {
+            setLoading(true);
+            try {
+                const { data } = await axios.get(`/api/ecommerce/muzzhub?search=${encodeURIComponent(q)}&per_page=15`);
+                setResults(Array.isArray(data) ? data : (data.data || []));
+                setOpen(true);
+            } catch { setResults([]); }
+            setLoading(false);
+        }, 300);
+    };
+
+    const select = (biz) => {
+        onChange(String(biz.id), biz);
+        setLabel(biz.name);
+        setQuery('');
+        setOpen(false);
+    };
+
+    const clear = () => { onChange('', null); setLabel(''); setQuery(''); setResults([]); };
+
+    const inputClass = `form-control${size ? ` form-control-${size}` : ''}`;
+
+    return (
+        <div ref={wrapRef} style={{ position: 'relative' }}>
+            {label && !open ? (
+                <div className={`${inputClass} d-flex align-items-center justify-content-between`}
+                    style={{ cursor: 'text' }}
+                    onClick={() => { setLabel(''); setOpen(false); }}>
+                    <span className="text-truncate">{label}</span>
+                    <button type="button" className="btn-close ms-2" style={{ fontSize: 10 }} onClick={e => { e.stopPropagation(); clear(); }} />
+                </div>
+            ) : (
+                <div style={{ position: 'relative' }}>
+                    <input
+                        type="text"
+                        className={inputClass}
+                        placeholder={placeholder}
+                        value={query}
+                        onChange={e => search(e.target.value)}
+                        onFocus={() => query && setOpen(true)}
+                        autoComplete="off"
+                    />
+                    {loading && (
+                        <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}>
+                            <Spinner size="sm" />
+                        </span>
+                    )}
+                </div>
+            )}
+
+            {open && results.length > 0 && (
+                <ul className="list-group shadow-sm"
+                    style={{ position: 'absolute', zIndex: 1055, width: '100%', maxHeight: 220, overflowY: 'auto', top: '100%', marginTop: 2 }}>
+                    {results.map(biz => (
+                        <li key={biz.id}
+                            className="list-group-item list-group-item-action py-2 px-3"
+                            style={{ cursor: 'pointer' }}
+                            onMouseDown={() => select(biz)}>
+                            <div className="fw-semibold small">{biz.name}</div>
+                            {(biz.city || biz.state) && (
+                                <small className="text-muted">{[biz.city, biz.state].filter(Boolean).join(', ')}</small>
+                            )}
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {open && !loading && query && results.length === 0 && (
+                <div className="border rounded px-3 py-2 small text-muted bg-white shadow-sm"
+                    style={{ position: 'absolute', zIndex: 1055, width: '100%', top: '100%', marginTop: 2 }}>
+                    No businesses found for "{query}"
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function MenuItemsPage() {
     const [items, setItems]             = useState([]);
-    const [businesses, setBusinesses]   = useState([]);
     const [menuCats, setMenuCats]       = useState([]);
     const [menuCategoryTypes, setMenuCategoryTypes] = useState([]);
     const [loading, setLoading]       = useState(true);
@@ -56,16 +166,6 @@ export default function MenuItemsPage() {
         setLoading(false);
     }, [bizFilter, catFilter]);
 
-    const loadBusinesses = useCallback(async () => {
-        try {
-            const { data } = await api('businesses?per_page=500');
-            const list = Array.isArray(data) ? data : (data.data || []);
-            setBusinesses(list);
-        } catch (e) {
-            setBusinesses([]);
-        }
-    }, []);
-
     const loadMenuCategoryTypes = useCallback(async () => {
         try {
             const { data } = await api('menu-category-types?all=1&active_only=1');
@@ -75,7 +175,6 @@ export default function MenuItemsPage() {
         }
     }, []);
 
-    useEffect(() => { loadBusinesses(); }, [loadBusinesses]);
     useEffect(() => { loadMenuCategoryTypes(); }, [loadMenuCategoryTypes]);
     useEffect(() => { loadItems(1); }, [loadItems]);
     useEffect(() => {
@@ -203,6 +302,7 @@ export default function MenuItemsPage() {
             ),
             enableSorting: false,
         },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     ], []);
 
     const table = useReactTable({
@@ -227,10 +327,15 @@ export default function MenuItemsPage() {
                     <div className="d-flex flex-wrap gap-2 align-items-center justify-content-between">
                         <h5 className="card-title mb-0">Menu Items</h5>
                         <div className="d-flex gap-2 flex-wrap align-items-center">
-                            <Form.Select size="sm" style={{ width: 180 }} value={bizFilter} onChange={e => { setBizFilter(e.target.value); setCatFilter(''); }}>
-                                <option value="">All Businesses</option>
-                                {businesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                            </Form.Select>
+                            {/* Header: searchable business filter */}
+                            <div style={{ minWidth: 220 }}>
+                                <BusinessSearch
+                                    size="sm"
+                                    placeholder="Filter by business…"
+                                    value={bizFilter}
+                                    onChange={(id) => { setBizFilter(id); setCatFilter(''); }}
+                                />
+                            </div>
                             {bizFilter && (
                                 <Form.Select size="sm" style={{ width: 160 }} value={catFilter} onChange={e => setCatFilter(e.target.value)}>
                                     <option value="">All Categories</option>
@@ -294,18 +399,17 @@ export default function MenuItemsPage() {
                         <Row className="g-3">
                             <Col xs={12}>
                                 <Form.Label>Business <span className="text-danger">*</span></Form.Label>
-                                <Form.Select value={form.business_id}
-                                    onChange={e => { setForm(f => ({ ...f, business_id: e.target.value, menu_category_id: '' })); loadMenuCats(e.target.value); }}
-                                    required>
-                                    <option value="">— Select Business —</option>
-                                    {(() => {
-                                        const list = [...businesses];
-                                        if (editTarget?.business && !list.some(b => Number(b.id) === Number(editTarget.business_id))) {
-                                            list.unshift(editTarget.business);
-                                        }
-                                        return list.map(b => <option key={b.id} value={b.id}>{b.name}</option>);
-                                    })()}
-                                </Form.Select>
+                                <BusinessSearch
+                                    value={form.business_id}
+                                    placeholder="Type to search business…"
+                                    onChange={(id) => {
+                                        setForm(f => ({ ...f, business_id: id, menu_category_id: '' }));
+                                        loadMenuCats(id);
+                                    }}
+                                />
+                                {!form.business_id && (
+                                    <small className="text-muted">Search by name, city or cuisine</small>
+                                )}
                             </Col>
                             {menuCats.length > 0 && (
                                 <Col xs={12}>
