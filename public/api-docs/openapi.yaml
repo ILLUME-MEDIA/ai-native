@@ -182,6 +182,32 @@ tags:
       Configure `POST /api/payment/stripe/webhook` in your Stripe Dashboard
       to receive `payment_intent.succeeded` and `payment_intent.payment_failed` events.
 
+  - name: DoorDash Delivery
+    description: |
+      Dispatch and track last-mile deliveries using the **DoorDash Drive API**.
+
+      When an order is placed with `delivery_vendor: "doordash"`, a delivery is
+      automatically dispatched. The order response includes `doordash_delivery_id`,
+      `doordash_status`, and `doordash_tracking_url`.
+
+      ### Credentials (DoorDash Developer Portal)
+      Set these in `.env`:
+      ```
+      DOORDASH_DEVELOPER_ID=...
+      DOORDASH_KEY_ID=...
+      DOORDASH_SIGNING_SECRET=...   # base64url-encoded
+      ```
+
+      ### Auto-dispatch flow
+      1. `POST /api/ecommerce/orders` with `delivery_vendor: "doordash"`
+      2. DoorDash delivery is created immediately (non-blocking — order succeeds even if dispatch fails)
+      3. Poll `GET /api/delivery/doordash/status/{order_id}` for live updates
+      4. Customer tracks via `doordash_tracking_url`
+
+      ### Webhook
+      Configure `POST /api/delivery/doordash/webhook` in the DoorDash Developer Portal
+      to receive live status updates (`enroute_to_pickup`, `picked_up`, `delivered`, etc.).
+
 paths:
 
   # ── AUTH ───────────────────────────────────────────────────────────────────
@@ -2486,6 +2512,175 @@ paths:
           description: Event processed
         "400":
           description: Invalid signature or malformed event
+
+  # ── DOORDASH ────────────────────────────────────────────────────────────────
+
+  \delivery\doordash\status\{order}:
+    get:
+      tags:
+        - DoorDash Delivery
+      summary: Get live delivery status
+      description: |
+        Fetches the current delivery status from DoorDash and syncs it to the local order.
+        Also updates the order status (`out_for_delivery`, `delivered`, `cancelled`) automatically.
+      parameters:
+        - name: order
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local order ID
+      responses:
+        "200":
+          description: Delivery status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  order_number:
+                    type: string
+                    example: ORD-ABC12345
+                  dd_status:
+                    type: string
+                    example: enroute_to_pickup
+                  dd_label:
+                    type: string
+                    example: Dasher Heading to Restaurant
+                  tracking_url:
+                    type: string
+                    nullable: true
+                    example: https://doordash.com/track/...
+                  delivery:
+                    type: object
+                    description: Full DoorDash delivery object
+        "404":
+          description: No DoorDash delivery for this order
+        "502":
+          description: DoorDash API error
+
+  \delivery\doordash\dispatch\{order}:
+    post:
+      tags:
+        - DoorDash Delivery
+      summary: Manually dispatch a DoorDash delivery
+      description: |
+        Manually creates a DoorDash delivery for an order. Useful when auto-dispatch failed
+        at order creation time. Returns 409 if a delivery was already dispatched.
+      parameters:
+        - name: order
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local order ID
+      responses:
+        "201":
+          description: Delivery dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  delivery_id:
+                    type: string
+                    example: ORD-ABC12345
+                  status:
+                    type: string
+                    example: created
+                  label:
+                    type: string
+                    example: Order Received
+                  tracking_url:
+                    type: string
+                    nullable: true
+        "409":
+          description: DoorDash delivery already exists for this order
+        "422":
+          description: Order has no delivery address
+        "502":
+          description: DoorDash API error
+
+  \delivery\doordash\cancel\{order}:
+    post:
+      tags:
+        - DoorDash Delivery
+      summary: Cancel a DoorDash delivery
+      description: |
+        Cancels an active DoorDash delivery and sets the order status to `cancelled`.
+        Returns 409 if the delivery is already completed or cancelled.
+      parameters:
+        - name: order
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local order ID
+      responses:
+        "200":
+          description: Delivery cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: DoorDash delivery cancelled.
+        "404":
+          description: No DoorDash delivery for this order
+        "409":
+          description: Delivery cannot be cancelled (already delivered / cancelled)
+        "502":
+          description: DoorDash API error
+
+  \delivery\doordash\webhook:
+    post:
+      tags:
+        - DoorDash Delivery
+      summary: DoorDash webhook receiver
+      description: |
+        DoorDash sends delivery status updates to this endpoint.
+        Configure this URL in the **DoorDash Developer Portal → Webhooks**.
+
+        **Status mappings:**
+        | DoorDash status | Order status |
+        |---|---|
+        | `enroute_to_pickup` | `preparing` |
+        | `arrived_at_pickup` | `ready` |
+        | `picked_up` / `enroute_to_dropoff` | `out_for_delivery` |
+        | `delivered` | `delivered` |
+        | `delivery_cancelled` / `returned` | `cancelled` |
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                external_delivery_id:
+                  type: string
+                  example: ORD-ABC12345
+                  description: Matches the order_number
+                delivery_status:
+                  type: string
+                  example: picked_up
+                tracking_url:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Webhook processed
 
 # ── COMPONENTS ────────────────────────────────────────────────────────────────
 
