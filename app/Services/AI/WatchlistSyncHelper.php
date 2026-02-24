@@ -282,7 +282,7 @@ class WatchlistSyncHelper
     /**
      * Update title with missing data if needed.
      */
-    private function updateTitleIfNeeded(int $titleId, array $payload): void
+    public function updateTitleIfNeeded(int $titleId, array $payload): void
     {
         try {
             $updateData = [];

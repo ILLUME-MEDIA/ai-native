@@ -1592,6 +1592,29 @@ class YouTubeScraperService
                         ]
                     );
                 } else {
+                    // 422 "name already taken" = track already exists on platform → mark as pushed
+                    if ($trackRes->status() === 422) {
+                        $json422 = $trackRes->json();
+                        $msg422  = is_array($json422) ? ($json422['message'] ?? '') : '';
+                        if (is_string($msg422) && stripos($msg422, 'name has already been taken') !== false) {
+                            $results['skipped']++;
+                            Log::info("Track already on platform (name taken), marking as pushed: " . ($video->title ?? $video->video_id));
+                            \App\Models\YoutubePlatformPush::updateOrCreate(
+                                [
+                                    'video_id'      => $video->video_id,
+                                    'playlist_id'   => $playlist->playlist_id,
+                                    'platform_name' => $platform->name,
+                                ],
+                                [
+                                    'push_type'         => 'streaming',
+                                    'status'            => 'success',
+                                    'pushed_at'         => now(),
+                                    'platform_album_id' => $albumIdForTrack,
+                                ]
+                            );
+                            continue;
+                        }
+                    }
                     $results['failed']++;
                     $bodySnippet = substr((string) $trackRes->body(), 0, 400);
                     $errorEntry = "status {$trackRes->status()}: {$bodySnippet}";
@@ -1995,6 +2018,9 @@ class YouTubeScraperService
         if (empty($key)) {
             return null;
         }
+
+        // Strip invalid UTF-8 bytes (e.g. from YouTube titles/descriptions) to prevent json_encode failure
+        $userMessage = (string) iconv('UTF-8', 'UTF-8//IGNORE', $userMessage);
 
         $response = Http::withHeaders([
             'Content-Type' => 'application/json',

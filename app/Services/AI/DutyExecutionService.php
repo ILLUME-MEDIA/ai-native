@@ -34,7 +34,7 @@ class DutyExecutionService
 
             $duty->markAsCompleted($result);
             return $result;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $duty->markAsFailed($e->getMessage());
             Log::error("Duty [{$duty->name}] failed: " . $e->getMessage());
             throw $e;
