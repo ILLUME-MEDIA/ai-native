@@ -8,6 +8,7 @@ use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
 use App\Http\Controllers\PublicApi\CaseStudyController;
+use App\Http\Controllers\Admin\CaseStudyController as AdminCaseStudyController;
 use App\Http\Controllers\Ecommerce\BusinessController;
 use App\Http\Controllers\Ecommerce\MuzzhubController;
 use App\Http\Controllers\Ecommerce\MuzzhubCategoryController;
@@ -35,6 +36,21 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware('auth:sanctum')->group(function () {
+    // ── Case Studies Admin CRUD ─────────────────────────────────────────────
+    Route::get('/admin/case-studies',                        [AdminCaseStudyController::class, 'index']);
+    Route::post('/admin/case-studies/upload-media',          [AdminCaseStudyController::class, 'uploadMedia']);
+    Route::post('/admin/case-studies',                       [AdminCaseStudyController::class, 'store']);
+    Route::get('/admin/case-studies/{id}',                   [AdminCaseStudyController::class, 'show']);
+    Route::patch('/admin/case-studies/{id}',                 [AdminCaseStudyController::class, 'update']);
+    Route::post('/admin/case-studies/{id}/update',           [AdminCaseStudyController::class, 'update']);
+    Route::delete('/admin/case-studies/{id}',                [AdminCaseStudyController::class, 'destroy']);
+    Route::post('/admin/case-studies/{id}/assign-groups',    [AdminCaseStudyController::class, 'assignGroups']);
+    // ── Case Study Groups ────────────────────────────────────────────────
+    Route::get('/admin/case-study-groups',                   [AdminCaseStudyController::class, 'groupsIndex']);
+    Route::post('/admin/case-study-groups',                  [AdminCaseStudyController::class, 'groupsStore']);
+    Route::patch('/admin/case-study-groups/{id}',            [AdminCaseStudyController::class, 'groupsUpdate']);
+    Route::delete('/admin/case-study-groups/{id}',           [AdminCaseStudyController::class, 'groupsDestroy']);
+
     // Section Builder meta configuration (admin SPA only)
     Route::get('/section-builder/entities', [EntityController::class, 'index'])
         ->name('api.section-builder.entities.index');

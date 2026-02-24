@@ -144,6 +144,19 @@ export const menuItems = [{
       label: "Settings"
     }]
   }, {
+    icon: "file-text",
+    slug: "case-studies",
+    label: "Case Studies",
+    children: [{
+      url: "/apps/case-studies",
+      slug: "pages:apps-case-studies",
+      label: "All Case Studies"
+    }, {
+      url: "/apps/case-studies/create",
+      slug: "pages:apps-case-studies-create",
+      label: "Add New"
+    }]
+  }, {
     url: "/apps/chat",
     icon: "message",
     slug: "pages:apps-chat",

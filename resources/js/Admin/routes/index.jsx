@@ -21,6 +21,15 @@ export const routes = [
     path: '/apps/api-keys',
     Component: lazy(() => import('@admin/views/admin/apps/api-keys'))
   }, {
+    path: '/apps/case-studies',
+    Component: lazy(() => import('@admin/views/admin/apps/case-studies/CaseStudyList'))
+  }, {
+    path: '/apps/case-studies/create',
+    Component: lazy(() => import('@admin/views/admin/apps/case-studies/CaseStudyCreate'))
+  }, {
+    path: '/apps/case-studies/:id/edit',
+    Component: lazy(() => import('@admin/views/admin/apps/case-studies/CaseStudyEdit'))
+  }, {
     path: '/apps/sections',
     Component: lazy(() => import('@admin/views/admin/apps/sections/SectionList'))
   }, {
