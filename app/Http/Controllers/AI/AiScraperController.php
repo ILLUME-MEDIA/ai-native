@@ -1074,6 +1074,16 @@ IMPORTANT:
             }
         }
 
+        // Filter by tag (JSON array contains)
+        if ($request->filled('tag')) {
+            $query->whereJsonContains('youtube_videos.tags', $request->tag);
+        }
+
+        // Filter by genre (JSON array contains)
+        if ($request->filled('genre')) {
+            $query->whereJsonContains('youtube_videos.genres', $request->genre);
+        }
+
         $query->orderBy("youtube_videos.{$sortBy}", $sortDir);
 
         $paginated = $query->paginate($perPage);

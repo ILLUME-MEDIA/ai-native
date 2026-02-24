@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, Pagination, InputGroup, Tabs, Tab, ListGroup } from 'react-bootstrap';
+import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, InputGroup, Tabs, Tab, ListGroup } from 'react-bootstrap';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
@@ -123,15 +123,18 @@ const Scrapers = () => {
     /* ─── Videos DataTable state ─── */
     const [videos, setVideos] = useState([]);
     const [videosLoading, setVideosLoading] = useState(true);
-    const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0, per_page: 25 });
-    const [rowsPerPage, setRowsPerPage] = useState(25);
-    const [rowsInput, setRowsInput] = useState('25');
+    const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0, per_page: 500 });
+    const [rowsPerPage] = useState(500);
     const [loadingMore, setLoadingMore] = useState(false);
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState('created_at');
     const [sortDir, setSortDir] = useState('desc');
     const [filterPlaylist, setFilterPlaylist] = useState('');
     const [filterStatus, setFilterStatus] = useState('');
+    const [filterTag, setFilterTag] = useState('');
+    const [filterGenre, setFilterGenre] = useState('');
+    const [tagOptions, setTagOptions] = useState([]);
+    const [genreOptions, setGenreOptions] = useState([]);
     const [selectedVideoIds, setSelectedVideoIds] = useState(new Set());
 
     /* ─── Modals state ─── */
@@ -190,10 +193,10 @@ const Scrapers = () => {
         loadInitial();
     }, []);
 
-    /* ─── Reload videos when filters/sort/page change ─── */
+    /* ─── Reload videos when filters/sort change ─── */
     useEffect(() => {
-        loadVideos();
-    }, [pagination.current_page, sortBy, sortDir, filterPlaylist, filterStatus]);
+        loadVideos(1);
+    }, [sortBy, sortDir, filterPlaylist, filterStatus, filterTag, filterGenre]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadInitial = async () => {
         setLoading(true);
@@ -211,7 +214,7 @@ const Scrapers = () => {
         }
     };
 
-    const loadVideos = useCallback(async (page, append = false) => {
+    const loadVideos = useCallback(async (page = 1, append = false) => {
         // Stamp this request; any older in-flight call that finishes later will be discarded
         const reqId = ++videoRequestId.current;
 
@@ -221,9 +224,8 @@ const Scrapers = () => {
             setVideosLoading(true);
         }
         try {
-            const targetPage = page || pagination.current_page || 1;
             const params = {
-                page: targetPage,
+                page,
                 per_page: rowsPerPage,
                 sort_by: sortBy,
                 sort_dir: sortDir,
@@ -231,6 +233,8 @@ const Scrapers = () => {
             if (search) params.search = search;
             if (filterPlaylist) params.playlist_id = filterPlaylist;
             if (filterStatus) params.status = filterStatus;
+            if (filterTag) params.tag = filterTag;
+            if (filterGenre) params.genre = filterGenre;
 
             const res = await axios.get('/api/ai/scrapers/videos/list', { params });
 
@@ -257,7 +261,27 @@ const Scrapers = () => {
                 setVideosLoading(false);
             }
         }
-    }, [pagination.current_page, rowsPerPage, sortBy, sortDir, search, filterPlaylist, filterStatus]);
+    }, [rowsPerPage, sortBy, sortDir, search, filterPlaylist, filterStatus, filterTag, filterGenre]);
+
+    /* ─── Auto-load all remaining pages (no scroll needed) ─── */
+    useEffect(() => {
+        if (!videosLoading && !loadingMore && pagination.current_page < pagination.last_page) {
+            loadVideos(pagination.current_page + 1, true);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [videosLoading, loadingMore]);
+
+    /* ─── Collect unique tag/genre options from loaded videos ─── */
+    useEffect(() => {
+        const tags = new Set();
+        const genres = new Set();
+        videos.forEach(v => {
+            (v.tags || []).forEach(t => t && tags.add(t));
+            (v.genres || []).forEach(g => g && genres.add(g));
+        });
+        setTagOptions([...tags].sort());
+        setGenreOptions([...genres].sort());
+    }, [videos]);
 
     const refreshAll = async () => {
         await loadInitial();
@@ -289,7 +313,6 @@ const Scrapers = () => {
         setSearch(val);
         if (searchTimeout.current) clearTimeout(searchTimeout.current);
         searchTimeout.current = setTimeout(() => {
-            setPagination(p => ({ ...p, current_page: 1 }));
             loadVideos(1);
         }, 400);
     };
@@ -302,7 +325,6 @@ const Scrapers = () => {
             setSortBy(col);
             setSortDir('asc');
         }
-        setPagination(p => ({ ...p, current_page: 1 }));
     };
 
     const SortIcon = ({ col }) => {
@@ -920,7 +942,8 @@ const Scrapers = () => {
     const handlePlaylistClick = (pl) => {
         const newFilter = filterPlaylist === pl.playlist_id ? '' : pl.playlist_id;
         setFilterPlaylist(newFilter);
-        setPagination(p => ({ ...p, current_page: 1 }));
+        setFilterTag('');
+        setFilterGenre('');
         if (newFilter && videosSectionRef.current) {
             setTimeout(() => videosSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
         }
@@ -934,39 +957,6 @@ const Scrapers = () => {
         return pl.playlist_url || null;
     };
 
-    /* ─── Pagination renderer ─── */
-    const renderPagination = () => {
-        if (pagination.last_page <= 1) return null;
-        const pages = [];
-        const { current_page, last_page } = pagination;
-
-        const addPage = (num) => {
-            pages.push(
-                <Pagination.Item key={num} active={num === current_page}
-                    onClick={() => setPagination(p => ({ ...p, current_page: num }))}>
-                    {num}
-                </Pagination.Item>
-            );
-        };
-
-        pages.push(<Pagination.Prev key="prev" disabled={current_page <= 1}
-            onClick={() => setPagination(p => ({ ...p, current_page: p.current_page - 1 }))} />);
-
-        if (last_page <= 7) {
-            for (let i = 1; i <= last_page; i++) addPage(i);
-        } else {
-            addPage(1);
-            if (current_page > 3) pages.push(<Pagination.Ellipsis key="e1" disabled />);
-            for (let i = Math.max(2, current_page - 1); i <= Math.min(last_page - 1, current_page + 1); i++) addPage(i);
-            if (current_page < last_page - 2) pages.push(<Pagination.Ellipsis key="e2" disabled />);
-            addPage(last_page);
-        }
-
-        pages.push(<Pagination.Next key="next" disabled={current_page >= last_page}
-            onClick={() => setPagination(p => ({ ...p, current_page: p.current_page + 1 }))} />);
-
-        return <Pagination className="mb-0 justify-content-end">{pages}</Pagination>;
-    };
 
     /* ─── Infinite scroll handler for table body ─── */
     const handleTableScroll = (e) => {
@@ -1117,7 +1107,7 @@ const Scrapers = () => {
                                     Videos {pagination.total > 0 && <small className="text-muted fw-normal">({pagination.total} total)</small>}
                                     {filterPlaylist && (
                                         <Badge bg="primary" className="fw-normal" style={{ fontSize: '11px', cursor: 'pointer' }}
-                                            onClick={() => { setFilterPlaylist(''); setPagination(p => ({ ...p, current_page: 1 })); }}
+                                            onClick={() => { setFilterPlaylist(''); setFilterTag(''); setFilterGenre(''); }}
                                             title="Clear playlist filter">
                                             {playlists.find(p => p.playlist_id === filterPlaylist)?.title || filterPlaylist}
                                             <Icon icon="x" className="icon-xs ms-1" />
@@ -1133,53 +1123,36 @@ const Scrapers = () => {
                                     </InputGroup>
                                     {/* Playlist filter */}
                                     <Form.Select size="sm" style={{ width: '180px' }} value={filterPlaylist}
-                                        onChange={(e) => { setFilterPlaylist(e.target.value); setPagination(p => ({ ...p, current_page: 1 })); }}>
+                                        onChange={(e) => { setFilterPlaylist(e.target.value); setFilterTag(''); setFilterGenre(''); }}>
                                         <option value="">All Playlists</option>
                                         {playlists.map(pl => (
                                             <option key={pl.playlist_id} value={pl.playlist_id}>{pl.title || pl.playlist_id}</option>
                                         ))}
                                     </Form.Select>
                                     {/* Status filter */}
-                                    <Form.Select size="sm" style={{ width: '140px' }} value={filterStatus}
-                                        onChange={(e) => { setFilterStatus(e.target.value); setPagination(p => ({ ...p, current_page: 1 })); }}>
+                                    <Form.Select size="sm" style={{ width: '130px' }} value={filterStatus}
+                                        onChange={(e) => setFilterStatus(e.target.value)}>
                                         <option value="">All Status</option>
                                         <option value="new">New</option>
                                         <option value="pushed">Pushed</option>
                                         <option value="failed">Failed</option>
                                     </Form.Select>
-                                    {/* Rows per page (preset + custom) */}
-                                    <Form.Select
-                                        size="sm"
-                                        style={{ width: '120px' }}
-                                        value={rowsPerPage}
-                                        onChange={(e) => {
-                                            const value = parseInt(e.target.value, 10) || 25;
-                                            setRowsPerPage(value);
-                                            setRowsInput(String(value));
-                                            setPagination(p => ({ ...p, current_page: 1, per_page: value }));
-                                        }}
-                                    >
-                                        <option value={25}>25 / page</option>
-                                        <option value={50}>50 / page</option>
-                                        <option value={100}>100 / page</option>
-                                    </Form.Select>
-                                    <InputGroup size="sm" style={{ width: '120px' }}>
-                                        <Form.Control
-                                            type="number"
-                                            min={1}
-                                            max={1000}
-                                            value={rowsInput}
-                                            onChange={(e) => setRowsInput(e.target.value)}
-                                            onBlur={() => {
-                                                const parsed = parseInt(rowsInput, 10);
-                                                if (!parsed || parsed < 1) return;
-                                                const clamped = Math.min(parsed, 1000);
-                                                setRowsPerPage(clamped);
-                                                setPagination(p => ({ ...p, current_page: 1, per_page: clamped }));
-                                            }}
-                                            placeholder="Custom"
-                                        />
-                                    </InputGroup>
+                                    {/* Tag filter */}
+                                    {tagOptions.length > 0 && (
+                                        <Form.Select size="sm" style={{ width: '140px' }} value={filterTag}
+                                            onChange={(e) => setFilterTag(e.target.value)}>
+                                            <option value="">All Tags</option>
+                                            {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                        </Form.Select>
+                                    )}
+                                    {/* Genre filter */}
+                                    {genreOptions.length > 0 && (
+                                        <Form.Select size="sm" style={{ width: '140px' }} value={filterGenre}
+                                            onChange={(e) => setFilterGenre(e.target.value)}>
+                                            <option value="">All Genres</option>
+                                            {genreOptions.map(g => <option key={g} value={g}>{g}</option>)}
+                                        </Form.Select>
+                                    )}
                                     {/* Push selected */}
                                     {selectedVideoIds.size > 0 && (
                                         <Button variant="primary" size="sm" onClick={openPushFromSelection}>
@@ -1193,7 +1166,7 @@ const Scrapers = () => {
                         <Card.Body className="p-0">
                             <div
                                 className="table-responsive"
-                                style={{ maxHeight: '600px', overflowY: 'auto' }}
+                                style={{ maxHeight: '80vh', overflowY: 'auto' }}
                                 onScroll={handleTableScroll}
                             >
                                 <Table className="table-centered table-hover mb-0" size="sm">
@@ -1286,10 +1259,9 @@ const Scrapers = () => {
                                                             <small className="text-dark fw-bold d-flex align-items-center mb-1" style={{fontSize: '0.6rem', letterSpacing: '0.5px'}}>
                                                                 <Icon icon="tag" className="me-1 text-dark" style={{width: '10px', height: '10px', stroke: '#000', strokeWidth: 2}} /> TAGS
                                                             </small>
-                                                            {v.tags.slice(0, 3).map((tag, i) => (
+                                                            {v.tags.map((tag, i) => (
                                                                 <Badge key={i} bg="light" className="text-dark border me-1 mb-1" style={{fontSize: '0.7rem', fontWeight: '600'}}>{tag}</Badge>
                                                             ))}
-                                                            {v.tags.length > 3 && <span className="small text-muted">+{v.tags.length - 3}</span>}
                                                         </div>
                                                     ) : null}
                                                     {(v.genres && v.genres.length > 0) ? (
@@ -1320,14 +1292,14 @@ const Scrapers = () => {
                                     </tbody>
                                 </Table>
                             </div>
-                            {/* Pagination footer */}
+                            {/* Footer: total count + selection info */}
                             {pagination.total > 0 && (
-                                <div className="d-flex justify-content-between align-items-center px-3 py-2 border-top">
+                                <div className="px-3 py-2 border-top">
                                     <small className="text-muted">
-                                        Showing {((pagination.current_page - 1) * pagination.per_page) + 1}–{Math.min(pagination.current_page * pagination.per_page, pagination.total)} of {pagination.total}
+                                        {videos.length} of {pagination.total} loaded
                                         {selectedVideoIds.size > 0 && <> &middot; <strong>{selectedVideoIds.size} selected</strong></>}
+                                        {videos.length < pagination.total && <> &middot; <span className="text-primary">scroll down to load more</span></>}
                                     </small>
-                                    {renderPagination()}
                                 </div>
                             )}
                         </Card.Body>

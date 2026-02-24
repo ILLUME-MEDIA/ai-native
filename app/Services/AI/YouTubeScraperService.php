@@ -1322,6 +1322,7 @@ class YouTubeScraperService
                     'db_manual' => $video->manual_image_url,
                 ]);
 
+                $youtubeVideoUrl = $video->video_url ?: ('https://www.youtube.com/watch?v=' . $video->video_id);
                 $trackPayload = [
                     'name' => $video->title ?? 'YouTube Video',
                     'release_date' => $trackReleaseDate,
@@ -1329,6 +1330,10 @@ class YouTubeScraperService
                     'duration' => $durationMs,
                     // API docs expect an array of artist IDs
                     'artists' => [$artistId],
+                    // Playback source — streaming platform supports YouTube video URLs
+                    'youtube_url' => $youtubeVideoUrl,
+                    'src' => $youtubeVideoUrl,
+                    'youtube_id' => $video->video_id,
                 ];
 
                 // Decide album for this video and attach genres/tags to track
