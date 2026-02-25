@@ -63,6 +63,32 @@ class GitController extends Controller
         return response()->json($this->runGit($workspace, 'add', ...$files));
     }
 
+    public function stage(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['path' => 'required|string']);
+
+        $path = $data['path'] === '.' ? '.' : $this->sanitizeGitPath($workspace, $data['path']);
+
+        $result = $this->runGit($workspace, 'add', $path);
+
+        return response()->json(['success' => $result['success'], 'output' => $result['output'] ?? '', 'error' => $result['error'] ?? '']);
+    }
+
+    public function unstage(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['path' => 'required|string']);
+
+        $path = $this->sanitizeGitPath($workspace, $data['path']);
+
+        $result = $this->runGit($workspace, 'restore', '--staged', $path);
+
+        return response()->json(['success' => $result['success'], 'output' => $result['output'] ?? '', 'error' => $result['error'] ?? '']);
+    }
+
     public function commit(Request $request, Workspace $workspace)
     {
         $this->authorize('update', $workspace);
@@ -234,6 +260,88 @@ class GitController extends Controller
 
         return response()->json($result);
     }
+
+    // ── B-16: Stash Management ────────────────────────────────────────────────
+
+    public function stashList(Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $result = $this->runGit($workspace, 'stash', 'list', '--format=%H%x1f%gd%x1f%s');
+
+        if (!$result['success']) {
+            return response()->json(['success' => true, 'stashes' => []]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'stashes' => $this->parseStashList($result['output'] ?? ''),
+        ]);
+    }
+
+    public function stashCreate(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['message' => 'nullable|string|max:200']);
+
+        $args = ['stash', 'push'];
+        if (!empty($data['message'])) {
+            $args[] = '-m';
+            $args[] = $data['message'];
+        }
+
+        return response()->json($this->runGit($workspace, ...$args));
+    }
+
+    public function stashPop(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['ref' => 'nullable|string']);
+
+        $args = ['stash', 'pop'];
+        if (!empty($data['ref'])) {
+            $this->assertSafeStashRef($data['ref']);
+            $args[] = $data['ref'];
+        }
+
+        return response()->json($this->runGit($workspace, ...$args));
+    }
+
+    public function stashDrop(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate(['ref' => 'required|string']);
+        $this->assertSafeStashRef($data['ref']);
+
+        return response()->json($this->runGit($workspace, 'stash', 'drop', $data['ref']));
+    }
+
+    protected function parseStashList(string $output): array
+    {
+        $stashes = [];
+        foreach (preg_split('/\r\n|\r|\n/', trim($output)) as $line) {
+            if ($line === '') continue;
+            $parts    = explode("\x1f", $line, 3);
+            $stashes[] = [
+                'hash'    => $parts[0] ?? '',
+                'ref'     => $parts[1] ?? '',
+                'message' => $parts[2] ?? '',
+            ];
+        }
+        return $stashes;
+    }
+
+    protected function assertSafeStashRef(string $ref): void
+    {
+        if (!preg_match('/^stash@\{\d+\}$/', $ref)) {
+            throw ValidationException::withMessages(['ref' => 'Invalid stash reference. Must be stash@{N}.']);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     protected function parseBlame(string $output): array
     {
@@ -437,6 +545,9 @@ class GitController extends Controller
         $lines = preg_split('/\\r\\n|\\r|\\n/', trim($output));
         $branch = null;
         $changes = [];
+        $staged = [];
+        $unstaged = [];
+        $untracked = [];
 
         foreach ($lines as $index => $line) {
             if ($line === '') {
@@ -449,16 +560,59 @@ class GitController extends Controller
                 continue;
             }
 
-            $status = trim(substr($line, 0, 2));
+            if (strlen($line) < 2) {
+                continue;
+            }
+
+            $xy   = substr($line, 0, 2);
+            $x    = $xy[0]; // index (staged) status
+            $y    = $xy[1]; // worktree (unstaged) status
             $file = trim(substr($line, 3));
-            if ($file !== '') {
-                $changes[] = ['status' => $status, 'file' => $file];
+
+            if ($file === '') {
+                continue;
+            }
+
+            // Keep flat changes list for backward compat
+            $status = trim($xy);
+            $changes[] = ['status' => $status, 'file' => $file];
+
+            // Untracked
+            if ($xy === '??' || $xy === '!!') {
+                $untracked[] = ['path' => $file, 'status' => '?'];
+                continue;
+            }
+
+            // Staged changes (index column is not space and not ?)
+            if ($x !== ' ' && $x !== '?') {
+                $statusLabel = match ($x) {
+                    'M' => 'M',
+                    'A' => 'A',
+                    'D' => 'D',
+                    'R' => 'R',
+                    'C' => 'C',
+                    default => $x,
+                };
+                $staged[] = ['path' => $file, 'status' => $statusLabel];
+            }
+
+            // Unstaged changes (worktree column is not space and not ?)
+            if ($y !== ' ' && $y !== '?') {
+                $statusLabel = match ($y) {
+                    'M' => 'M',
+                    'D' => 'D',
+                    default => $y,
+                };
+                $unstaged[] = ['path' => $file, 'status' => $statusLabel];
             }
         }
 
         return [
-            'branch' => $branch,
-            'changes' => $changes
+            'branch'    => $branch,
+            'changes'   => $changes,
+            'staged'    => $staged,
+            'unstaged'  => $unstaged,
+            'untracked' => $untracked,
         ];
     }
 

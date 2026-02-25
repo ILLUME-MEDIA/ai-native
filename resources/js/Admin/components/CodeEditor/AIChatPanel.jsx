@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle } from 'lucide-react';
 import { toast } from 'react-toastify';
 
-export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch }) {
+export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -83,6 +83,14 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     useEffect(() => {
         scrollToBottom();
     }, [messages, streamingMessage]);
+
+    // S3-2: Accept prefill from AI selection actions
+    useEffect(() => {
+        if (prefill) {
+            setInput(prefill);
+            if (onPrefillConsumed) onPrefillConsumed();
+        }
+    }, [prefill]);
 
     useEffect(() => {
         if (!loading) {

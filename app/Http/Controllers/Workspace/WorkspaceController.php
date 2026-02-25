@@ -362,6 +362,26 @@ class WorkspaceController extends Controller
             return response()->json(['error' => 'File too large', 'size' => $size], 400);
         }
 
+        // B-18: Base64 encoding for image preview in PreviewPanel
+        if ($request->input('encoding') === 'base64') {
+            $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+            $imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+            if (!in_array($ext, $imageExts)) {
+                return response()->json(['error' => 'base64 encoding is only supported for image files'], 400);
+            }
+            $mimes = [
+                'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+                'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml',
+                'bmp' => 'image/bmp', 'ico' => 'image/x-icon',
+            ];
+            return response()->json([
+                'content'  => base64_encode(file_get_contents($filePath)),
+                'encoding' => 'base64',
+                'mime'     => $mimes[$ext] ?? 'application/octet-stream',
+                'path'     => $relativePath,
+            ]);
+        }
+
         $this->assertExtensionAllowed($filePath);
 
         $content = $this->fs->get($filePath);
@@ -566,6 +586,91 @@ class WorkspaceController extends Controller
                     'extension' => $type === 'file' ? strtolower(pathinfo($newRelative, PATHINFO_EXTENSION)) : '',
                 ],
             ],
+        ]);
+    }
+
+    public function formatFile(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $request->validate([
+            'path'    => 'required|string',
+            'content' => 'required|string',
+        ]);
+
+        [$filePath, $relativePath] = $this->resolveWorkspacePath($workspace, $request->path);
+        $this->assertExtensionAllowed($filePath);
+
+        $content   = $request->input('content');
+        $ext       = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+        $tmpFile   = null;
+        $formatted = $content;
+
+        try {
+            // Write content to a temp file
+            $tmpFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ce_fmt_' . uniqid() . '.' . $ext;
+            file_put_contents($tmpFile, $content);
+
+            if ($ext === 'php') {
+                // Try Laravel Pint first, then php-cs-fixer
+                $workspacePath = $workspace->full_path;
+                $pintBin       = $workspacePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'pint';
+                $fixer         = $workspacePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-cs-fixer';
+
+                if (is_file($pintBin)) {
+                    @exec(escapeshellcmd($pintBin) . ' ' . escapeshellarg($tmpFile) . ' --no-interaction 2>&1', $out, $code);
+                } elseif (is_file($fixer)) {
+                    @exec(escapeshellcmd($fixer) . ' fix ' . escapeshellarg($tmpFile) . ' 2>&1', $out, $code);
+                }
+                // Read back the formatted result
+                if (is_file($tmpFile)) {
+                    $result = file_get_contents($tmpFile);
+                    if ($result !== false && $result !== '') {
+                        $formatted = $result;
+                    }
+                }
+            } elseif (in_array($ext, ['js', 'jsx', 'ts', 'tsx', 'json', 'css', 'scss', 'html'], true)) {
+                $workspacePath = $workspace->full_path;
+                $prettier      = $workspacePath . DIRECTORY_SEPARATOR . 'node_modules' . DIRECTORY_SEPARATOR . '.bin' . DIRECTORY_SEPARATOR . 'prettier';
+
+                if (!is_file($prettier)) {
+                    // Try global prettier
+                    $prettier = 'prettier';
+                }
+
+                $parserMap = [
+                    'js' => 'babel', 'jsx' => 'babel',
+                    'ts' => 'typescript', 'tsx' => 'typescript',
+                    'json' => 'json',
+                    'css' => 'css', 'scss' => 'scss',
+                    'html' => 'html',
+                ];
+                $parser = $parserMap[$ext] ?? 'babel';
+
+                $cmd = escapeshellcmd($prettier)
+                    . ' --write ' . escapeshellarg($tmpFile)
+                    . ' --parser ' . escapeshellarg($parser)
+                    . ' 2>&1';
+                @exec($cmd, $out, $code);
+
+                if (is_file($tmpFile)) {
+                    $result = file_get_contents($tmpFile);
+                    if ($result !== false && $result !== '') {
+                        $formatted = $result;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // Any error → return original content unchanged
+        } finally {
+            if ($tmpFile && is_file($tmpFile)) {
+                @unlink($tmpFile);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'content' => $formatted,
         ]);
     }
 

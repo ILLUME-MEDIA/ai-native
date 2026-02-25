@@ -85,6 +85,110 @@ class AICommandController extends Controller
     }
 
     /**
+     * C-02: Whiteboard sketch-to-code conversion
+     * Accepts an SVG string from Excalidraw and returns AI-generated code.
+     */
+    public function sketchToCode(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'svg'    => 'required|string|max:200000',
+            'format' => 'required|in:react,css,tokens',
+        ]);
+
+        $prompts = [
+            'react'  => "Convert this SVG wireframe/sketch into a React functional component using JSX and Tailwind CSS utility classes. Return ONLY the component code — no markdown fences, no explanations.",
+            'css'    => "Convert this SVG wireframe/sketch into a complete CSS stylesheet that recreates the layout and visual style. Return ONLY the CSS — no markdown fences, no explanations.",
+            'tokens' => "Extract all design tokens (colours, spacing values, font sizes, border radii, shadows) visible in this SVG sketch and output them as CSS custom properties (--token-name: value). Return ONLY the :root { } block — no markdown fences, no explanations.",
+        ];
+
+        $prompt = $prompts[$data['format']] . "\n\nSVG sketch:\n" . mb_substr($data['svg'], 0, 12000);
+
+        try {
+            $result = $this->aiManager->chatWithCode([
+                'message'     => $prompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $code = $result['text'] ?? '';
+            // Strip accidental markdown fences
+            $code = preg_replace('/^```[a-z]*\n?/i', '', $code);
+            $code = preg_replace('/\n?```$/i', '', $code);
+
+            return response()->json(['success' => true, 'code' => trim($code)]);
+        } catch (\Exception) {
+            return response()->json(['success' => false, 'code' => '', 'error' => 'AI conversion failed'], 500);
+        }
+    }
+
+    /**
+     * B-06: AI Inline Ghost Text completion
+     * Takes cursor position + file content, returns a short code completion.
+     */
+    public function complete(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'path'    => 'required|string',
+            'content' => 'required|string',
+            'line'    => 'required|integer|min:1',
+            'column'  => 'required|integer|min:1',
+        ]);
+
+        // Build context: last 40 lines before cursor + current line prefix
+        $allLines  = preg_split('/\r\n|\r|\n/', $data['content']);
+        $lineIdx   = $data['line'] - 1;
+        $col       = max(0, $data['column'] - 1);
+
+        $beforeLines       = array_slice($allLines, max(0, $lineIdx - 40), min($lineIdx, 40));
+        $currentLinePrefix = substr($allLines[$lineIdx] ?? '', 0, $col);
+        $contextBefore     = implode("\n", $beforeLines) . "\n" . $currentLinePrefix;
+
+        // Include a small look-ahead so the model knows what comes after
+        $afterLines    = array_slice($allLines, $lineIdx + 1, 8);
+        $contextAfter  = implode("\n", $afterLines);
+
+        $prompt = <<<EOT
+Code completion task. Return ONLY the text to insert at <cursor>. No explanations, no markdown fences, no extra lines.
+
+File: {$data['path']}
+
+Code before cursor:
+{$contextBefore}<cursor>
+
+Code after cursor:
+{$contextAfter}
+EOT;
+
+        try {
+            $result     = $this->aiManager->chatWithCode([
+                'message'     => $prompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $completion = $result['text'] ?? '';
+
+            // Strip accidental markdown fences
+            $completion = preg_replace('/^```[a-z]*\n?/i', '', $completion);
+            $completion = preg_replace('/\n?```$/i', '', $completion);
+
+            return response()->json(['success' => true, 'completion' => trim($completion)]);
+        } catch (\Exception) {
+            return response()->json(['success' => false, 'completion' => '']);
+        }
+    }
+
+    /**
      * Streaming AI chat endpoint using Server-Sent Events (SSE)
      * This prevents PHP timeouts and provides real-time UI updates
      */

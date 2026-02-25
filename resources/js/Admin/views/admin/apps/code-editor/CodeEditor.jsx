@@ -14,16 +14,30 @@ import EditorBreadcrumb from '@/Admin/components/CodeEditor/EditorBreadcrumb';
 import SearchPanel from '@/Admin/components/CodeEditor/SearchPanel';
 import DiffViewer from '@/Admin/components/CodeEditor/DiffViewer';
 import BlameGutter from '@/Admin/components/CodeEditor/BlameGutter';
+import CommandPalette from '@/Admin/components/CodeEditor/CommandPalette';
+import OutlinePanel from '@/Admin/components/CodeEditor/OutlinePanel';
+import ProblemsPanel from '@/Admin/components/CodeEditor/ProblemsPanel';
+import SettingsPanel, { DEFAULT_EDITOR_SETTINGS } from '@/Admin/components/CodeEditor/SettingsPanel';
+import KeyboardShortcutsPanel from '@/Admin/components/CodeEditor/KeyboardShortcutsPanel';
+import MergeConflictPanel from '@/Admin/components/CodeEditor/MergeConflictPanel';
+import PresenceIndicator from '@/Admin/components/CodeEditor/PresenceIndicator';
+import VisualEditor from '@/Admin/components/CodeEditor/VisualEditor';
+import WhiteboardPanel from '@/Admin/components/CodeEditor/WhiteboardPanel';
+import MCPStorePanel from '@/Admin/components/CodeEditor/MCPStorePanel';
 import { toast } from 'react-toastify';
-import { Code, MessageSquare, Clock, Palette, Folder, GitBranch, Search, User } from 'lucide-react';
+import { Code, MessageSquare, Clock, Palette, Folder, GitBranch, Search, User, AlignLeft, Columns2, X as XIcon, Zap, Wrench, Settings, Star, Maximize2, Minimize2, Keyboard, AlertTriangle, Paintbrush, PenTool, Store } from 'lucide-react';
 
 export default function CodeEditor() {
     const [workspace, setWorkspace] = useState(null);
     const [tabs, setTabs] = useState([]);
     const [activeTab, setActiveTab] = useState(null);
     const [activePanel, setActivePanel] = useState('chat');
-    const [leftView, setLeftView] = useState('explorer'); // 'explorer' | 'git' | 'search'
-    const [centerView, setCenterView] = useState('code'); // 'code' | 'preview' | 'diff'
+    const [leftView, setLeftView] = useState('explorer'); // 'explorer' | 'git' | 'search' | 'outline' | 'mcp'
+
+    // Command Palette state
+    const [showCommandPalette, setShowCommandPalette] = useState(false);
+    const [commandPaletteMode, setCommandPaletteMode] = useState('files'); // 'files' | 'commands'
+    const [centerView, setCenterView] = useState('code'); // 'code' | 'preview' | 'diff' | 'merge' | 'visual' | 'whiteboard'
     const [terminalOpen, setTerminalOpen] = useState(true);
     const [sidebarWidth, setSidebarWidth] = useState(() => {
         const saved = Number(localStorage.getItem('codeEditor.sidebarWidth'));
@@ -41,6 +55,58 @@ export default function CodeEditor() {
 
     // Dynamic branch
     const [currentBranch, setCurrentBranch] = useState('main');
+
+    // S3-1: Split Editor
+    const [splitMode, setSplitMode] = useState(false);
+    const [splitTabs, setSplitTabs] = useState([]);
+    const [splitActiveTab, setSplitActiveTab] = useState(null);
+    const [focusedPane, setFocusedPane] = useState('main'); // 'main' | 'split'
+    const monacoSplitRef = useRef(null);
+
+    // S3-2: AI Selection Actions
+    const [selectionActionBar, setSelectionActionBar] = useState(null); // { text, top, left }
+    const aiChatPrefillRef = useRef(null); // stores prefill setter from AIChatPanel
+    const [aiChatPrefill, setAiChatPrefill] = useState(null);
+
+    // S3-3: Problems Panel — bottom dock tab
+    const [bottomTab, setBottomTab] = useState('terminal'); // 'terminal' | 'problems'
+
+    // B-12: Zen Mode
+    const [zenMode, setZenMode] = useState(false);
+    const ctrlKPressedRef = useRef(false);
+
+    // B-14: Keyboard Shortcuts Panel
+    const [showShortcuts, setShowShortcuts] = useState(false);
+
+    // B-06: AI Ghost Text
+    const [ghostTextEnabled, setGhostTextEnabled] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('ce.ghostText') || 'false'); }
+        catch { return false; }
+    });
+
+    // B-09: Editor Settings
+    const [editorSettings, setEditorSettings] = useState(() => {
+        try { return { ...DEFAULT_EDITOR_SETTINGS, ...JSON.parse(localStorage.getItem('ce.settings') || '{}') }; }
+        catch { return { ...DEFAULT_EDITOR_SETTINGS }; }
+    });
+
+    // B-10: File Bookmarks — keyed by workspace ID
+    const [allBookmarks, setAllBookmarks] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('ce.bookmarks') || '{}'); }
+        catch { return {}; }
+    });
+
+    // B-11: Recently Opened Files — keyed by workspace ID, last 10
+    const [allRecents, setAllRecents] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('ce.recentFiles') || '{}'); }
+        catch { return {}; }
+    });
+
+    // B-15: Merge conflict detection
+    const conflictCount = (() => {
+        if (!activeTab?.content) return 0;
+        return (activeTab.content.match(/^<{7}\s/m) || []).length;
+    })();
 
     const resizingRef = useRef(false);
     const treeApiRef = useRef(null);
@@ -62,6 +128,55 @@ export default function CodeEditor() {
 
     const handleTerminalApi = useCallback((api) => { terminalApiRef.current = api; }, []);
     const appendToTerminal = useCallback((entries) => { terminalApiRef.current?.appendEntries?.(entries); }, []);
+
+    // B-10: Bookmark helpers
+    function getWorkspaceBookmarks() {
+        return workspace ? (allBookmarks[workspace.id] || []) : [];
+    }
+    // B-11: Recent files helpers
+    function getWorkspaceRecents() {
+        return workspace ? (allRecents[workspace.id] || []) : [];
+    }
+    function pushRecentFile(file) {
+        if (!workspace || !file?.path) return;
+        const current = allRecents[workspace.id] || [];
+        const deduped = current.filter(r => r.path !== file.path);
+        const updated = [{ path: file.path, name: file.name || file.path.split('/').pop() }, ...deduped].slice(0, 10);
+        const next = { ...allRecents, [workspace.id]: updated };
+        setAllRecents(next);
+        localStorage.setItem('ce.recentFiles', JSON.stringify(next));
+        // Also sync with CommandPalette's key so both stay consistent
+        try {
+            const cpRecent = JSON.parse(localStorage.getItem('ce.commandPalette.recentFiles') || '[]').filter(p => p !== file.path);
+            localStorage.setItem('ce.commandPalette.recentFiles', JSON.stringify([file.path, ...cpRecent].slice(0, 10)));
+        } catch {}
+    }
+
+    function toggleBookmark(file) {
+        if (!workspace) return;
+        const wbm = allBookmarks[workspace.id] || [];
+        const isBookmarked = wbm.some(b => b.path === file.path);
+        const newWbm = isBookmarked
+            ? wbm.filter(b => b.path !== file.path)
+            : [...wbm, { path: file.path, name: file.name }];
+        const next = { ...allBookmarks, [workspace.id]: newWbm };
+        setAllBookmarks(next);
+        localStorage.setItem('ce.bookmarks', JSON.stringify(next));
+    }
+
+    // B-09: Settings updater — applies to Monaco live
+    function updateEditorSettings(newSettings) {
+        setEditorSettings(newSettings);
+        localStorage.setItem('ce.settings', JSON.stringify(newSettings));
+        if (monacoEditorRef.current) {
+            monacoEditorRef.current.updateOptions({
+                fontSize: newSettings.fontSize,
+                tabSize: newSettings.tabSize,
+                wordWrap: newSettings.wordWrap ? 'on' : 'off',
+                minimap: { enabled: newSettings.minimap },
+            });
+        }
+    }
 
     // Fetch current branch when workspace changes
     useEffect(() => {
@@ -113,13 +228,95 @@ export default function CodeEditor() {
         localStorage.setItem('codeEditor.sidebarWidth', String(sidebarWidth));
     }, [sidebarWidth]);
 
+    // Global keyboard shortcuts
+    useEffect(() => {
+        function handleKeyDown(e) {
+            const ctrl = e.ctrlKey || e.metaKey;
+            const key = e.key.toLowerCase();
+
+            // Ctrl+Shift+P = command palette (commands mode)
+            if (ctrl && key === 'p' && e.shiftKey) {
+                e.preventDefault();
+                setCommandPaletteMode('commands');
+                setShowCommandPalette(true);
+                return;
+            }
+            // Ctrl+P = command palette (files mode)
+            if (ctrl && key === 'p' && !e.shiftKey) {
+                e.preventDefault();
+                setCommandPaletteMode('files');
+                setShowCommandPalette(true);
+                return;
+            }
+            // B-11: Ctrl+Shift+E = jump to recent files (command palette in files mode)
+            if (ctrl && e.shiftKey && key === 'e') {
+                e.preventDefault();
+                setCommandPaletteMode('files');
+                setShowCommandPalette(true);
+                return;
+            }
+            // B-12: Ctrl+K chord → then Z = toggle zen mode
+            if (ctrl && key === 'k') {
+                ctrlKPressedRef.current = true;
+                setTimeout(() => { ctrlKPressedRef.current = false; }, 1500);
+                return;
+            }
+            if (ctrlKPressedRef.current && key === 'z') {
+                e.preventDefault();
+                ctrlKPressedRef.current = false;
+                setZenMode(v => !v);
+                return;
+            }
+            // B-14: Ctrl+K then S = keyboard shortcuts panel
+            if (ctrlKPressedRef.current && key === 's') {
+                e.preventDefault();
+                ctrlKPressedRef.current = false;
+                setShowShortcuts(true);
+                return;
+            }
+            // B-12: Esc exits zen mode
+            if (e.key === 'Escape') {
+                setZenMode(false);
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     async function handleFileSelect(file) {
         if (!workspace) return;
         setLeftView('explorer');
+
+        // S3-1: Route to focused pane
+        if (focusedPane === 'split' && splitMode) {
+            const existing = splitTabs.find(t => t.path === file.path);
+            if (existing) {
+                setSplitActiveTab(existing);
+                setCenterView('code');
+                return;
+            }
+            try {
+                const response = await axios.get(`/api/workspaces/${workspace.id}/files/read`, { params: { path: file.path } });
+                const newTab = {
+                    ...file,
+                    content: response.data.content,
+                    language: detectLanguage(file.extension || file.path.split('.').pop()),
+                    unsaved: false,
+                };
+                setSplitTabs(prev => [...prev, newTab]);
+                setSplitActiveTab(newTab);
+                setCenterView('code');
+            } catch (error) {
+                toast.error(error.response?.data?.error || 'Failed to load file');
+            }
+            return;
+        }
+
         const existing = tabs.find(t => t.path === file.path);
         if (existing) {
             setActiveTab(existing);
             setCenterView('code');
+            pushRecentFile(file);
             return;
         }
         try {
@@ -133,9 +330,27 @@ export default function CodeEditor() {
             setTabs(prev => [...prev, newTab]);
             setActiveTab(newTab);
             setCenterView('code');
+            pushRecentFile(file);
         } catch (error) {
             toast.error(error.response?.data?.error || 'Failed to load file');
         }
+    }
+
+    // S3-1: Split pane tab handlers
+    function handleSplitTabClose(tab) {
+        if (tab.unsaved && !confirm('File has unsaved changes. Close anyway?')) return;
+        const newTabs = splitTabs.filter(t => t.path !== tab.path);
+        setSplitTabs(newTabs);
+        if (splitActiveTab?.path === tab.path) {
+            const index = splitTabs.findIndex(t => t.path === tab.path);
+            setSplitActiveTab(newTabs[index - 1] || newTabs[index] || null);
+        }
+    }
+
+    function handleSplitEditorChange(newValue) {
+        if (!splitActiveTab) return;
+        setSplitTabs(prev => prev.map(tab => tab.path === splitActiveTab.path ? { ...tab, content: newValue, unsaved: true } : tab));
+        setSplitActiveTab(prev => ({ ...prev, content: newValue, unsaved: true }));
     }
 
     async function handleResultClick(filePath, line) {
@@ -190,6 +405,38 @@ export default function CodeEditor() {
         setBlameData(null);
     }, [activeTab?.path]);
 
+    // S3-1: dismiss selection bar when split focus changes
+    useEffect(() => {
+        setSelectionActionBar(null);
+    }, [focusedPane]);
+
+    // S3-2: AI Selection Actions
+    function handleSelectionChange(selInfo) {
+        if (!selInfo) {
+            setSelectionActionBar(null);
+            return;
+        }
+        setSelectionActionBar({
+            text: selInfo.text,
+            top: selInfo.top,
+            left: selInfo.left,
+        });
+    }
+
+    function handleAISelectionAction(action, text) {
+        const templates = {
+            explain: `Explain what this code does:\n\`\`\`\n${text}\n\`\`\``,
+            fix: `Find and fix any bugs in this code:\n\`\`\`\n${text}\n\`\`\``,
+            tests: `Generate unit tests for this code:\n\`\`\`\n${text}\n\`\`\``,
+            docs: `Add JSDoc/PHPDoc documentation comments to this code:\n\`\`\`\n${text}\n\`\`\``,
+            refactor: `Refactor this code to be cleaner and more maintainable:\n\`\`\`\n${text}\n\`\`\``,
+        };
+        const message = templates[action] || text;
+        setAiChatPrefill(message);
+        setActivePanel('chat');
+        setSelectionActionBar(null);
+    }
+
     function handleWorkspaceSelect(selectedWorkspace) {
         setWorkspace(selectedWorkspace);
         setTabs([]);
@@ -198,6 +445,12 @@ export default function CodeEditor() {
         setCenterView('code');
         setShowBlame(false);
         setBlameData(null);
+        // Reset split state
+        setSplitMode(false);
+        setSplitTabs([]);
+        setSplitActiveTab(null);
+        setFocusedPane('main');
+        setSelectionActionBar(null);
     }
 
     function handleEditorChange(newValue) {
@@ -208,10 +461,36 @@ export default function CodeEditor() {
 
     async function handleSave(content) {
         if (!activeTab || !workspace) return;
+        let finalContent = content || activeTab.content;
         try {
+            // Format on save (only if enabled in settings)
+            if (editorSettings.formatOnSave !== false) try {
+                const formatRes = await axios.post(`/api/workspaces/${workspace.id}/files/format`, {
+                    path: activeTab.path,
+                    content: finalContent,
+                });
+                if (formatRes.data?.content && formatRes.data.content !== finalContent) {
+                    const formatted = formatRes.data.content;
+                    const editor = monacoEditorRef.current;
+                    if (editor) {
+                        const pos = editor.getPosition();
+                        editor.setValue(formatted);
+                        if (pos) editor.setPosition(pos);
+                    }
+                    finalContent = formatted;
+                    // Update tab state with formatted content
+                    setTabs(prev => prev.map(tab =>
+                        tab.path === activeTab.path ? { ...tab, content: formatted } : tab
+                    ));
+                    setActiveTab(prev => ({ ...prev, content: formatted }));
+                }
+            } catch {
+                // Format failure is non-fatal — continue with save
+            }
+
             await axios.post(`/api/workspaces/${workspace.id}/files/write`, {
                 path: activeTab.path,
-                content: content || activeTab.content,
+                content: finalContent,
             });
             setTabs(prev => prev.map(tab => tab.path === activeTab.path ? { ...tab, unsaved: false } : tab));
             setActiveTab(prev => ({ ...prev, unsaved: false }));
@@ -242,9 +521,14 @@ export default function CodeEditor() {
     }
 
     const activityItems = [
-        { id: 'explorer', icon: <Folder size={16} />,    label: 'Explorer',        action: () => setLeftView('explorer') },
-        { id: 'search',   icon: <Search size={16} />,    label: 'Search',          action: () => setLeftView('search') },
-        { id: 'git',      icon: <GitBranch size={16} />, label: 'Source Control',  action: () => setLeftView('git') },
+        { id: 'explorer',   icon: <Folder size={16} />,    label: 'Explorer',       action: () => setLeftView('explorer'),              isActive: () => leftView === 'explorer' },
+        { id: 'search',     icon: <Search size={16} />,    label: 'Search',         action: () => setLeftView('search'),                isActive: () => leftView === 'search' },
+        { id: 'git',        icon: <GitBranch size={16} />, label: 'Source Control', action: () => setLeftView('git'),                   isActive: () => leftView === 'git' },
+        { id: 'outline',    icon: <AlignLeft size={16} />, label: 'Outline',        action: () => setLeftView('outline'),               isActive: () => leftView === 'outline' },
+        { id: 'settings',   icon: <Settings size={16} />,  label: 'Settings',       action: () => setLeftView('settings'),              isActive: () => leftView === 'settings' },
+        { id: 'visual',     icon: <Paintbrush size={16} />, label: 'Visual Editor', action: () => setCenterView(v => v === 'visual' ? 'code' : 'visual'), isActive: () => centerView === 'visual' },
+        { id: 'whiteboard', icon: <PenTool size={16} />,   label: 'Whiteboard',    action: () => setCenterView(v => v === 'whiteboard' ? 'code' : 'whiteboard'), isActive: () => centerView === 'whiteboard' },
+        { id: 'mcp',        icon: <Store size={16} />,     label: 'MCP Store',     action: () => setLeftView(v => v === 'mcp' ? 'explorer' : 'mcp'),         isActive: () => leftView === 'mcp' },
     ];
 
     const rightPanels = [
@@ -278,6 +562,86 @@ export default function CodeEditor() {
 
     return (
         <>
+            <CommandPalette
+                visible={showCommandPalette}
+                mode={commandPaletteMode}
+                workspace={workspace}
+                openTabs={tabs}
+                onClose={() => setShowCommandPalette(false)}
+                onOpenFile={(path) => {
+                    handleFileSelect({ path, name: path.split('/').pop() });
+                    setShowCommandPalette(false);
+                }}
+                onRunCommand={() => setShowCommandPalette(false)}
+                monacoEditorRef={monacoEditorRef}
+            />
+
+            {/* B-14: Keyboard Shortcuts Panel */}
+            <KeyboardShortcutsPanel
+                visible={showShortcuts}
+                onClose={() => setShowShortcuts(false)}
+            />
+
+            {/* S3-2: AI Selection Action Bar */}
+            {selectionActionBar && (
+                <div style={{
+                    position: 'fixed',
+                    top: Math.max(8, selectionActionBar.top - 44),
+                    left: selectionActionBar.left,
+                    zIndex: 9998,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '2px',
+                    background: '#161b22',
+                    border: '1px solid #30363d',
+                    borderRadius: '6px',
+                    padding: '3px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                    {[
+                        { id: 'explain', label: 'Explain' },
+                        { id: 'fix', label: 'Fix' },
+                        { id: 'tests', label: 'Tests' },
+                        { id: 'docs', label: 'Docs' },
+                        { id: 'refactor', label: 'Refactor' },
+                    ].map(({ id, label }) => (
+                        <button
+                            key={id}
+                            onClick={() => handleAISelectionAction(id, selectionActionBar.text)}
+                            title={`AI: ${label}`}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#c9d1d9',
+                                cursor: 'pointer',
+                                padding: '3px 8px',
+                                fontSize: '10px',
+                                fontFamily: 'inherit',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.1)'; e.currentTarget.style.color = '#ff6b35'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#c9d1d9'; }}
+                        >
+                            <Zap size={9} />
+                            {label}
+                        </button>
+                    ))}
+                    <button
+                        onClick={() => setSelectionActionBar(null)}
+                        title="Dismiss"
+                        style={{ background: 'none', border: 'none', color: '#484f58', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', marginLeft: '2px' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#8b949e'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; }}
+                    >
+                        <XIcon size={10} />
+                    </button>
+                </div>
+            )}
+
             <style>{`
                 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
@@ -311,107 +675,145 @@ export default function CodeEditor() {
                 }}
             >
                 <div className="code-editor-layout" style={{ display: 'flex', height: '100%' }}>
-                    {/* Activity Bar */}
+                    {/* Activity Bar — hidden in zen mode */}
                     <div style={{
-                        width: '44px',
+                        width: zenMode ? 0 : '44px',
                         background: '#0d0f14',
-                        borderRight: '1px solid #1c2128',
+                        borderRight: zenMode ? 'none' : '1px solid #1c2128',
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         paddingTop: '12px',
                         gap: '4px',
                         flexShrink: 0,
+                        overflow: 'hidden',
+                        transition: 'width 0.2s',
                     }}>
-                        {activityItems.map(({ id, icon, label, action }) => (
-                            <button
-                                key={id}
-                                className="ce-activity-btn"
-                                onClick={action}
-                                title={label}
-                                style={{
-                                    background: leftView === id ? 'rgba(255,107,53,0.1)' : 'none',
-                                    border: leftView === id ? '1px solid rgba(255,107,53,0.2)' : '1px solid transparent',
-                                    color: leftView === id ? '#ff6b35' : '#8b949e',
-                                    width: '36px',
-                                    height: '36px',
-                                    borderRadius: '8px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                }}
-                            >
-                                {icon}
-                            </button>
-                        ))}
+                        {activityItems.map(({ id, icon, label, action, isActive }) => {
+                            const active = isActive();
+                            return (
+                                <button
+                                    key={id}
+                                    className="ce-activity-btn"
+                                    onClick={action}
+                                    title={label}
+                                    style={{
+                                        background: active ? 'rgba(255,107,53,0.1)' : 'none',
+                                        border: active ? '1px solid rgba(255,107,53,0.2)' : '1px solid transparent',
+                                        color: active ? '#ff6b35' : '#8b949e',
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        padding: 0,
+                                    }}
+                                >
+                                    {icon}
+                                </button>
+                            );
+                        })}
                     </div>
 
-                    {/* Left Sidebar */}
-                    <div
-                        className="code-editor-sidebar"
-                        style={{
-                            width: `${sidebarWidth}px`,
-                            background: '#0d0f14',
-                            borderRight: '1px solid #1c2128',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            flexShrink: 0,
-                            overflow: 'hidden',
-                        }}
-                    >
-                        <WorkspaceSelector
-                            onWorkspaceSelect={handleWorkspaceSelect}
-                            currentWorkspace={workspace}
-                            leftView={leftView}
-                            onOpenGit={() => setLeftView('git')}
-                            onOpenExplorer={() => setLeftView('explorer')}
-                        />
-
-                        {leftView === 'explorer' && (
-                            <FileExplorer
-                                workspace={workspace}
-                                onFileSelect={handleFileSelect}
-                                currentFile={activeTab}
-                                onTreeRefresh={handleTreeRefresh}
+                    {/* Left Sidebar — hidden in zen mode */}
+                    {!zenMode && (
+                        <div
+                            className="code-editor-sidebar"
+                            style={{
+                                width: `${sidebarWidth}px`,
+                                background: '#0d0f14',
+                                borderRight: '1px solid #1c2128',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                flexShrink: 0,
+                                overflow: 'hidden',
+                            }}
+                        >
+                            <WorkspaceSelector
+                                onWorkspaceSelect={handleWorkspaceSelect}
+                                currentWorkspace={workspace}
+                                leftView={leftView}
+                                onOpenGit={() => setLeftView('git')}
+                                onOpenExplorer={() => setLeftView('explorer')}
                             />
-                        )}
 
-                        {leftView === 'search' && (
-                            <SearchPanel
-                                workspace={workspace}
-                                onResultClick={handleResultClick}
-                            />
-                        )}
-
-                        {leftView === 'git' && (
-                            <div className="git-panel git-panel-embedded" style={{ flex: 1, overflow: 'hidden' }}>
-                                <GitPanel
+                            {leftView === 'explorer' && (
+                                <FileExplorer
                                     workspace={workspace}
-                                    onClose={() => {}}
-                                    embedded={true}
-                                    onTerminalAppend={appendToTerminal}
-                                    onOpenDiff={handleOpenDiff}
+                                    onFileSelect={handleFileSelect}
+                                    currentFile={activeTab}
+                                    onTreeRefresh={handleTreeRefresh}
+                                    bookmarks={getWorkspaceBookmarks()}
+                                    onToggleBookmark={toggleBookmark}
+                                    recentFiles={getWorkspaceRecents()}
                                 />
-                            </div>
-                        )}
-                    </div>
+                            )}
 
-                    {/* Drag Handle */}
-                    <div
-                        className="sidebar-resizer ce-resizer"
-                        onMouseDown={(e) => {
-                            e.preventDefault();
-                            resizingRef.current = true;
-                            document.body.style.cursor = 'col-resize';
-                            document.body.style.userSelect = 'none';
-                        }}
-                        title="Drag to resize sidebar"
-                        role="separator"
-                        aria-orientation="vertical"
-                        style={{ background: '#1c2128', cursor: 'col-resize', width: '3px', flexShrink: 0 }}
-                    />
+                            {leftView === 'search' && (
+                                <SearchPanel
+                                    workspace={workspace}
+                                    onResultClick={handleResultClick}
+                                />
+                            )}
+
+                            {leftView === 'git' && (
+                                <div className="git-panel git-panel-embedded" style={{ flex: 1, overflow: 'hidden' }}>
+                                    <GitPanel
+                                        workspace={workspace}
+                                        onClose={() => {}}
+                                        embedded={true}
+                                        onTerminalAppend={appendToTerminal}
+                                        onOpenDiff={handleOpenDiff}
+                                    />
+                                </div>
+                            )}
+
+                            {leftView === 'outline' && (
+                                <OutlinePanel
+                                    monacoEditorRef={monacoEditorRef}
+                                    activeFile={activeTab?.path}
+                                    onJumpToLine={(line) => {
+                                        if (monacoEditorRef.current) {
+                                            monacoEditorRef.current.revealLineInCenter(line);
+                                            monacoEditorRef.current.setPosition({ lineNumber: line, column: 1 });
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {/* B-09: Settings Panel */}
+                            {leftView === 'settings' && (
+                                <SettingsPanel
+                                    settings={editorSettings}
+                                    onChange={updateEditorSettings}
+                                />
+                            )}
+
+                            {/* C-03: MCP Store */}
+                            {leftView === 'mcp' && (
+                                <MCPStorePanel workspace={workspace} />
+                            )}
+                        </div>
+                    )}
+
+                    {/* Drag Handle — hidden in zen mode */}
+                    {!zenMode && (
+                        <div
+                            className="sidebar-resizer ce-resizer"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                resizingRef.current = true;
+                                document.body.style.cursor = 'col-resize';
+                                document.body.style.userSelect = 'none';
+                            }}
+                            title="Drag to resize sidebar"
+                            role="separator"
+                            aria-orientation="vertical"
+                            style={{ background: '#1c2128', cursor: 'col-resize', width: '3px', flexShrink: 0 }}
+                        />
+                    )}
 
                     {/* Center: Editor */}
                     <div
@@ -424,22 +826,88 @@ export default function CodeEditor() {
                             background: '#161b22',
                         }}
                     >
-                        <EditorTabs
-                            tabs={tabs}
-                            activeTab={activeTab}
-                            activeCenterView={centerView}
-                            onTabSelect={(tab) => {
-                                setActiveTab(tab);
-                                setCenterView('code');
-                            }}
-                            onPreviewSelect={() => setCenterView('preview')}
-                            terminalOpen={terminalOpen}
-                            onToggleTerminal={() => setTerminalOpen(v => !v)}
-                            onTabClose={handleTabClose}
-                        />
+                        {/* Tab bar row: EditorTabs + Split button */}
+                        <div style={{ display: 'flex', alignItems: 'stretch', borderBottom: '1px solid #1c2128', flexShrink: 0, background: '#0d0f14' }}>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                                <EditorTabs
+                                    tabs={tabs}
+                                    activeTab={activeTab}
+                                    activeCenterView={centerView}
+                                    onTabSelect={(tab) => {
+                                        setFocusedPane('main');
+                                        setActiveTab(tab);
+                                        if (centerView === 'merge') setCenterView('code');
+                                        else setCenterView('code');
+                                    }}
+                                    onPreviewSelect={() => setCenterView('preview')}
+                                    terminalOpen={terminalOpen}
+                                    onToggleTerminal={() => setTerminalOpen(v => !v)}
+                                    onTabClose={handleTabClose}
+                                />
+                            </div>
+                            {/* S3-1: Split Editor toggle */}
+                            <button
+                                onClick={() => {
+                                    if (splitMode) {
+                                        setSplitMode(false);
+                                        setSplitTabs([]);
+                                        setSplitActiveTab(null);
+                                        setFocusedPane('main');
+                                    } else {
+                                        setSplitMode(true);
+                                        setFocusedPane('main');
+                                    }
+                                }}
+                                title={splitMode ? 'Close Split Editor' : 'Split Editor Right'}
+                                style={{
+                                    background: splitMode ? 'rgba(255,107,53,0.1)' : 'none',
+                                    border: 'none',
+                                    borderLeft: '1px solid #1c2128',
+                                    color: splitMode ? '#ff6b35' : '#8b949e',
+                                    padding: '0 10px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '10px',
+                                    fontFamily: 'inherit',
+                                    flexShrink: 0,
+                                    transition: 'color 0.15s, background 0.15s',
+                                }}
+                            >
+                                {splitMode ? <XIcon size={12} /> : <Columns2 size={13} />}
+                            </button>
+                        </div>
 
                         <div className="editor-split" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                            <EditorBreadcrumb activeTab={activeTab} actions={blameBtn} />
+                            <EditorBreadcrumb activeTab={focusedPane === 'split' ? splitActiveTab : activeTab} actions={blameBtn} />
+
+                            {/* B-15: Merge conflict banner */}
+                            {conflictCount > 0 && centerView !== 'merge' && (
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', gap: '8px',
+                                    padding: '4px 14px', flexShrink: 0,
+                                    background: 'rgba(210,153,34,0.1)',
+                                    borderBottom: '1px solid rgba(210,153,34,0.25)',
+                                    fontSize: '11px',
+                                }}>
+                                    <AlertTriangle size={11} style={{ color: '#d29922', flexShrink: 0 }} />
+                                    <span style={{ color: '#d29922' }}>
+                                        {conflictCount} merge conflict{conflictCount > 1 ? 's' : ''} in this file
+                                    </span>
+                                    <button
+                                        onClick={() => setCenterView('merge')}
+                                        style={{
+                                            background: 'rgba(210,153,34,0.15)', border: '1px solid rgba(210,153,34,0.35)',
+                                            borderRadius: '4px', color: '#d29922', cursor: 'pointer',
+                                            padding: '1px 8px', fontSize: '10px', fontFamily: 'inherit',
+                                            marginLeft: '4px',
+                                        }}
+                                    >
+                                        Resolve →
+                                    </button>
+                                </div>
+                            )}
 
                             <div className="editor-canvas" style={{ flex: 1, overflow: 'hidden' }}>
                                 {!workspace ? (
@@ -450,7 +918,28 @@ export default function CodeEditor() {
                                     </div>
                                 ) : (
                                     <>
-                                        {centerView === 'preview' ? (
+                                        {centerView === 'visual' ? (
+                                            <VisualEditor
+                                                workspace={workspace}
+                                                activeTab={activeTab}
+                                            />
+                                        ) : centerView === 'whiteboard' ? (
+                                            <WhiteboardPanel
+                                                workspace={workspace}
+                                                onCreateFile={({ name, content, language }) => {
+                                                    const newTab = {
+                                                        path: `whiteboard/${name}`,
+                                                        name,
+                                                        content,
+                                                        language: language || 'javascript',
+                                                        unsaved: true,
+                                                    };
+                                                    setTabs(prev => [...prev, newTab]);
+                                                    setActiveTab(newTab);
+                                                    setCenterView('code');
+                                                }}
+                                            />
+                                        ) : centerView === 'preview' ? (
                                             <PreviewPanel
                                                 workspace={workspace}
                                                 activeTab={activeTab}
@@ -463,47 +952,201 @@ export default function CodeEditor() {
                                                 type={diffType}
                                                 onClose={() => setCenterView('code')}
                                             />
-                                        ) : activeTab ? (
-                                            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-                                                {showBlame && blameData && (
-                                                    <BlameGutter
-                                                        blameData={blameData}
-                                                        editorRef={monacoEditorRef}
-                                                        lineHeight={19}
-                                                    />
-                                                )}
-                                                <div style={{ flex: 1, overflow: 'hidden' }}>
-                                                    <MonacoEditor
-                                                        value={activeTab.content}
-                                                        onChange={handleEditorChange}
-                                                        language={activeTab.language}
-                                                        path={activeTab.path}
-                                                        onSave={handleSave}
-                                                        onEditorMount={(editor) => { monacoEditorRef.current = editor; }}
-                                                    />
-                                                </div>
-                                            </div>
+                                        ) : centerView === 'merge' && activeTab ? (
+                                            <MergeConflictPanel
+                                                file={activeTab}
+                                                onResolved={(newContent) => {
+                                                    setTabs(prev => prev.map(t =>
+                                                        t.path === activeTab.path ? { ...t, content: newContent, unsaved: true } : t
+                                                    ));
+                                                    setActiveTab(prev => ({ ...prev, content: newContent, unsaved: true }));
+                                                    if (monacoEditorRef.current) monacoEditorRef.current.setValue(newContent);
+                                                    setCenterView('code');
+                                                    toast.success('All conflicts resolved');
+                                                }}
+                                                onClose={() => setCenterView('code')}
+                                            />
                                         ) : (
-                                            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
-                                                <Code size={52} />
-                                                <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#8b949e' }}>No file open</h4>
-                                                <p style={{ margin: 0, fontSize: '12px' }}>Select a file from the explorer to start editing</p>
+                                            /* S3-1: Split / Single pane layout */
+                                            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+                                                {/* Left / Main pane */}
+                                                <div
+                                                    style={{ flex: 1, display: 'flex', overflow: 'hidden', outline: focusedPane === 'main' && splitMode ? '1px solid rgba(255,107,53,0.25)' : 'none' }}
+                                                    onClick={() => setFocusedPane('main')}
+                                                >
+                                                    {activeTab ? (
+                                                        <>
+                                                            {showBlame && blameData && (
+                                                                <BlameGutter
+                                                                    blameData={blameData}
+                                                                    editorRef={monacoEditorRef}
+                                                                    lineHeight={19}
+                                                                />
+                                                            )}
+                                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                                <MonacoEditor
+                                                                    value={activeTab.content}
+                                                                    onChange={handleEditorChange}
+                                                                    language={activeTab.language}
+                                                                    path={activeTab.path}
+                                                                    onSave={handleSave}
+                                                                    onEditorMount={(editor) => { monacoEditorRef.current = editor; }}
+                                                                    onSelectionChange={handleSelectionChange}
+                                                                    settings={editorSettings}
+                                                                    ghostTextEnabled={ghostTextEnabled}
+                                                                    workspaceId={workspace?.id}
+                                                                />
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
+                                                            <Code size={52} />
+                                                            <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#8b949e' }}>No file open</h4>
+                                                            <p style={{ margin: 0, fontSize: '12px' }}>Select a file from the explorer to start editing</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* S3-1: Right split pane */}
+                                                {splitMode && (
+                                                    <>
+                                                        <div style={{ width: '1px', background: '#1c2128', flexShrink: 0 }} />
+                                                        <div
+                                                            style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', outline: focusedPane === 'split' ? '1px solid rgba(255,107,53,0.25)' : 'none' }}
+                                                            onClick={() => setFocusedPane('split')}
+                                                        >
+                                                            {/* Split pane tab bar */}
+                                                            <div style={{ background: '#0d0f14', borderBottom: '1px solid #1c2128', display: 'flex', overflow: 'hidden', flexShrink: 0, minHeight: '34px' }}>
+                                                                {splitTabs.map((tab, index) => (
+                                                                    <div
+                                                                        key={`split-${tab.path}-${index}`}
+                                                                        onClick={(e) => { e.stopPropagation(); setFocusedPane('split'); setSplitActiveTab(tab); }}
+                                                                        style={{
+                                                                            display: 'flex', alignItems: 'center', gap: '5px',
+                                                                            padding: '5px 10px',
+                                                                            borderRight: '1px solid #1c2128',
+                                                                            cursor: 'pointer',
+                                                                            background: splitActiveTab?.path === tab.path ? '#161b22' : 'transparent',
+                                                                            borderBottom: splitActiveTab?.path === tab.path ? '2px solid #ff6b35' : '2px solid transparent',
+                                                                            color: splitActiveTab?.path === tab.path ? '#e6edf3' : '#8b949e',
+                                                                            fontSize: '11px',
+                                                                            fontFamily: 'inherit',
+                                                                            whiteSpace: 'nowrap',
+                                                                            userSelect: 'none',
+                                                                        }}
+                                                                    >
+                                                                        <span>{tab.name}</span>
+                                                                        {tab.unsaved && <span style={{ color: '#d29922' }}>●</span>}
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); handleSplitTabClose(tab); }}
+                                                                            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center', opacity: 0.6 }}
+                                                                        >
+                                                                            <XIcon size={11} />
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                                {splitTabs.length === 0 && (
+                                                                    <div style={{ padding: '5px 10px', color: '#484f58', fontSize: '11px', fontFamily: 'inherit', alignSelf: 'center' }}>
+                                                                        Click a file to open here
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {/* Split pane editor */}
+                                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                                {splitActiveTab ? (
+                                                                    <MonacoEditor
+                                                                        value={splitActiveTab.content}
+                                                                        onChange={handleSplitEditorChange}
+                                                                        language={splitActiveTab.language}
+                                                                        path={splitActiveTab.path}
+                                                                        onSave={handleSave}
+                                                                        onEditorMount={(editor) => { monacoSplitRef.current = editor; }}
+                                                                        onSelectionChange={(sel) => { if (focusedPane === 'split') handleSelectionChange(sel); }}
+                                                                        settings={editorSettings}
+                                                                    />
+                                                                ) : (
+                                                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
+                                                                        <Columns2 size={36} />
+                                                                        <p style={{ margin: 0, fontSize: '12px' }}>Click a file in the explorer</p>
+                                                                        <p style={{ margin: 0, fontSize: '11px', color: '#30363d' }}>This pane is focused</p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                )}
                                             </div>
                                         )}
                                     </>
                                 )}
                             </div>
 
-                            {/* Bottom Terminal Dock */}
+                            {/* Bottom Dock: Terminal + Problems tabs — hidden in zen mode */}
                             <div
-                                className={`bottom-dock ${terminalOpen ? 'open' : 'closed'}`}
-                                style={{ background: '#0a0c0f', borderTop: terminalOpen ? '1px solid #1c2128' : 'none', flexShrink: 0 }}
+                                className={`bottom-dock ${terminalOpen && !zenMode ? 'open' : 'closed'}`}
+                                style={{ background: '#0a0c0f', borderTop: terminalOpen && !zenMode ? '1px solid #1c2128' : 'none', flexShrink: 0, display: zenMode ? 'none' : 'flex', flexDirection: 'column' }}
                             >
-                                <Terminal
-                                    workspace={workspace}
-                                    onClose={() => setTerminalOpen(false)}
-                                    onTerminalApi={handleTerminalApi}
-                                />
+                                {terminalOpen && (
+                                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #1c2128', background: '#0d0f14', flexShrink: 0 }}>
+                                        {[
+                                            { id: 'terminal', label: 'TERMINAL', icon: null },
+                                            { id: 'problems', label: 'PROBLEMS', icon: <Wrench size={10} /> },
+                                        ].map(({ id, label, icon }) => (
+                                            <button
+                                                key={id}
+                                                onClick={() => setBottomTab(id)}
+                                                style={{
+                                                    background: 'none', border: 'none', cursor: 'pointer',
+                                                    padding: '4px 12px',
+                                                    color: bottomTab === id ? '#ff6b35' : '#8b949e',
+                                                    borderBottom: bottomTab === id ? '2px solid #ff6b35' : '2px solid transparent',
+                                                    fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
+                                                    fontFamily: 'inherit',
+                                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                                    transition: 'color 0.15s',
+                                                }}
+                                            >
+                                                {icon}
+                                                {label}
+                                            </button>
+                                        ))}
+                                        <div style={{ marginLeft: 'auto', paddingRight: '8px' }}>
+                                            <button
+                                                onClick={() => setTerminalOpen(false)}
+                                                style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                                title="Close panel"
+                                            >
+                                                <XIcon size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                <div style={{ flex: 1, overflow: 'hidden', display: terminalOpen ? 'flex' : 'none', flexDirection: 'column' }}>
+                                    <div style={{ display: bottomTab === 'terminal' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
+                                        <Terminal
+                                            workspace={workspace}
+                                            onClose={() => setTerminalOpen(false)}
+                                            onTerminalApi={handleTerminalApi}
+                                        />
+                                    </div>
+                                    {bottomTab === 'problems' && (
+                                        <ProblemsPanel
+                                            tabs={tabs}
+                                            monacoEditorRef={monacoEditorRef}
+                                            onJumpToFile={(path, line) => {
+                                                pendingScrollLineRef.current = line;
+                                                const existing = tabs.find(t => t.path === path);
+                                                if (existing) {
+                                                    setActiveTab(existing);
+                                                    setCenterView('code');
+                                                    setFocusedPane('main');
+                                                } else {
+                                                    handleFileSelect({ path, name: path.split('/').pop() });
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -523,21 +1166,62 @@ export default function CodeEditor() {
                                     <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: '#8b949e' }}>{s}</span>
                                 ))}
                             </div>
-                            <div style={{ display: 'flex', gap: '16px' }}>
+                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                {/* B-20: Presence / Collaboration Indicators */}
+                                <PresenceIndicator
+                                    workspaceId={workspace?.id}
+                                    openFile={activeTab?.path ?? null}
+                                />
                                 {['UTF-8', 'LF'].map(s => (
                                     <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: '#8b949e' }}>{s}</span>
                                 ))}
+                                {/* B-06: AI Ghost Text toggle */}
+                                <button
+                                    onClick={() => {
+                                        const next = !ghostTextEnabled;
+                                        setGhostTextEnabled(next);
+                                        localStorage.setItem('ce.ghostText', JSON.stringify(next));
+                                    }}
+                                    title={ghostTextEnabled ? 'AI Ghost Text: On (click to disable)' : 'AI Ghost Text: Off (click to enable)'}
+                                    className="ce-status-item"
+                                    style={{
+                                        background: 'none', border: 'none', padding: '0 2px',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px',
+                                        color: ghostTextEnabled ? '#ff6b35' : '#8b949e',
+                                        fontSize: '10px',
+                                    }}
+                                >
+                                    <Zap size={11} />
+                                </button>
+                                {/* B-14: Keyboard shortcuts */}
+                                <button
+                                    onClick={() => setShowShortcuts(true)}
+                                    title="Keyboard Shortcuts (Ctrl+K S)"
+                                    className="ce-status-item"
+                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#8b949e' }}
+                                >
+                                    <Keyboard size={11} />
+                                </button>
+                                {/* B-12: Zen mode toggle */}
+                                <button
+                                    onClick={() => setZenMode(v => !v)}
+                                    title={zenMode ? 'Exit Zen Mode (Esc)' : 'Zen Mode (Ctrl+K Z)'}
+                                    className="ce-status-item"
+                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: zenMode ? '#ff6b35' : '#8b949e' }}
+                                >
+                                    {zenMode ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+                                </button>
                             </div>
                         </div>
                     </div>
 
-                    {/* Right Panel */}
+                    {/* Right Panel — hidden in zen mode */}
                     <div
                         className="code-editor-right"
                         style={{
                             background: '#0d0f14',
                             borderLeft: '1px solid #1c2128',
-                            display: 'flex',
+                            display: zenMode ? 'none' : 'flex',
                             flexDirection: 'column',
                         }}
                     >
@@ -593,6 +1277,8 @@ export default function CodeEditor() {
                                     onClose={() => {}}
                                     onFileTreeRefresh={refreshFileTree}
                                     onFileTreePatch={applyFileTreePatch}
+                                    prefill={aiChatPrefill}
+                                    onPrefillConsumed={() => setAiChatPrefill(null)}
                                     onApplyChanges={(changes) => {
                                         changes.forEach(change => {
                                             const tab = tabs.find(t => t.path === change.path);

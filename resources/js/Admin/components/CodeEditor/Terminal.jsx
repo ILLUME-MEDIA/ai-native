@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Terminal as TerminalIcon, X, Trash2, Plus } from 'lucide-react';
+import { Terminal as TerminalIcon, X, Trash2, Plus, Columns2 } from 'lucide-react';
 
 let tabCounter = 0;
 function makeTabMeta() {
@@ -285,8 +285,31 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
 export default function Terminal({ workspace, onClose, onTerminalApi }) {
     const [tabs, setTabs] = useState(() => [makeTabMeta()]);
     const [activeId, setActiveId] = useState(() => tabs[0].id);
+    const [splitId, setSplitId] = useState(null); // B-13: split terminal pane
+    const [splitRatio, setSplitRatio] = useState(50); // left pane width %
     const clearCallbacks = useRef({});
     const activeInputRef = useRef(null);
+    const splitResizingRef = useRef(false);
+    const splitContainerRef = useRef(null);
+
+    // B-13: drag-to-resize split pane
+    useEffect(() => {
+        function onMove(e) {
+            if (!splitResizingRef.current || !splitContainerRef.current) return;
+            const rect = splitContainerRef.current.getBoundingClientRect();
+            const ratio = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100));
+            setSplitRatio(ratio);
+        }
+        function onUp() {
+            if (!splitResizingRef.current) return;
+            splitResizingRef.current = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    }, []);
 
     function addTab() {
         const meta = makeTabMeta();
@@ -294,13 +317,31 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
         setActiveId(meta.id);
     }
 
+    function splitTerminal() {
+        const meta = makeTabMeta();
+        setTabs(prev => [...prev, meta]);
+        setSplitId(meta.id);
+    }
+
+    function closeSplit() {
+        if (!splitId) return;
+        setTabs(prev => {
+            const next = prev.filter(t => t.id !== splitId);
+            delete clearCallbacks.current[splitId];
+            return next;
+        });
+        setSplitId(null);
+    }
+
     function closeTab(id) {
+        if (id === splitId) { closeSplit(); return; }
         if (tabs.length <= 1) return;
         setTabs(prev => {
             const idx = prev.findIndex(t => t.id === id);
             const next = prev.filter(t => t.id !== id);
             if (id === activeId) {
-                setActiveId(next[Math.max(0, idx - 1)].id);
+                const remaining = next.filter(t => t.id !== splitId);
+                setActiveId((remaining[Math.max(0, idx - 1)] || remaining[0] || next[0]).id);
             }
             delete clearCallbacks.current[id];
             return next;
@@ -422,6 +463,15 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
 
                 {/* Right controls */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '0 6px', flexShrink: 0, marginLeft: 'auto' }}>
+                    {/* B-13: Split terminal button */}
+                    <button
+                        className="btn-icon"
+                        onClick={splitId ? closeSplit : splitTerminal}
+                        title={splitId ? 'Close split terminal' : 'Split terminal'}
+                        style={{ color: splitId ? '#ff6b35' : '#8b949e' }}
+                    >
+                        <Columns2 size={13} />
+                    </button>
                     <button className="btn-icon" onClick={clearActive} title="Clear terminal (Ctrl+L)">
                         <Trash2 size={13} />
                     </button>
@@ -431,19 +481,63 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                 </div>
             </div>
 
-            {/* Terminal instances (all mounted, inactive hidden) */}
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={focusActive}>
-                {tabs.map(tab => (
-                    <TerminalInstance
-                        key={tab.id}
-                        workspace={workspace}
-                        active={tab.id === activeId}
-                        tabMeta={tab}
-                        onTerminalApi={tab.id === activeId ? onTerminalApi : undefined}
-                        onRegisterClear={registerClear}
+            {/* Terminal instances */}
+            {splitId ? (
+                /* B-13: Split layout — left pane (activeId) + right pane (splitId) */
+                <div ref={splitContainerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                    {/* Left pane */}
+                    <div style={{ flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={focusActive}>
+                        {tabs.filter(t => t.id !== splitId).map(tab => (
+                            <TerminalInstance
+                                key={tab.id}
+                                workspace={workspace}
+                                active={tab.id === activeId}
+                                tabMeta={tab}
+                                onTerminalApi={tab.id === activeId ? onTerminalApi : undefined}
+                                onRegisterClear={registerClear}
+                            />
+                        ))}
+                    </div>
+                    {/* Drag handle */}
+                    <div
+                        style={{ width: '3px', background: '#1c2128', cursor: 'col-resize', flexShrink: 0, transition: 'background 0.15s' }}
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            splitResizingRef.current = true;
+                            document.body.style.cursor = 'col-resize';
+                            document.body.style.userSelect = 'none';
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.4)'; }}
+                        onMouseLeave={e => { if (!splitResizingRef.current) e.currentTarget.style.background = '#1c2128'; }}
                     />
-                ))}
-            </div>
+                    {/* Right pane */}
+                    <div style={{ flex: 100 - splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid #1c2128' }}>
+                        {tabs.filter(t => t.id === splitId).map(tab => (
+                            <TerminalInstance
+                                key={tab.id}
+                                workspace={workspace}
+                                active={true}
+                                tabMeta={tab}
+                                onRegisterClear={registerClear}
+                            />
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                /* Single pane — all tabs mounted, inactive hidden */
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={focusActive}>
+                    {tabs.map(tab => (
+                        <TerminalInstance
+                            key={tab.id}
+                            workspace={workspace}
+                            active={tab.id === activeId}
+                            tabMeta={tab}
+                            onTerminalApi={tab.id === activeId ? onTerminalApi : undefined}
+                            onRegisterClear={registerClear}
+                        />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Eye, EyeOff, RefreshCw, ExternalLink, AlertCircle } from 'lucide-react';
+import axios from 'axios';
+import { Eye, EyeOff, RefreshCw, ExternalLink, AlertCircle, Monitor, Tablet, Smartphone } from 'lucide-react';
 import { toast } from 'react-toastify';
+
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+const VIEWPORT_WIDTHS = { desktop: '100%', tablet: '768px', mobile: '375px' };
 
 export default function PreviewPanel({ workspace, activeTab, onClose }) {
     const [previewEnabled, setPreviewEnabled] = useState(true);
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [previewContent, setPreviewContent] = useState('');
+    const [imageDataUrl, setImageDataUrl] = useState(null); // B-18: for image files
     const [error, setError] = useState(null);
     const [workspaceTheme, setWorkspaceTheme] = useState(null);
+    const [viewport, setViewport] = useState('desktop'); // B-19: desktop | tablet | mobile
     const iframeRef = useRef(null);
-    const contentRef = useRef(null);
 
     useEffect(() => {
         function handler(e) {
@@ -78,40 +83,56 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
         }
     }, [activeTab?.content, activeTab?.path, autoRefresh]);
 
-    // Theme updates must NOT reload iframe content; only update styles
     useEffect(() => {
-        try {
-            applyThemeToIframe(workspaceTheme);
-        } catch {
-            // ignore
-        }
+        try { applyThemeToIframe(workspaceTheme); } catch { /* ignore */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [workspaceTheme]);
 
-    function updatePreview() {
+    async function updatePreview() {
         if (!activeTab) {
             setPreviewContent('');
+            setImageDataUrl(null);
             setError(null);
             return;
         }
 
         const extension = activeTab.path.split('.').pop().toLowerCase();
 
-        // Check if file is previewable
         if (!isPreviewableFile(extension)) {
             setError({
                 type: 'unsupported',
                 message: `Preview not available for .${extension} files`,
-                suggestion: 'Preview is only available for HTML, CSS, JavaScript, and Markdown files.'
+                suggestion: 'Preview supports HTML, CSS, JS, Markdown, JSON, and image files.',
             });
             setPreviewContent('');
+            setImageDataUrl(null);
             return;
         }
 
         try {
             let content = activeTab.content || '';
 
-            // Handle different file types
+            // B-18: Image preview
+            if (IMAGE_EXTS.includes(extension)) {
+                setPreviewContent('');
+                setError(null);
+                if (!workspace) { setImageDataUrl(null); return; }
+                try {
+                    const resp = await axios.get(`/api/workspaces/${workspace.id}/files/read`, {
+                        params: { path: activeTab.path, encoding: 'base64' },
+                    });
+                    if (resp.data?.encoding === 'base64') {
+                        setImageDataUrl(`data:${resp.data.mime};base64,${resp.data.content}`);
+                    }
+                } catch {
+                    setError({ type: 'error', message: 'Failed to load image', suggestion: 'Could not fetch image data from workspace.' });
+                    setImageDataUrl(null);
+                }
+                return;
+            }
+
+            setImageDataUrl(null);
+
             switch (extension) {
                 case 'html':
                 case 'htm':
@@ -121,158 +142,127 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
 
                 case 'md':
                 case 'markdown':
-                    // Simple markdown to HTML conversion
-                    const htmlContent = convertMarkdownToHtml(content);
-                    setPreviewContent(wrapInHtml(htmlContent));
+                    setPreviewContent(wrapInHtml(convertMarkdownToHtml(content)));
                     setError(null);
                     break;
 
                 case 'css':
-                    // Preview CSS with sample HTML
-                    const cssPreview = `
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <style>${content}</style>
-                        </head>
-                        <body>
-                            <div style="padding: 20px;">
-                                <h1>CSS Preview</h1>
-                                <p>This is a preview of your CSS styles.</p>
-                                <button>Button</button>
-                                <a href="#">Link</a>
-                                <ul>
-                                    <li>List item 1</li>
-                                    <li>List item 2</li>
-                                    <li>List item 3</li>
-                                </ul>
-                            </div>
-                        </body>
-                        </html>
-                    `;
-                    setPreviewContent(cssPreview);
+                    setPreviewContent(`
+                        <!DOCTYPE html><html><head><style>${content}</style></head>
+                        <body><div style="padding:20px">
+                            <h1>CSS Preview</h1><p>A preview of your CSS styles.</p>
+                            <button>Button</button> <a href="#">Link</a>
+                            <ul><li>List item 1</li><li>List item 2</li></ul>
+                        </div></body></html>
+                    `);
                     setError(null);
                     break;
 
                 case 'js':
                 case 'jsx':
-                    // Preview JavaScript in console view
-                    const jsPreview = `
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <style>
-                                body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
-                                pre { background: #2d2d2d; padding: 15px; border-radius: 4px; overflow: auto; }
-                                .info { color: #4fc1ff; }
-                            </style>
-                        </head>
-                        <body>
-                            <div class="info">JavaScript Preview</div>
-                            <pre>${escapeHtml(content)}</pre>
-                            <div class="info" style="margin-top: 20px;">
-                                ℹ️ To see JavaScript execution, save this as an HTML file with a &lt;script&gt; tag.
-                            </div>
-                        </body>
-                        </html>
-                    `;
-                    setPreviewContent(jsPreview);
+                    setPreviewContent(`
+                        <!DOCTYPE html><html><head>
+                        <style>body{font-family:monospace;padding:20px;background:#1e1e1e;color:#d4d4d4}pre{background:#2d2d2d;padding:15px;border-radius:4px;overflow:auto}.info{color:#4fc1ff}</style>
+                        </head><body>
+                        <div class="info">JavaScript Preview</div>
+                        <pre>${escapeHtml(content)}</pre>
+                        <div class="info" style="margin-top:20px">ℹ️ To run, embed in an HTML file with a &lt;script&gt; tag.</div>
+                        </body></html>
+                    `);
                     setError(null);
                     break;
 
+                // B-18: JSON preview with syntax highlighting
+                case 'json':
+                    try {
+                        const parsed = JSON.parse(content);
+                        const pretty = JSON.stringify(parsed, null, 2);
+                        const highlighted = syntaxHighlightJson(pretty);
+                        setPreviewContent(`
+                            <!DOCTYPE html><html><head>
+                            <style>
+                                body{font-family:'Consolas','Monaco',monospace;padding:16px;background:#0d1117;color:#c9d1d9;margin:0;font-size:13px;line-height:1.5}
+                                .s{color:#a5d6ff} .n{color:#79c0ff} .b{color:#ff7b72} .null{color:#ff7b72} .k{color:#c9d1d9}
+                                pre{margin:0;white-space:pre-wrap;word-break:break-all}
+                            </style>
+                            </head><body><pre>${highlighted}</pre></body></html>
+                        `);
+                        setError(null);
+                    } catch (e) {
+                        setError({ type: 'error', message: 'Invalid JSON', suggestion: e.message });
+                        setPreviewContent('');
+                    }
+                    break;
+
                 default:
-                    setError({
-                        type: 'unsupported',
-                        message: `Preview not configured for .${extension} files`,
-                        suggestion: 'Add support for this file type in PreviewPanel.jsx'
-                    });
+                    setError({ type: 'unsupported', message: `No preview for .${extension}`, suggestion: '' });
                     setPreviewContent('');
             }
         } catch (err) {
-            setError({
-                type: 'error',
-                message: 'Failed to generate preview',
-                suggestion: err.message
-            });
+            setError({ type: 'error', message: 'Failed to generate preview', suggestion: err.message });
             setPreviewContent('');
         }
     }
 
     function isPreviewableFile(extension) {
-        const previewableExtensions = [
-            'html', 'htm', 'css', 'js', 'jsx', 'md', 'markdown'
-        ];
-        return previewableExtensions.includes(extension);
+        return ['html', 'htm', 'css', 'js', 'jsx', 'md', 'markdown', 'json', ...IMAGE_EXTS].includes(extension);
     }
 
     function convertMarkdownToHtml(markdown) {
-        // Basic markdown conversion (headers, bold, italic, links, lists)
         let html = markdown
-            // Headers
             .replace(/^### (.*$)/gim, '<h3>$1</h3>')
             .replace(/^## (.*$)/gim, '<h2>$1</h2>')
             .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-            // Bold and italic
             .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.+?)\*/g, '<em>$1</em>')
             .replace(/___(.+?)___/g, '<strong><em>$1</em></strong>')
             .replace(/__(.+?)__/g, '<strong>$1</strong>')
             .replace(/_(.+?)_/g, '<em>$1</em>')
-            // Links
+            .replace(/`(.+?)`/g, '<code>$1</code>')
             .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-            // Line breaks
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>');
-
         return `<p>${html}</p>`;
     }
 
     function wrapInHtml(content) {
         const themeCss = workspaceTheme?.theme ? themeToCssVars(workspaceTheme.theme, workspaceTheme.mode || 'light') : '';
         return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style id="workspace-theme-vars">
-                    ${themeCss}
-                </style>
-                <style>
-                    body {
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                        line-height: 1.6;
-                        color: #333;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        padding: 20px;
-                    }
-                    h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; }
-                    h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-                    h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-                    a { color: #0366d6; text-decoration: none; }
-                    a:hover { text-decoration: underline; }
-                    code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 85%; }
-                    pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; }
-                </style>
-            </head>
-            <body>
-                ${content}
-            </body>
-            </html>
+            <!DOCTYPE html><html><head>
+            <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style id="workspace-theme-vars">${themeCss}</style>
+            <style>
+                body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;color:#333;max-width:800px;margin:0 auto;padding:20px}
+                h1,h2,h3,h4{margin-top:24px;margin-bottom:16px;font-weight:600}
+                h1{font-size:2em;border-bottom:1px solid #eaecef;padding-bottom:.3em}
+                h2{font-size:1.5em;border-bottom:1px solid #eaecef;padding-bottom:.3em}
+                a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}
+                code{background:#f6f8fa;padding:2px 6px;border-radius:3px;font-size:85%}
+                pre{background:#f6f8fa;padding:16px;border-radius:6px;overflow:auto}
+            </style>
+            </head><body>${content}</body></html>
         `;
     }
 
     function escapeHtml(text) {
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, m => map[m]);
+        return text.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
+    }
+
+    // B-18: basic JSON syntax highlighter (regex-based, no deps)
+    function syntaxHighlightJson(json) {
+        return escapeHtml(json).replace(
+            /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
+            (match) => {
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) return `<span class="k">${match}</span>`; // key
+                    return `<span class="s">${match}</span>`; // string
+                }
+                if (/true|false/.test(match)) return `<span class="b">${match}</span>`;
+                if (/null/.test(match)) return `<span class="null">${match}</span>`;
+                return `<span class="n">${match}</span>`; // number
+            }
+        );
     }
 
     function handleRefresh() {
@@ -281,15 +271,25 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
     }
 
     function handleOpenInNewTab() {
+        if (imageDataUrl) {
+            window.open(imageDataUrl, '_blank');
+            return;
+        }
         if (!previewContent) return;
-
         const blob = new Blob([previewContent], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         window.open(url, '_blank');
-
-        // Clean up the URL after a delay
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
+
+    // B-19: viewport control
+    const viewportButtons = [
+        { id: 'desktop', icon: <Monitor size={13} />, title: 'Desktop (full width)' },
+        { id: 'tablet',  icon: <Tablet size={13} />,  title: 'Tablet (768px)' },
+        { id: 'mobile',  icon: <Smartphone size={13} />, title: 'Mobile (375px)' },
+    ];
+
+    const maxWidth = VIEWPORT_WIDTHS[viewport];
 
     return (
         <div className="preview-panel">
@@ -304,7 +304,22 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
                     )}
                 </div>
 
-                <div className="preview-actions">
+                <div className="preview-actions" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {/* B-19: Viewport toggles */}
+                    <div style={{ display: 'flex', gap: '1px', borderRight: '1px solid rgba(255,255,255,0.1)', paddingRight: '6px', marginRight: '2px' }}>
+                        {viewportButtons.map(({ id, icon, title }) => (
+                            <button
+                                key={id}
+                                className={`btn-icon ${viewport === id ? 'active' : ''}`}
+                                onClick={() => setViewport(id)}
+                                title={title}
+                                style={{ opacity: viewport === id ? 1 : 0.5 }}
+                            >
+                                {icon}
+                            </button>
+                        ))}
+                    </div>
+
                     <button
                         className={`btn-icon ${autoRefresh ? 'active' : ''}`}
                         onClick={() => setAutoRefresh(!autoRefresh)}
@@ -317,7 +332,7 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
                         className="btn-icon"
                         onClick={handleRefresh}
                         title="Refresh preview"
-                        disabled={!previewContent}
+                        disabled={!previewContent && !imageDataUrl}
                     >
                         <RefreshCw size={16} />
                     </button>
@@ -326,7 +341,7 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
                         className="btn-icon"
                         onClick={handleOpenInNewTab}
                         title="Open in new tab"
-                        disabled={!previewContent}
+                        disabled={!previewContent && !imageDataUrl}
                     >
                         <ExternalLink size={16} />
                     </button>
@@ -352,7 +367,7 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
                     <div className="preview-empty-state">
                         <Eye size={48} className="opacity-50" />
                         <h5>No file selected</h5>
-                        <p>Open an HTML, CSS, JS, or Markdown file to preview</p>
+                        <p>Open an HTML, CSS, JS, Markdown, JSON, or image file to preview</p>
                     </div>
                 ) : error ? (
                     <div className="preview-error-state">
@@ -366,18 +381,42 @@ export default function PreviewPanel({ workspace, activeTab, onClose }) {
                         <h5>Preview hidden</h5>
                         <p>Click the eye icon to show preview</p>
                     </div>
+                ) : imageDataUrl ? (
+                    /* B-18: Image preview */
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#0d1117', padding: '16px', overflow: 'auto' }}>
+                        <div style={{ maxWidth: maxWidth, transition: 'max-width 0.3s ease', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <img
+                                src={imageDataUrl}
+                                alt={activeTab?.name || 'Preview'}
+                                style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 200px)', objectFit: 'contain', borderRadius: '4px', boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }}
+                            />
+                            <span style={{ fontSize: '10px', color: '#484f58', fontFamily: 'monospace' }}>
+                                {activeTab?.path?.split('/').pop()}
+                            </span>
+                        </div>
+                    </div>
                 ) : previewContent ? (
-                    <iframe
-                        ref={iframeRef}
-                        srcDoc={previewContent}
-                        className="preview-iframe"
-                        sandbox="allow-scripts"
-                        title="Preview"
-                        onLoad={() => {
-                            // Apply current theme without reloading content
-                            applyThemeToIframe(workspaceTheme);
-                        }}
-                    />
+                    /* B-19: Viewport-constrained iframe */
+                    <div style={{ display: 'flex', justifyContent: 'center', height: '100%', overflow: 'hidden', background: '#1c2128' }}>
+                        <div style={{
+                            width: maxWidth,
+                            maxWidth: '100%',
+                            height: '100%',
+                            transition: 'width 0.3s ease',
+                            background: '#fff',
+                            boxShadow: viewport !== 'desktop' ? '0 0 0 1px #30363d, 0 4px 32px rgba(0,0,0,0.5)' : 'none',
+                        }}>
+                            <iframe
+                                ref={iframeRef}
+                                srcDoc={previewContent}
+                                className="preview-iframe"
+                                style={{ width: '100%', height: '100%', border: 'none' }}
+                                sandbox="allow-scripts"
+                                title="Preview"
+                                onLoad={() => applyThemeToIframe(workspaceTheme)}
+                            />
+                        </div>
+                    </div>
                 ) : (
                     <div className="preview-empty-state">
                         <Eye size={48} className="opacity-50" />
