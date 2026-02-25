@@ -1,0 +1,6 @@
+# Allow direct access to uploaded files (images, videos, audio).
+# Block PHP execution inside uploads for security.
+<FilesMatch "\.(php|php\d|phtml|phar|pl|py|sh|cgi)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
