@@ -51,3 +51,17 @@ jobs:
             **/.github/**
             **/node_modules/**
             **/.env
+            **/storage/app/public/**
+            !**/storage/app/public/.gitignore
+            **/storage/framework/cache/data/**
+            **/storage/framework/sessions/**
+            **/storage/framework/views/**
+            **/storage/logs/**
+            **/public/uploads/ecommerce/**
+            !**/public/uploads/ecommerce/.gitignore
+            !**/public/uploads/ecommerce/**/.gitkeep
+
+      # 5️⃣ Run migrations & storage:link on the live server
+      - name: Run migrations & storage:link
+        run: |
+          curl -sf "${{ secrets.APP_URL }}/run-migrations" | jq . || echo "Post-deploy hook failed (non-fatal)"
