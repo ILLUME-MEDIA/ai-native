@@ -6,9 +6,117 @@ use App\Http\Controllers\Controller;
 use App\Models\DiscoveryUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class DiscoveryUserController extends Controller
 {
+    // ── OTP Auth helper ───────────────────────────────────────────────────────
+
+    /**
+     * Resolve a DiscoveryUser from an OTP Bearer token.
+     * Returns null if token is missing, invalid, expired, or not from discovery_users table.
+     */
+    protected function resolveOtpUser(Request $request): ?DiscoveryUser
+    {
+        $auth = $request->header('Authorization', '');
+        if (! str_starts_with($auth, 'Bearer ')) {
+            return null;
+        }
+        $token = substr($auth, 7);
+        try {
+            $payload = decrypt($token);
+            if (
+                isset($payload['type'], $payload['id'], $payload['exp'], $payload['table']) &&
+                $payload['type'] === 'otp_auth' &&
+                $payload['table'] === 'discovery_users' &&
+                ! Carbon::createFromTimestamp($payload['exp'])->isPast()
+            ) {
+                return DiscoveryUser::find((int) $payload['id']);
+            }
+        } catch (\Throwable) {}
+        return null;
+    }
+
+    private function otpRequired(Request $request): DiscoveryUser|JsonResponse
+    {
+        $user = $this->resolveOtpUser($request);
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'OTP Bearer token required. Send Authorization: Bearer <otp-token> from POST /otp-auth/verify with table=discovery_users.',
+                'code'    => 'otp_required',
+            ], 401);
+        }
+        return $user;
+    }
+
+    // ── OTP "me" endpoints ────────────────────────────────────────────────────
+
+    public function meShow(Request $request): JsonResponse
+    {
+        $user = $this->otpRequired($request);
+        if ($user instanceof JsonResponse) return $user;
+
+        return response()->json(['success' => true, 'user' => $user->load('location')]);
+    }
+
+    public function meUpdate(Request $request): JsonResponse
+    {
+        $user = $this->otpRequired($request);
+        if ($user instanceof JsonResponse) return $user;
+
+        $user->update($request->only(['name', 'email', 'phone', 'photo', 'audio', 'bio']));
+        return response()->json(['success' => true, 'user' => $user->fresh()->load('location')]);
+    }
+
+    // ── OTP Location endpoints ─────────────────────────────────────────────────
+
+    public function locationShow(Request $request): JsonResponse
+    {
+        $user = $this->otpRequired($request);
+        if ($user instanceof JsonResponse) return $user;
+
+        $location = $user->location;
+        return response()->json(['success' => true, 'location' => $location]);
+    }
+
+    public function locationSave(Request $request): JsonResponse
+    {
+        $user = $this->otpRequired($request);
+        if ($user instanceof JsonResponse) return $user;
+
+        $data = $request->validate([
+            'lat'               => 'nullable|numeric|between:-90,90',
+            'lng'               => 'nullable|numeric|between:-180,180',
+            'address'           => 'nullable|string|max:300',
+            'city'              => 'nullable|string|max:100',
+            'state'             => 'nullable|string|max:100',
+            'zip'               => 'nullable|string|max:20',
+            'country'           => 'nullable|string|max:100',
+            'country_code'      => 'nullable|string|size:2',
+            'location_from_gps' => 'boolean',
+        ]);
+
+        $location = $user->location()->updateOrCreate(
+            ['discovery_user_id' => $user->id],
+            $data
+        );
+
+        $status = $location->wasRecentlyCreated ? 201 : 200;
+        return response()->json(['success' => true, 'location' => $location], $status);
+    }
+
+    public function locationDestroy(Request $request): JsonResponse
+    {
+        $user = $this->otpRequired($request);
+        if ($user instanceof JsonResponse) return $user;
+
+        optional($user->location)->delete();
+        return response()->json(['success' => true, 'message' => 'Location removed.']);
+    }
+
+    // ── Admin endpoints (Sanctum) ─────────────────────────────────────────────
+
     public function index(Request $request): JsonResponse
     {
         $q = DiscoveryUser::with('location');

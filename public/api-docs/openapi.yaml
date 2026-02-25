@@ -156,7 +156,15 @@ tags:
   - name: Orders
     description: Order management
   - name: Discovery Users
-    description: Customer management
+    description: |
+      Customer/user management.
+
+      **Two access levels:**
+      - **Admin (Sanctum)** — list all, get any user, update any user, delete
+      - **Self-service (OTP Bearer)** — user can read/update their own profile and manage their location/address
+
+      For self-service, obtain a token via `POST /otp-auth/verify` with `table: discovery_users`,
+      then send as `Authorization: Bearer <token>` to the `/me` endpoints.
   - name: Media Upload
     description: Upload images, videos, audio
   - name: Data Source Hub
@@ -2140,40 +2148,267 @@ paths:
         "200":
           description: Status updated
 
-  # ── DISCOVERY USERS ───────────────────────────────────────────────────────
+  # ── DISCOVERY USERS (Self-Service — OTP Bearer token) ─────────────────────
+
+  /ecommerce/discovery-users/me:
+    get:
+      tags:
+        - Discovery Users
+      summary: Get my profile (OTP auth)
+      description: |
+        Returns the authenticated discovery user's profile including location.
+
+        **Auth:** `Authorization: Bearer <otp-token>` (from `POST /otp-auth/verify` with `table: discovery_users`)
+      security:
+        - otpBearerAuth: []
+      responses:
+        "200":
+          description: Authenticated user profile with location
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user:
+                    $ref: "#/components/schemas/DiscoveryUser"
+        "401":
+          description: OTP token missing, invalid, or not from discovery_users table
+    patch:
+      tags:
+        - Discovery Users
+      summary: Update my profile (OTP auth)
+      description: |
+        Updates the authenticated user's basic profile fields.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Ali Hassan
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                  example: "+1-555-0100"
+                photo:
+                  type: string
+                  description: URL from POST /ecommerce/upload
+                audio:
+                  type: string
+                  description: URL from POST /ecommerce/upload
+                bio:
+                  type: string
+      responses:
+        "200":
+          description: Updated profile with location
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  user:
+                    $ref: "#/components/schemas/DiscoveryUser"
+        "401":
+          description: OTP token required
+
+  /ecommerce/discovery-users/me/location:
+    get:
+      tags:
+        - Discovery Users
+      summary: Get my location/address (OTP auth)
+      description: |
+        Returns the authenticated user's saved location record.
+        Returns `null` if no location has been set yet.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      responses:
+        "200":
+          description: Location record (or null if not set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  location:
+                    nullable: true
+                    $ref: "#/components/schemas/DiscoveryUserLocation"
+        "401":
+          description: OTP token required
+    put:
+      tags:
+        - Discovery Users
+      summary: Save/update my location (OTP auth)
+      description: |
+        Creates or updates the authenticated user's location record (upsert).
+        All fields are optional — send only what you have.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+
+        ### Typical GPS save flow
+        1. User grants location permission in browser/app
+        2. Get coords via `navigator.geolocation.getCurrentPosition()`
+        3. Call this endpoint with `lat`, `lng`, `location_from_gps: true`
+        4. Optionally reverse-geocode to fill `address`, `city`, `country` fields
+      security:
+        - otpBearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoveryUserLocationInput"
+            examples:
+              gps_only:
+                summary: GPS coordinates only
+                value:
+                  lat: 40.7128
+                  lng: -74.0060
+                  location_from_gps: true
+              full_address:
+                summary: Full address with GPS
+                value:
+                  lat: 40.7128
+                  lng: -74.0060
+                  address: "123 Main St"
+                  city: "New York"
+                  state: "NY"
+                  zip: "10001"
+                  country: "United States"
+                  country_code: "US"
+                  location_from_gps: true
+      responses:
+        "200":
+          description: Location updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  location:
+                    $ref: "#/components/schemas/DiscoveryUserLocation"
+        "201":
+          description: Location created (first time)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  location:
+                    $ref: "#/components/schemas/DiscoveryUserLocation"
+        "401":
+          description: OTP token required
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags:
+        - Discovery Users
+      summary: Delete my location (OTP auth)
+      description: |
+        Removes the authenticated user's location record entirely.
+
+        **Auth:** `Authorization: Bearer <otp-token>`
+      security:
+        - otpBearerAuth: []
+      responses:
+        "200":
+          description: Location removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Location removed.
+        "401":
+          description: OTP token required
+
+  # ── DISCOVERY USERS (Admin — Sanctum) ─────────────────────────────────────
 
   /ecommerce/discovery-users:
     get:
       tags:
         - Discovery Users
-      summary: List discovery users
+      summary: List all discovery users (admin)
       parameters:
         - name: search
           in: query
           schema:
             type: string
+          description: Search name, email, IP, city, country
+        - name: device_type
+          in: query
+          schema:
+            type: string
+            example: mobile
+        - name: browser
+          in: query
+          schema:
+            type: string
+            example: Chrome
+        - name: country_code
+          in: query
+          schema:
+            type: string
+            example: US
         - name: page
           in: query
           schema:
             type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 25
       responses:
         "200":
-          description: Paginated users
+          description: Paginated discovery users with location
 
   /ecommerce/discovery-users/{id}:
     get:
       tags:
         - Discovery Users
-      summary: Get user detail
+      summary: Get discovery user detail (admin)
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
         "200":
-          description: User detail
+          description: User detail with location
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryUser"
     patch:
       tags:
         - Discovery Users
-      summary: Update discovery user
+      summary: Update discovery user (admin)
       parameters:
         - $ref: "#/components/parameters/Id"
       requestBody:
@@ -2186,7 +2421,14 @@ paths:
                   type: string
                 email:
                   type: string
+                  format: email
                 phone:
+                  type: string
+                photo:
+                  type: string
+                audio:
+                  type: string
+                bio:
                   type: string
       responses:
         "200":
@@ -2194,7 +2436,7 @@ paths:
     delete:
       tags:
         - Discovery Users
-      summary: Delete discovery user
+      summary: Delete discovery user (admin)
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
@@ -3287,6 +3529,165 @@ components:
         is_active:
           type: boolean
           default: true
+
+    # ── DISCOVERY USERS ───────────────────────────────────────────────────────
+
+    DiscoveryUserLocation:
+      type: object
+      properties:
+        id:
+          type: integer
+        discovery_user_id:
+          type: integer
+        lat:
+          type: number
+          format: float
+          nullable: true
+          example: 40.7128
+        lng:
+          type: number
+          format: float
+          nullable: true
+          example: -74.0060
+        address:
+          type: string
+          nullable: true
+          example: "123 Main St"
+        city:
+          type: string
+          nullable: true
+          example: "New York"
+        state:
+          type: string
+          nullable: true
+          example: "NY"
+        zip:
+          type: string
+          nullable: true
+          example: "10001"
+        country:
+          type: string
+          nullable: true
+          example: "United States"
+        country_code:
+          type: string
+          nullable: true
+          example: "US"
+        location_from_gps:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DiscoveryUserLocationInput:
+      type: object
+      properties:
+        lat:
+          type: number
+          format: float
+          nullable: true
+          description: Latitude (-90 to 90)
+          example: 40.7128
+        lng:
+          type: number
+          format: float
+          nullable: true
+          description: Longitude (-180 to 180)
+          example: -74.0060
+        address:
+          type: string
+          nullable: true
+          maxLength: 300
+          example: "123 Main St"
+        city:
+          type: string
+          nullable: true
+          maxLength: 100
+          example: "New York"
+        state:
+          type: string
+          nullable: true
+          maxLength: 100
+          example: "NY"
+        zip:
+          type: string
+          nullable: true
+          maxLength: 20
+          example: "10001"
+        country:
+          type: string
+          nullable: true
+          maxLength: 100
+          example: "United States"
+        country_code:
+          type: string
+          nullable: true
+          minLength: 2
+          maxLength: 2
+          example: "US"
+        location_from_gps:
+          type: boolean
+          default: false
+          description: True if lat/lng came from device GPS
+
+    DiscoveryUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        photo:
+          type: string
+          nullable: true
+        audio:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        device_type:
+          type: string
+          nullable: true
+          example: mobile
+        browser:
+          type: string
+          nullable: true
+        os:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+          description: From associated location record
+        country_code:
+          type: string
+          nullable: true
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        location:
+          nullable: true
+          $ref: "#/components/schemas/DiscoveryUserLocation"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     # ── STRIPE ────────────────────────────────────────────────────────────────
 

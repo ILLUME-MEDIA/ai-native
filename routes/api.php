@@ -342,6 +342,16 @@ Route::prefix('delivery/doordash')->group(function () {
     Route::post('webhook',          [DoorDashController::class, 'webhook']);
 });
 
+// ── Discovery User Self-Service Routes (OTP Bearer token required) ───────────
+// Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify (table=discovery_users)
+Route::prefix('ecommerce/discovery-users/me')->group(function () {
+    Route::get('/',          [DiscoveryUserController::class, 'meShow']);
+    Route::patch('/',        [DiscoveryUserController::class, 'meUpdate']);
+    Route::get('location',   [DiscoveryUserController::class, 'locationShow']);
+    Route::put('location',   [DiscoveryUserController::class, 'locationSave']);
+    Route::delete('location',[DiscoveryUserController::class, 'locationDestroy']);
+});
+
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
 Route::prefix('payment/stripe')->group(function () {
