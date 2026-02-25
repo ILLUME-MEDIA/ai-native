@@ -19,6 +19,7 @@ const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sun
 const emptyForm = {
   // Basic
   category_id: '',
+  business_id: '',
   name: '', slug: '', type: '', cuisine: '', description: '', price: '',
   yelp_verified: false, is_active: true,
   // Location
@@ -191,7 +192,7 @@ export default function SellersPage() {
 
   const columns = useMemo(() => [
     columnHelper.accessor('name', {
-      header: 'Business',
+      header: 'Seller',
       cell: ({ row }) => {
         const biz = row.original;
         return (
@@ -279,7 +280,7 @@ export default function SellersPage() {
 
   return (
     <>
-      <PageBreadcrumb title="Businesses" subtitle="Ecommerce" />
+      <PageBreadcrumb title="Sellers" subtitle="Ecommerce" />
 
       {toast && (
         <Alert variant={toast.type} className="position-fixed top-0 end-0 m-3 shadow" style={{ zIndex: 9999, minWidth: 260 }}>
@@ -308,7 +309,7 @@ export default function SellersPage() {
             </Link>
             <Button variant="primary" onClick={openAdd}>
               <Icon icon="plus" size={15} className="me-1" />
-              Add Business
+              Add Seller
             </Button>
           </div>
         </CardHeader>
@@ -345,7 +346,7 @@ export default function SellersPage() {
         <Modal.Header closeButton>
           <Modal.Title>
             <Icon icon={editBiz ? 'pencil' : 'plus'} size={16} className="me-2" />
-            {editBiz ? `Edit: ${editBiz.name}` : 'Add Business'}
+            {editBiz ? `Edit Seller: ${editBiz.name}` : 'Add Seller'}
           </Modal.Title>
         </Modal.Header>
 
@@ -396,6 +397,21 @@ export default function SellersPage() {
                         </div>
                       ) : null;
                     })()}
+                  </Col>
+
+                  <Col md={4}>
+                    <FormLabel>
+                      Linked Business ID
+                      <small className="text-muted ms-1">(for menu &amp; orders)</small>
+                    </FormLabel>
+                    <FormControl
+                      type="number"
+                      min="1"
+                      value={form.business_id}
+                      onChange={e => set('business_id', e.target.value)}
+                      placeholder="e.g. 3"
+                    />
+                    <small className="text-muted">Link to a Business record to enable menu and order flow.</small>
                   </Col>
 
                   <Col md={8}>

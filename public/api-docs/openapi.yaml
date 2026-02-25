@@ -1450,9 +1450,71 @@ paths:
                 name:
                   type: string
                   example: Starters
+                description:
+                  type: string
+                  example: Appetisers and small plates
+                sort_order:
+                  type: integer
+                  default: 0
+                is_active:
+                  type: boolean
+                  default: true
       responses:
         "201":
           description: Created
+
+  /ecommerce/businesses/{businessId}/menu-categories/{id}:
+    patch:
+      tags:
+        - Menu
+      summary: Update menu category
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                sort_order:
+                  type: integer
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Menu
+      summary: Delete menu category
+      description: Menu items in this category will have their category unset.
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
 
   /ecommerce/businesses/{businessId}/menu-items:
     get:
@@ -1517,6 +1579,87 @@ paths:
       responses:
         "201":
           description: Created
+
+  /ecommerce/businesses/{businessId}/menu-items/{id}:
+    get:
+      tags:
+        - Menu
+      security: []
+      summary: Get single menu item
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Menu item detail with menuCategory
+        "404":
+          description: Not found
+    patch:
+      tags:
+        - Menu
+      summary: Update menu item
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                menu_category_id:
+                  type: integer
+                  nullable: true
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                image:
+                  type: string
+                is_available:
+                  type: boolean
+                menu_category_type_id:
+                  type: integer
+                  nullable: true
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags:
+        - Menu
+      summary: Delete menu item
+      parameters:
+        - name: businessId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
 
   # ── MENU CATEGORY TYPES ────────────────────────────────────────────────────
 
@@ -2515,7 +2658,7 @@ paths:
 
   # ── DOORDASH ────────────────────────────────────────────────────────────────
 
-  \delivery\doordash\status\{order}:
+  /delivery/doordash/status/{order}:
     get:
       tags:
         - DoorDash Delivery
@@ -2562,7 +2705,7 @@ paths:
         "502":
           description: DoorDash API error
 
-  \delivery\doordash\dispatch\{order}:
+  /delivery/doordash/dispatch/{order}:
     post:
       tags:
         - DoorDash Delivery
@@ -2607,7 +2750,7 @@ paths:
         "502":
           description: DoorDash API error
 
-  \delivery\doordash\cancel\{order}:
+  /delivery/doordash/cancel/{order}:
     post:
       tags:
         - DoorDash Delivery
@@ -2643,7 +2786,7 @@ paths:
         "502":
           description: DoorDash API error
 
-  \delivery\doordash\webhook:
+  /delivery/doordash/webhook:
     post:
       tags:
         - DoorDash Delivery

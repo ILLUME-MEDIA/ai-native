@@ -94,6 +94,10 @@ export const menuItems = [{
         slug: "pages:apps-ecommerce-seller-details",
         label: "Sellers Details"
       }, {
+        url: "/apps/ecommerce/menu-categories",
+        slug: "pages:apps-ecommerce-menu-categories",
+        label: "Menu Categories"
+      }, {
         url: "/apps/ecommerce/registrations",
         slug: "pages:apps-ecommerce-registrations",
         label: "Get Started Requests"

@@ -3,11 +3,11 @@ import Icon from '@admin/components/wrappers/Icon';
 import DataTable from '@admin/components/table/DataTable';
 import axios from 'axios';
 import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, useNavigate } from 'react-router';
+import { useSearchParams, useNavigate, Link } from 'react-router';
 import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
-  Col, Placeholder, Row, Spinner,
+  Col, Row, Spinner,
 } from 'react-bootstrap';
 
 const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
@@ -92,9 +92,11 @@ export default function SellerDetailsPage() {
   const navigate = useNavigate();
   const bizId = searchParams.get('id');
 
-  const [biz, setBiz]         = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [toast, setToast]     = useState(null);
+  const [biz, setBiz]               = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [toast, setToast]           = useState(null);
+  const [menuCats, setMenuCats]     = useState([]);
+  const [menuLoading, setMenuLoading] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -106,8 +108,17 @@ export default function SellerDetailsPage() {
     setLoading(true);
     axios.get(`/api/ecommerce/muzzhub/${bizId}`)
       .then(r => setBiz(r.data))
-      .catch(() => showToast('Failed to load business', 'danger'))
+      .catch(() => showToast('Failed to load seller', 'danger'))
       .finally(() => setLoading(false));
+  }, [bizId]);
+
+  useEffect(() => {
+    if (!bizId) return;
+    setMenuLoading(true);
+    axios.get(`/api/ecommerce/muzzhub/${bizId}/menu-categories`)
+      .then(r => setMenuCats(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setMenuCats([]))
+      .finally(() => setMenuLoading(false));
   }, [bizId]);
 
   // Stable memoized hours rows — always 7 rows (Mon–Sun)
@@ -229,11 +240,13 @@ export default function SellerDetailsPage() {
                     <Icon icon="arrow-left" size={14} className="me-1" />
                     Back
                   </Button>
-                  <Button variant="outline-primary" size="sm" className="flex-grow-1"
-                    onClick={() => navigate('/apps/ecommerce/sellers')}>
-                    <Icon icon="pencil" size={14} className="me-1" />
-                    Edit
-                  </Button>
+                  {biz?.business_id && (
+                    <Button variant="outline-success" size="sm" className="flex-grow-1"
+                      as={Link} to={`/apps/ecommerce/products?biz=${biz.business_id}`}>
+                      <Icon icon="tools-kitchen-2" size={14} className="me-1" />
+                      Menu
+                    </Button>
+                  )}
                 </div>
               </CardBody>
             </Card>
@@ -400,7 +413,7 @@ export default function SellerDetailsPage() {
 
             {/* Additional Info */}
             {hasExtra && (
-              <Card>
+              <Card className="mb-3">
                 <CardHeader>
                   <CardTitle as="h6" className="mb-0">
                     <Icon icon="info-circle" size={16} className="me-2 text-secondary" />
@@ -418,6 +431,54 @@ export default function SellerDetailsPage() {
                 </CardBody>
               </Card>
             )}
+
+            {/* Menu Overview */}
+            <Card>
+              <CardHeader className="d-flex align-items-center justify-content-between">
+                <CardTitle as="h6" className="mb-0">
+                  <Icon icon="tools-kitchen-2" size={16} className="me-2 text-success" />
+                  Menu
+                </CardTitle>
+                {biz.business_id ? (
+                  <div className="d-flex gap-2">
+                    <Button size="sm" variant="outline-secondary" as={Link}
+                      to={`/apps/ecommerce/menu-categories`}>
+                      <Icon icon="tags" size={13} className="me-1" />Categories
+                    </Button>
+                    <Button size="sm" variant="outline-primary" as={Link}
+                      to={`/apps/ecommerce/products`}>
+                      <Icon icon="plus" size={13} className="me-1" />Items
+                    </Button>
+                  </div>
+                ) : null}
+              </CardHeader>
+              <CardBody>
+                {!biz.business_id ? (
+                  <div className="text-muted small">
+                    <Icon icon="info-circle" size={13} className="me-1" />
+                    No Business linked. Set a <strong>Linked Business ID</strong> in the Sellers page to enable menu management.
+                  </div>
+                ) : menuLoading ? (
+                  <div className="text-center py-2"><Spinner size="sm" /></div>
+                ) : menuCats.length === 0 ? (
+                  <div className="text-muted small">No menu categories yet.{' '}
+                    <Link to="/apps/ecommerce/menu-categories" className="link-primary">Add categories</Link>
+                  </div>
+                ) : (
+                  <div className="d-flex flex-wrap gap-2">
+                    {menuCats.map(cat => (
+                      <div key={cat.id} className="border rounded px-3 py-2 d-flex align-items-center gap-2">
+                        <Icon icon="tag" size={13} className="text-muted" />
+                        <div>
+                          <div className="fw-semibold small">{cat.name}</div>
+                          <small className="text-muted">{cat.menu_items_count ?? 0} items</small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
 
           </Col>
         </Row>

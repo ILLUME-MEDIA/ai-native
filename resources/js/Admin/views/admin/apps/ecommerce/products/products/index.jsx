@@ -28,10 +28,10 @@ function BusinessSearch({ value, onChange, placeholder = 'Search business…', s
     const timer                   = useRef(null);
     const wrapRef                 = useRef(null);
 
-    // Pre-fill label when editing (value already set)
+    // Pre-fill label when editing (value = business_id)
     useEffect(() => {
         if (value && !label) {
-            axios.get(`/api/ecommerce/muzzhub/${value}`)
+            axios.get(`/api/ecommerce/businesses/${value}`)
                 .then(r => setLabel(r.data?.name || ''))
                 .catch(() => {});
         }
@@ -62,7 +62,11 @@ function BusinessSearch({ value, onChange, placeholder = 'Search business…', s
     };
 
     const select = (biz) => {
-        onChange(String(biz.id), biz);
+        if (!biz.business_id) {
+            alert(`Seller "${biz.name}" has no linked Business. Please set a Linked Business ID in the Sellers page first.`);
+            return;
+        }
+        onChange(String(biz.business_id), biz);
         setLabel(biz.name);
         setQuery('');
         setOpen(false);
@@ -120,7 +124,7 @@ function BusinessSearch({ value, onChange, placeholder = 'Search business…', s
             {open && !loading && query && results.length === 0 && (
                 <div className="border rounded px-3 py-2 small text-muted bg-white shadow-sm"
                     style={{ position: 'absolute', zIndex: 1055, width: '100%', top: '100%', marginTop: 2 }}>
-                    No businesses found for "{query}"
+                    No sellers found for "{query}"
                 </div>
             )}
         </div>
@@ -256,7 +260,7 @@ export default function MenuItemsPage() {
         }),
         columnHelper.accessor(row => row.business?.name ?? row.business_id, {
             id: 'business',
-            header: 'Business',
+            header: 'Seller',
             cell: ({ row }) => <small>{row.original.business?.name ?? `#${row.original.business_id}`}</small>,
             enableSorting: false,
         }),
@@ -331,7 +335,7 @@ export default function MenuItemsPage() {
                             <div style={{ minWidth: 220 }}>
                                 <BusinessSearch
                                     size="sm"
-                                    placeholder="Filter by business…"
+                                    placeholder="Filter by seller…"
                                     value={bizFilter}
                                     onChange={(id) => { setBizFilter(id); setCatFilter(''); }}
                                 />
@@ -398,17 +402,17 @@ export default function MenuItemsPage() {
                         {error && <Alert variant="danger" className="py-2 mb-3">{error}</Alert>}
                         <Row className="g-3">
                             <Col xs={12}>
-                                <Form.Label>Business <span className="text-danger">*</span></Form.Label>
+                                <Form.Label>Seller <span className="text-danger">*</span></Form.Label>
                                 <BusinessSearch
                                     value={form.business_id}
-                                    placeholder="Type to search business…"
+                                    placeholder="Type to search seller…"
                                     onChange={(id) => {
                                         setForm(f => ({ ...f, business_id: id, menu_category_id: '' }));
                                         loadMenuCats(id);
                                     }}
                                 />
                                 {!form.business_id && (
-                                    <small className="text-muted">Search by name, city or cuisine</small>
+                                    <small className="text-muted">Search by seller name, city or cuisine</small>
                                 )}
                             </Col>
                             {menuCats.length > 0 && (

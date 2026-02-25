@@ -13,7 +13,8 @@ const api = (path, opts = {}) => axios({ url: `/api/ecommerce/${path}`, ...opts 
 const columnHelper = createColumnHelper();
 
 export default function MenuCategoriesPage() {
-    const [businesses, setBusinesses] = useState([]);
+    const [sellers, setSellers]         = useState([]);
+    const [sellerId, setSellerId]       = useState('');
     const [businessId, setBusinessId]   = useState('');
     const [categories, setCategories]   = useState([]);
     const [loading, setLoading]         = useState(true);
@@ -23,12 +24,12 @@ export default function MenuCategoriesPage() {
     const [error, setError]             = useState('');
     const [form, setForm]               = useState({ name: '', description: '', sort_order: 0, is_active: true });
 
-    const loadBusinesses = useCallback(async () => {
+    const loadSellers = useCallback(async () => {
         try {
-            const { data } = await api('businesses?per_page=500');
-            setBusinesses(Array.isArray(data) ? data : (data.data || []));
+            const { data } = await api('muzzhub?per_page=500&active_only=1');
+            setSellers(Array.isArray(data) ? data : (data.data || []));
         } catch (e) {
-            setBusinesses([]);
+            setSellers([]);
         }
     }, []);
 
@@ -44,7 +45,19 @@ export default function MenuCategoriesPage() {
         setLoading(false);
     }, [businessId]);
 
-    useEffect(() => { loadBusinesses(); }, [loadBusinesses]);
+    const handleSellerChange = (e) => {
+        const id = e.target.value;
+        setSellerId(id);
+        if (!id) { setBusinessId(''); return; }
+        const seller = sellers.find(s => String(s.id) === String(id));
+        if (seller?.business_id) {
+            setBusinessId(String(seller.business_id));
+        } else {
+            setBusinessId('');
+        }
+    };
+
+    useEffect(() => { loadSellers(); }, [loadSellers]);
     useEffect(() => { loadCategories(); }, [loadCategories]);
 
     const openAdd = () => {
@@ -146,32 +159,36 @@ export default function MenuCategoriesPage() {
         getCoreRowModel: getCoreRowModel(),
     });
 
-    const selectedBusiness = businesses.find(b => String(b.id) === String(businessId));
+    const selectedSeller = sellers.find(s => String(s.id) === String(sellerId));
+    const noBizLinked = sellerId && !businessId;
 
     return (
         <>
             <PageBreadcrumb title="Menu Categories" subtitle="Ecommerce" />
             <p className="text-muted mb-3">
-                Select a restaurant/business to manage its menu categories (e.g. Starters, Main Course, Drinks). These categories appear when adding or editing menu items in <strong>Products</strong>.
+                Select a seller to manage its menu categories (e.g. Starters, Main Course, Drinks). Seller must have a <strong>Linked Business ID</strong> set in the Sellers page.
             </p>
 
             <Card>
                 <CardHeader className="border-light">
                     <div className="d-flex flex-wrap gap-2 align-items-center justify-content-between">
-                        <div className="d-flex align-items-center gap-2">
+                        <div className="d-flex align-items-center gap-2 flex-wrap">
                             <Form.Select
                                 size="sm"
                                 style={{ width: 280 }}
-                                value={businessId}
-                                onChange={e => setBusinessId(e.target.value)}
+                                value={sellerId}
+                                onChange={handleSellerChange}
                             >
-                                <option value="">— Select Business —</option>
-                                {businesses.map(b => (
-                                    <option key={b.id} value={b.id}>{b.name}</option>
+                                <option value="">— Select Seller —</option>
+                                {sellers.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                             </Form.Select>
-                            {selectedBusiness && (
-                                <span className="text-muted small">Manage categories for this business</span>
+                            {noBizLinked && (
+                                <span className="badge bg-warning text-dark">No Business linked — set Linked Business ID in Sellers page</span>
+                            )}
+                            {selectedSeller && businessId && (
+                                <span className="text-muted small">Business #{businessId}</span>
                             )}
                         </div>
                         {businessId && (
@@ -183,8 +200,12 @@ export default function MenuCategoriesPage() {
                 </CardHeader>
 
                 <CardBody className="p-0" style={{ position: 'relative', minHeight: 120 }}>
-                    {!businessId ? (
-                        <div className="text-center text-muted py-5">Select a business to view and manage its menu categories.</div>
+                    {!sellerId ? (
+                        <div className="text-center text-muted py-5">Select a seller to view and manage its menu categories.</div>
+                    ) : noBizLinked ? (
+                        <div className="text-center text-warning py-5">
+                            This seller has no linked Business. Go to <strong>Sellers</strong>, edit this seller, and set the <strong>Linked Business ID</strong>.
+                        </div>
                     ) : loading ? (
                         <div className="d-flex align-items-center justify-content-center py-5">
                             <Spinner animation="border" size="sm" className="text-primary" />
