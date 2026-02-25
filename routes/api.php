@@ -312,8 +312,9 @@ Route::prefix('ecommerce')->group(function () {
     // Public browsing — businesses / restaurants
     Route::get('businesses',                            [BusinessController::class, 'index']);
     Route::get('businesses/{business}',                 [BusinessController::class, 'show']);
-    Route::get('businesses/{business}/menu-categories', [MenuController::class, 'categories']);
-    Route::get('businesses/{business}/menu-items',      [MenuController::class, 'items']);
+    Route::get('businesses/{business}/menu-categories',        [MenuController::class, 'categories']);
+    Route::get('businesses/{business}/menu-items',             [MenuController::class, 'items']);
+    Route::get('businesses/{business}/menu-items/{item}',      [MenuController::class, 'showItem']);
 
     // Public menu listings
     Route::get('menu-items',                            [MenuController::class, 'allItems']);

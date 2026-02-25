@@ -1,7 +1,7 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, CardTitle,
@@ -13,7 +13,7 @@ const SESSION_KEY = 'ecom_session_id';
 function getSessionId() {
   let sid = localStorage.getItem(SESSION_KEY);
   if (!sid) {
-    sid = 'sess_' + Math.random().toString(36).slice(2) + Date.now();
+    sid = crypto.randomUUID();
     localStorage.setItem(SESSION_KEY, sid);
   }
   return sid;
@@ -25,33 +25,54 @@ const api = (method, url, data = null) =>
 export default function CartPage() {
   const navigate = useNavigate();
 
-  // Browser state
-  const [businesses, setBusinesses] = useState([]);
-  const [selectedBiz, setSelectedBiz] = useState(null);
-  const [menuItems, setMenuItems] = useState([]);
+  // Seller search
+  const [sellers, setSellers]         = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadingBiz, setLoadingBiz]   = useState(false);
+  const [selectedSeller, setSelectedSeller] = useState(null);
+  const searchTimer = useRef(null);
+
+  // Menu state
+  const [menuItems, setMenuItems]         = useState([]);
   const [menuCategories, setMenuCategories] = useState([]);
-  const [activeCat, setActiveCat] = useState(null);
-  const [loadingBiz, setLoadingBiz] = useState(false);
-  const [loadingMenu, setLoadingMenu] = useState(false);
+  const [activeCat, setActiveCat]         = useState(null);
+  const [loadingMenu, setLoadingMenu]     = useState(false);
 
   // Cart state
-  const [cartItems, setCartItems] = useState([]);
+  const [cartItems, setCartItems]   = useState([]);
   const [loadingCart, setLoadingCart] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [toast, setToast]           = useState(null);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Load businesses
-  useEffect(() => {
+  // Load sellers (debounced search)
+  const loadSellers = useCallback(async (search = '') => {
     setLoadingBiz(true);
-    axios.get('/api/ecommerce/businesses?per_page=50')
-      .then(r => setBusinesses(r.data.data || r.data))
-      .finally(() => setLoadingBiz(false));
+    try {
+      const r = await axios.get(
+        `/api/ecommerce/muzzhub?per_page=50&active_only=1${search ? `&search=${encodeURIComponent(search)}` : ''}`
+      );
+      setSellers(Array.isArray(r.data) ? r.data : (r.data.data || []));
+    } catch {
+      setSellers([]);
+    } finally {
+      setLoadingBiz(false);
+    }
   }, []);
+
+  // Initial load
+  useEffect(() => { loadSellers(); }, [loadSellers]);
+
+  // Debounced search
+  useEffect(() => {
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => loadSellers(searchQuery), 350);
+    return () => clearTimeout(searchTimer.current);
+  }, [searchQuery, loadSellers]);
 
   // Load cart
   const loadCart = useCallback(() => {
@@ -63,23 +84,41 @@ export default function CartPage() {
 
   useEffect(() => { loadCart(); }, [loadCart]);
 
-  // Load menu when business selected
+  // Load menu when seller selected
   useEffect(() => {
-    if (!selectedBiz) return;
+    if (!selectedSeller?.business_id) return;
     setLoadingMenu(true);
     setActiveCat(null);
+    const bizId = selectedSeller.business_id;
     Promise.all([
-      axios.get(`/api/ecommerce/businesses/${selectedBiz.id}/menu-categories`),
-      axios.get(`/api/ecommerce/businesses/${selectedBiz.id}/menu-items`),
+      axios.get(`/api/ecommerce/businesses/${bizId}/menu-categories`),
+      axios.get(`/api/ecommerce/businesses/${bizId}/menu-items`),
     ]).then(([catRes, itemRes]) => {
-      setMenuCategories(catRes.data);
-      setMenuItems(itemRes.data);
+      setMenuCategories(Array.isArray(catRes.data) ? catRes.data : []);
+      setMenuItems(Array.isArray(itemRes.data) ? itemRes.data : []);
+    }).catch(() => {
+      setMenuCategories([]);
+      setMenuItems([]);
     }).finally(() => setLoadingMenu(false));
-  }, [selectedBiz]);
+  }, [selectedSeller]);
+
+  const selectSeller = (seller) => {
+    if (!seller.business_id) {
+      showToast(`"${seller.name}" has no linked Business — set Linked Business ID in Sellers page first.`, 'warning');
+      return;
+    }
+    setSelectedSeller(seller);
+  };
+
+  const backToList = () => {
+    setSelectedSeller(null);
+    setMenuItems([]);
+    setMenuCategories([]);
+    setActiveCat(null);
+  };
 
   const addToCart = (item) => {
     api('post', '/api/ecommerce/cart', {
-      business_id: selectedBiz.id,
       menu_item_id: item.id,
       quantity: 1,
     }).then(() => {
@@ -106,7 +145,7 @@ export default function CartPage() {
   };
 
   const clearCart = () => {
-    api('delete', '/api/ecommerce/cart')
+    api('delete', '/api/ecommerce/cart/clear')
       .then(() => { showToast('Cart cleared'); setCartItems([]); })
       .catch(() => showToast('Failed to clear', 'danger'));
   };
@@ -118,9 +157,7 @@ export default function CartPage() {
   const subtotal = cartItems.reduce(
     (sum, i) => sum + parseFloat(i.menu_item?.price || 0) * i.quantity, 0
   );
-
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
-
   const inCart = (itemId) => cartItems.find(c => c.menu_item_id === itemId);
 
   return (
@@ -131,131 +168,150 @@ export default function CartPage() {
         <Alert
           variant={toast.type}
           className="position-fixed top-0 end-0 m-3 shadow"
-          style={{ zIndex: 9999, minWidth: 260 }}
+          style={{ zIndex: 9999, minWidth: 280 }}
         >
           {toast.msg}
         </Alert>
       )}
 
       <Row>
-        {/* Left: Business Browser + Menu */}
+        {/* Left: Seller Browser + Menu */}
         <Col lg={8}>
-          {/* Business selector */}
           <Card className="mb-3">
-            <CardHeader className="d-flex align-items-center justify-content-between">
+            <CardHeader className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
               <CardTitle as="h5" className="mb-0">
-                <Icon name="store" size={18} className="me-2" />
-                Browse Businesses
+                <Icon icon="store" size={18} className="me-2" />
+                {selectedSeller ? selectedSeller.name : 'Browse Restaurants'}
               </CardTitle>
-              {selectedBiz && (
-                <Button size="sm" variant="outline-secondary" onClick={() => setSelectedBiz(null)}>
-                  <Icon name="x" size={14} className="me-1" />
-                  Back to list
-                </Button>
-              )}
+              <div className="d-flex align-items-center gap-2">
+                {!selectedSeller && (
+                  <Form.Control
+                    size="sm"
+                    placeholder="Search restaurants…"
+                    style={{ width: 220 }}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    autoComplete="off"
+                  />
+                )}
+                {selectedSeller && (
+                  <Button size="sm" variant="outline-secondary" onClick={backToList}>
+                    <Icon icon="arrow-left" size={14} className="me-1" />
+                    All Restaurants
+                  </Button>
+                )}
+              </div>
             </CardHeader>
+
             <CardBody>
-              {loadingBiz ? (
-                <div className="text-center py-3"><Spinner size="sm" /> Loading...</div>
-              ) : !selectedBiz ? (
-                <Row className="g-2">
-                  {businesses.map(biz => (
-                    <Col key={biz.id} xs={6} sm={4} md={3}>
-                      <div
-                        className="border rounded p-3 text-center cursor-pointer h-100 d-flex flex-column align-items-center justify-content-center"
-                        style={{ cursor: 'pointer', transition: 'all .2s' }}
-                        onClick={() => setSelectedBiz(biz)}
-                        onMouseEnter={e => e.currentTarget.classList.add('border-primary', 'bg-light')}
-                        onMouseLeave={e => e.currentTarget.classList.remove('border-primary', 'bg-light')}
-                      >
-                        {biz.logo ? (
-                          <img src={biz.logo} alt={biz.name} style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8 }} className="mb-2" />
-                        ) : (
-                          <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center mb-2" style={{ width: 48, height: 48 }}>
-                            <Icon name="store" size={22} className="text-primary" />
-                          </div>
-                        )}
-                        <small className="fw-semibold text-center">{biz.name}</small>
-                        <Badge bg="secondary" className="mt-1" style={{ fontSize: '0.65rem' }}>
-                          {biz.category?.name || biz.type || '—'}
-                        </Badge>
-                      </div>
-                    </Col>
-                  ))}
-                  {businesses.length === 0 && (
-                    <Col xs={12}>
-                      <p className="text-muted text-center mb-0">No businesses found. Add some first.</p>
-                    </Col>
-                  )}
-                </Row>
-              ) : (
+              {/* Seller grid */}
+              {!selectedSeller && (
+                loadingBiz ? (
+                  <div className="text-center py-3"><Spinner size="sm" /> Loading...</div>
+                ) : sellers.length === 0 ? (
+                  <p className="text-muted text-center mb-0">
+                    {searchQuery ? `No results for "${searchQuery}"` : 'No sellers found.'}
+                  </p>
+                ) : (
+                  <Row className="g-2">
+                    {sellers.map(seller => (
+                      <Col key={seller.id} xs={6} sm={4} md={3}>
+                        <div
+                          className={`border rounded p-3 text-center h-100 d-flex flex-column align-items-center justify-content-center ${!seller.business_id ? 'opacity-50' : ''}`}
+                          style={{ cursor: seller.business_id ? 'pointer' : 'not-allowed', transition: 'all .15s' }}
+                          onClick={() => selectSeller(seller)}
+                          onMouseEnter={e => seller.business_id && e.currentTarget.classList.add('border-primary', 'bg-light')}
+                          onMouseLeave={e => e.currentTarget.classList.remove('border-primary', 'bg-light')}
+                          title={!seller.business_id ? 'No Business linked — set in Sellers page' : seller.name}
+                        >
+                          {seller.logo ? (
+                            <img src={seller.logo} alt={seller.name} style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8 }} className="mb-2" />
+                          ) : (
+                            <div className="bg-primary bg-opacity-10 rounded d-flex align-items-center justify-content-center mb-2" style={{ width: 48, height: 48 }}>
+                              <Icon icon="tools-kitchen-2" size={22} className="text-primary" />
+                            </div>
+                          )}
+                          <small className="fw-semibold text-center lh-sm">{seller.name}</small>
+                          <Badge bg="secondary" className="mt-1" style={{ fontSize: '0.62rem' }}>
+                            {seller.category?.name || seller.cuisine || seller.type || '—'}
+                          </Badge>
+                          {seller.city && (
+                            <small className="text-muted mt-1" style={{ fontSize: '0.65rem' }}>
+                              <Icon icon="map-pin" size={10} className="me-1" />{seller.city}
+                            </small>
+                          )}
+                          {!seller.business_id && (
+                            <Badge bg="warning" text="dark" className="mt-1" style={{ fontSize: '0.6rem' }}>No menu</Badge>
+                          )}
+                        </div>
+                      </Col>
+                    ))}
+                  </Row>
+                )
+              )}
+
+              {/* Menu */}
+              {selectedSeller && (
                 <>
-                  {/* Category tabs */}
                   {menuCategories.length > 0 && (
                     <div className="d-flex gap-2 flex-wrap mb-3">
-                      <Button
-                        size="sm"
-                        variant={activeCat === null ? 'primary' : 'outline-primary'}
-                        onClick={() => setActiveCat(null)}
-                      >
+                      <Button size="sm" variant={activeCat === null ? 'primary' : 'outline-primary'} onClick={() => setActiveCat(null)}>
                         All
                       </Button>
                       {menuCategories.map(cat => (
                         <Button
-                          key={cat.id}
-                          size="sm"
+                          key={cat.id} size="sm"
                           variant={activeCat === cat.id ? 'primary' : 'outline-primary'}
                           onClick={() => setActiveCat(cat.id)}
                         >
                           {cat.name}
+                          {cat.menu_items_count != null && (
+                            <Badge bg="light" text="dark" className="ms-1" style={{ fontSize: '0.65rem' }}>{cat.menu_items_count}</Badge>
+                          )}
                         </Button>
                       ))}
                     </div>
                   )}
 
                   {loadingMenu ? (
-                    <div className="text-center py-4"><Spinner size="sm" /> Loading menu...</div>
+                    <div className="text-center py-4"><Spinner size="sm" /> Loading menu…</div>
                   ) : filteredItems.length === 0 ? (
-                    <Alert variant="info">No menu items available.</Alert>
+                    <Alert variant="info" className="mb-0">No menu items available in this category.</Alert>
                   ) : (
                     <Row className="g-3">
-                      {filteredItems.filter(i => i.is_available).map(item => {
+                      {filteredItems.filter(i => i.is_available !== false).map(item => {
                         const existing = inCart(item.id);
                         return (
                           <Col key={item.id} xs={12} sm={6} md={4}>
                             <Card className="h-100 shadow-sm">
                               {item.image && (
-                                <img
-                                  src={item.image}
-                                  alt={item.name}
-                                  style={{ height: 120, objectFit: 'cover', borderRadius: '8px 8px 0 0' }}
-                                />
+                                <img src={item.image} alt={item.name} style={{ height: 110, objectFit: 'cover', borderRadius: '8px 8px 0 0' }} />
                               )}
                               <CardBody className="p-3">
-                                <div className="fw-semibold">{item.name}</div>
+                                <div className="fw-semibold lh-sm">{item.name}</div>
                                 {item.description && (
-                                  <small className="text-muted d-block mb-1" style={{ fontSize: '0.75rem' }}>
-                                    {item.description}
-                                  </small>
+                                  <small className="text-muted d-block mb-1" style={{ fontSize: '0.73rem' }}>{item.description}</small>
                                 )}
-                                <div className="d-flex align-items-center justify-content-between mt-2">
+                                {item.menu_category && (
+                                  <Badge bg="light" text="dark" className="mb-2" style={{ fontSize: '0.62rem' }}>{item.menu_category.name}</Badge>
+                                )}
+                                <div className="d-flex align-items-center justify-content-between mt-1">
                                   <span className="fw-bold text-success">${parseFloat(item.price).toFixed(2)}</span>
                                   {existing ? (
                                     <div className="d-flex align-items-center gap-1">
                                       <Button size="sm" variant="outline-danger" style={{ padding: '1px 7px' }}
                                         onClick={() => updateQty(existing, existing.quantity - 1)}>
-                                        <Icon name="minus" size={12} />
+                                        <Icon icon="minus" size={12} />
                                       </Button>
                                       <span className="fw-bold px-1">{existing.quantity}</span>
                                       <Button size="sm" variant="outline-success" style={{ padding: '1px 7px' }}
                                         onClick={() => updateQty(existing, existing.quantity + 1)}>
-                                        <Icon name="plus" size={12} />
+                                        <Icon icon="plus" size={12} />
                                       </Button>
                                     </div>
                                   ) : (
                                     <Button size="sm" variant="primary" onClick={() => addToCart(item)}>
-                                      <Icon name="plus" size={14} className="me-1" />
-                                      Add
+                                      <Icon icon="plus" size={14} className="me-1" />Add
                                     </Button>
                                   )}
                                 </div>
@@ -271,18 +327,17 @@ export default function CartPage() {
             </CardBody>
           </Card>
 
-          {/* Cart Items */}
+          {/* Cart Items Table */}
           <Card>
             <CardHeader className="d-flex align-items-center justify-content-between">
               <CardTitle as="h5" className="mb-0">
-                <Icon name="shopping-cart" size={18} className="me-2" />
+                <Icon icon="shopping-cart" size={18} className="me-2" />
                 Cart Items
                 {cartCount > 0 && <Badge bg="primary" className="ms-2">{cartCount}</Badge>}
               </CardTitle>
               {cartItems.length > 0 && (
                 <Button size="sm" variant="outline-danger" onClick={clearCart}>
-                  <Icon name="trash" size={14} className="me-1" />
-                  Clear Cart
+                  <Icon icon="trash" size={14} className="me-1" />Clear Cart
                 </Button>
               )}
             </CardHeader>
@@ -291,8 +346,8 @@ export default function CartPage() {
                 <div className="text-center py-4"><Spinner size="sm" /> Loading cart...</div>
               ) : cartItems.length === 0 ? (
                 <div className="text-center py-5 text-muted">
-                  <Icon name="shopping-cart" size={40} className="mb-3 opacity-50" />
-                  <p>Your cart is empty. Browse a business and add items.</p>
+                  <Icon icon="shopping-cart" size={40} className="mb-3 opacity-50" />
+                  <p>Cart is empty. Browse a restaurant and add items.</p>
                 </div>
               ) : (
                 <Table responsive className="mb-0">
@@ -315,20 +370,16 @@ export default function CartPage() {
                         <td>${parseFloat(item.menu_item?.price || 0).toFixed(2)}</td>
                         <td>
                           <div className="d-flex align-items-center gap-1">
-                            <Button
-                              size="sm" variant="outline-secondary" style={{ padding: '1px 7px' }}
+                            <Button size="sm" variant="outline-secondary" style={{ padding: '1px 7px' }}
                               disabled={updatingId === item.id}
-                              onClick={() => updateQty(item, item.quantity - 1)}
-                            >
-                              <Icon name="minus" size={12} />
+                              onClick={() => updateQty(item, item.quantity - 1)}>
+                              <Icon icon="minus" size={12} />
                             </Button>
                             <span className="px-2">{item.quantity}</span>
-                            <Button
-                              size="sm" variant="outline-secondary" style={{ padding: '1px 7px' }}
+                            <Button size="sm" variant="outline-secondary" style={{ padding: '1px 7px' }}
                               disabled={updatingId === item.id}
-                              onClick={() => updateQty(item, item.quantity + 1)}
-                            >
-                              <Icon name="plus" size={12} />
+                              onClick={() => updateQty(item, item.quantity + 1)}>
+                              <Icon icon="plus" size={12} />
                             </Button>
                           </div>
                         </td>
@@ -336,14 +387,10 @@ export default function CartPage() {
                           ${(parseFloat(item.menu_item?.price || 0) * item.quantity).toFixed(2)}
                         </td>
                         <td>
-                          <Button
-                            size="sm" variant="outline-danger"
+                          <Button size="sm" variant="outline-danger"
                             disabled={updatingId === item.id}
-                            onClick={() => removeItem(item)}
-                          >
-                            {updatingId === item.id
-                              ? <Spinner size="sm" />
-                              : <Icon name="trash" size={14} />}
+                            onClick={() => removeItem(item)}>
+                            {updatingId === item.id ? <Spinner size="sm" /> : <Icon icon="trash" size={14} />}
                           </Button>
                         </td>
                       </tr>
@@ -368,10 +415,8 @@ export default function CartPage() {
                 <>
                   {cartItems.map(item => (
                     <div key={item.id} className="d-flex justify-content-between mb-2">
-                      <span className="text-muted">
-                        {item.menu_item?.name} × {item.quantity}
-                      </span>
-                      <span>${(parseFloat(item.menu_item?.price || 0) * item.quantity).toFixed(2)}</span>
+                      <span className="text-muted small">{item.menu_item?.name} × {item.quantity}</span>
+                      <span className="small">${(parseFloat(item.menu_item?.price || 0) * item.quantity).toFixed(2)}</span>
                     </div>
                   ))}
                   <hr />
@@ -388,12 +433,8 @@ export default function CartPage() {
                     <span>Total</span>
                     <span>${(subtotal * 1.1).toFixed(2)}</span>
                   </div>
-                  <Button
-                    variant="primary"
-                    className="w-100"
-                    onClick={() => navigate('/apps/ecommerce/checkout')}
-                  >
-                    <Icon name="credit-card" size={16} className="me-2" />
+                  <Button variant="primary" className="w-100" onClick={() => navigate('/apps/ecommerce/checkout')}>
+                    <Icon icon="credit-card" size={16} className="me-2" />
                     Proceed to Checkout
                   </Button>
                 </>
