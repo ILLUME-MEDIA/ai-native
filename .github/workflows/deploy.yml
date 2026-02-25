@@ -57,9 +57,7 @@ jobs:
             **/storage/framework/sessions/**
             **/storage/framework/views/**
             **/storage/logs/**
-            **/public/uploads/ecommerce/**
-            !**/public/uploads/ecommerce/.gitignore
-            !**/public/uploads/ecommerce/**/.gitkeep
+            **/public/uploads/**
 
       # 5️⃣ Run migrations & storage:link on the live server
       - name: Run migrations & storage:link
