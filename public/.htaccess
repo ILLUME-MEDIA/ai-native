@@ -72,18 +72,6 @@
     ExpiresByType font/otf "access plus 1 year"
 </IfModule>
 
-# ── ModSecurity: Disable for AI + workspace API routes ─────────────────────
-# AI prompts, code editor payloads, and file uploads trigger WAF false
-# positives (HTTP 406). Targeted off only for /api/* and /run-migrations.
-<IfModule mod_security2.c>
-    <If "%{REQUEST_URI} =~ m#^/api/#i">
-        SecRuleEngine Off
-    </If>
-    <If "%{REQUEST_URI} =~ m#^/run-migrations#i">
-        SecRuleEngine Off
-    </If>
-</IfModule>
-
 # Prevent Directory Listing
 Options -Indexes
 

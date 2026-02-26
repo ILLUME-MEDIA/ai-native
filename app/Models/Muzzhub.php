@@ -73,49 +73,66 @@ class Muzzhub extends Model
 
     public function getAmenitiesAttribute(): array
     {
-        $bool = fn($key) => (bool) ($this->attributes[$key] ?? false);
-        $str  = fn($key) => isset($this->attributes[$key]) && $this->attributes[$key] !== '' ? $this->attributes[$key] : null;
+        try {
+            return [
+                'halal' => [
+                    'menu_level'  => (int) ($this->attributes['halal_menu'] ?? 0),
+                    'authority'   => $this->amenityStr('halal_authority'),
+                    'slaughter'   => $this->amenityStr('slaughter_method'),
+                    'compliance'  => $this->amenityStr('compliance'),
+                    'chain'       => $this->amenityBool('halal_chain'),
+                    'items'       => $this->amenityStr('halal_items'),
+                    'options'     => $this->amenityStr('halal_options'),
+                    'description' => $this->amenityStr('description_halal'),
+                ],
+                'food' => [
+                    'alcohol'         => $this->amenityBool('alcohol'),
+                    'alcohol_options' => $this->amenityStr('alcohol_options'),
+                    'pork'            => $this->amenityBool('pork'),
+                    'organic'         => $this->amenityBool('organic'),
+                    'shisha'          => $this->amenityBool('shisha'),
+                    'kids_menu'       => $this->amenityBool('kids_menu'),
+                ],
+                'service' => [
+                    'delivery'     => $this->amenityBool('delivery'),
+                    'catering'     => $this->amenityBool('catering'),
+                    'to_go'        => $this->amenityBool('to_go'),
+                    'reservations' => $this->amenityBool('reservations'),
+                    'drive_thru'   => $this->amenityBool('drive_thru'),
+                    'cash_only'    => $this->amenityBool('cash_only'),
+                    'credit_cards' => $this->amenityStr('credit_cards'),
+                ],
+                'facilities' => [
+                    'wifi'              => $this->amenityBool('wifi'),
+                    'parking'           => $this->amenityBool('parking'),
+                    'outdoor_seating'   => $this->amenityBool('outdoor_seating'),
+                    'wheelchair_access' => $this->amenityBool('wheelchair_access'),
+                    'restrooms'         => $this->amenityBool('restrooms'),
+                    'pray_space'        => $this->amenityBool('pray_space'),
+                    'prayer'            => $this->amenityBool('prayer'),
+                    'transit'           => $this->amenityBool('transit'),
+                    'capacity'          => isset($this->attributes['capacity']) && $this->attributes['capacity'] !== null
+                                            ? (int) $this->attributes['capacity'] : null,
+                ],
+            ];
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
 
-        return [
-            'halal' => [
-                'menu_level'  => (int) ($this->attributes['halal_menu'] ?? 0), // 0=none,1=partial,2=mostly,3=fully
-                'authority'   => $str('halal_authority'),
-                'slaughter'   => $str('slaughter_method'),
-                'compliance'  => $str('compliance'),
-                'chain'       => $bool('halal_chain'),
-                'items'       => $str('halal_items'),
-                'options'     => $str('halal_options'),
-                'description' => $str('description_halal'),
-            ],
-            'food' => [
-                'alcohol'         => $bool('alcohol'),
-                'alcohol_options' => $str('alcohol_options'),
-                'pork'            => $bool('pork'),
-                'organic'         => $bool('organic'),
-                'shisha'          => $bool('shisha'),
-                'kids_menu'       => $bool('kids_menu'),
-            ],
-            'service' => [
-                'delivery'     => $bool('delivery'),
-                'catering'     => $bool('catering'),
-                'to_go'        => $bool('to_go'),
-                'reservations' => $bool('reservations'),
-                'drive_thru'   => $bool('drive_thru'),
-                'cash_only'    => $bool('cash_only'),
-                'credit_cards' => $str('credit_cards'),
-            ],
-            'facilities' => [
-                'wifi'             => $bool('wifi'),
-                'parking'          => $bool('parking'),
-                'outdoor_seating'  => $bool('outdoor_seating'),
-                'wheelchair_access'=> $bool('wheelchair_access'),
-                'restrooms'        => $bool('restrooms'),
-                'pray_space'       => $bool('pray_space'),
-                'prayer'           => $bool('prayer'),
-                'transit'          => $bool('transit'),
-                'capacity'         => isset($this->attributes['capacity']) ? (int) $this->attributes['capacity'] : null,
-            ],
-        ];
+    private function amenityBool(string $key): bool
+    {
+        $val = $this->attributes[$key] ?? null;
+        if ($val === null) return false;
+        // Handle string "0"/"1" stored in DB as well as native booleans/integers
+        return filter_var($val, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function amenityStr(string $key): ?string
+    {
+        $val = $this->attributes[$key] ?? null;
+        if ($val === null || $val === '') return null;
+        return (string) $val;
     }
 
     public function category(): BelongsTo
