@@ -88,12 +88,31 @@ Route::get('/run-migrations', function () {
         Artisan::call('storage:link');
         $storageLinkOutput = Artisan::output();
 
+        // Step 4: Run seeders
+        $seederOutput = [];
+        $seederErrors = [];
+        $seeders = [
+            'CodeEditorPermissionSeeder',
+            'MCPCatalogSeeder',
+            'MenuCategoryTypeSeeder',
+        ];
+        foreach ($seeders as $seeder) {
+            try {
+                Artisan::call('db:seed', ['--class' => $seeder, '--force' => true]);
+                $seederOutput[$seeder] = trim(Artisan::output()) ?: 'Done';
+            } catch (\Throwable $e) {
+                $seederErrors[$seeder] = $e->getMessage();
+            }
+        }
+
         return response()->json([
-            'message'             => 'Migrations completed.',
+            'message'             => 'Migrations + Seeders completed.',
             'migrate_output'      => $allOutput,
             'skipped'             => $skipped,
             'errors'              => $errors,
             'storage_link_output' => $storageLinkOutput,
+            'seeders'             => $seederOutput,
+            'seeder_errors'       => $seederErrors,
         ]);
 
     } catch (\Illuminate\Database\QueryException $e) {
