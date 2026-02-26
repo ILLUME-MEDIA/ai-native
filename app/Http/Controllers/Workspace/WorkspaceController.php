@@ -97,6 +97,93 @@ class WorkspaceController extends Controller
         return response()->json(['message' => 'Workspace archived']);
     }
 
+    public function search(Request $request, Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $data = $request->validate([
+            'query'          => 'required|string|min:2',
+            'case_sensitive' => 'nullable|boolean',
+            'regex'          => 'nullable|boolean',
+        ]);
+
+        $query         = $data['query'];
+        $caseSensitive = filter_var($data['case_sensitive'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $useRegex      = filter_var($data['regex'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        $results = [];
+        $total   = 0;
+        $this->searchDirectory($workspace->full_path, '', $query, $caseSensitive, $useRegex, $results, $total);
+
+        return response()->json(['results' => $results, 'total' => $total, 'query' => $query]);
+    }
+
+    private function searchDirectory(
+        string $basePath,
+        string $relativePath,
+        string $query,
+        bool $caseSensitive,
+        bool $useRegex,
+        array &$results,
+        int &$total,
+        int $maxTotal = 200,
+        int $maxPerFile = 10
+    ): void {
+        if ($total >= $maxTotal) return;
+
+        $directory = $relativePath === '' ? $basePath : $basePath . DIRECTORY_SEPARATOR . $relativePath;
+        if (!$this->fs->isDirectory($directory)) return;
+
+        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'mp3', 'mp4', 'zip', 'tar', 'gz', 'pdf', 'svg', 'webp', 'avif', 'bin', 'exe', 'dll'];
+
+        foreach ($this->fs->directories($directory) as $dir) {
+            if ($total >= $maxTotal || is_link($dir)) continue;
+            $name     = basename($dir);
+            $childRel = $relativePath ? ($relativePath . '/' . $name) : $name;
+            if ($this->isExcludedPath($childRel)) continue;
+            $this->searchDirectory($basePath, $childRel, $query, $caseSensitive, $useRegex, $results, $total, $maxTotal, $maxPerFile);
+        }
+
+        foreach ($this->fs->files($directory) as $file) {
+            if ($total >= $maxTotal || is_link($file->getRealPath())) continue;
+
+            $ext = strtolower($file->getExtension());
+            if (in_array($ext, $binaryExts, true)) continue;
+            if ($file->getSize() > 1024 * 1024) continue;
+
+            $name     = $file->getFilename();
+            $childRel = str_replace('\\', '/', $relativePath ? ($relativePath . '/' . $name) : $name);
+
+            try {
+                $content = $file->getContents();
+            } catch (\Exception) {
+                continue;
+            }
+
+            $fileCount = 0;
+            foreach (preg_split('/\r\n|\r|\n/', $content) as $lineIdx => $lineContent) {
+                if ($fileCount >= $maxPerFile || $total >= $maxTotal) break;
+
+                if ($useRegex) {
+                    $flags = $caseSensitive ? '' : 'i';
+                    if (@preg_match('/' . $query . '/' . $flags, $lineContent, $m)) {
+                        $results[] = ['file' => $childRel, 'line' => $lineIdx + 1, 'content' => trim($lineContent), 'match' => $m[0] ?? $query];
+                        $fileCount++;
+                        $total++;
+                    }
+                } else {
+                    $haystack = $caseSensitive ? $lineContent : strtolower($lineContent);
+                    $needle   = $caseSensitive ? $query : strtolower($query);
+                    if (str_contains($haystack, $needle)) {
+                        $results[] = ['file' => $childRel, 'line' => $lineIdx + 1, 'content' => trim($lineContent), 'match' => $query];
+                        $fileCount++;
+                        $total++;
+                    }
+                }
+            }
+        }
+    }
+
     public function files(Request $request, Workspace $workspace)
     {
         $this->authorize('view', $workspace);
@@ -273,6 +360,26 @@ class WorkspaceController extends Controller
         $size = $this->fs->size($filePath);
         if ($size > $this->maxFileSize) {
             return response()->json(['error' => 'File too large', 'size' => $size], 400);
+        }
+
+        // B-18: Base64 encoding for image preview in PreviewPanel
+        if ($request->input('encoding') === 'base64') {
+            $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+            $imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+            if (!in_array($ext, $imageExts)) {
+                return response()->json(['error' => 'base64 encoding is only supported for image files'], 400);
+            }
+            $mimes = [
+                'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+                'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml',
+                'bmp' => 'image/bmp', 'ico' => 'image/x-icon',
+            ];
+            return response()->json([
+                'content'  => base64_encode(file_get_contents($filePath)),
+                'encoding' => 'base64',
+                'mime'     => $mimes[$ext] ?? 'application/octet-stream',
+                'path'     => $relativePath,
+            ]);
         }
 
         $this->assertExtensionAllowed($filePath);
@@ -479,6 +586,91 @@ class WorkspaceController extends Controller
                     'extension' => $type === 'file' ? strtolower(pathinfo($newRelative, PATHINFO_EXTENSION)) : '',
                 ],
             ],
+        ]);
+    }
+
+    public function formatFile(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $request->validate([
+            'path'    => 'required|string',
+            'content' => 'required|string',
+        ]);
+
+        [$filePath, $relativePath] = $this->resolveWorkspacePath($workspace, $request->path);
+        $this->assertExtensionAllowed($filePath);
+
+        $content   = $request->input('content');
+        $ext       = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+        $tmpFile   = null;
+        $formatted = $content;
+
+        try {
+            // Write content to a temp file
+            $tmpFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ce_fmt_' . uniqid() . '.' . $ext;
+            file_put_contents($tmpFile, $content);
+
+            if ($ext === 'php') {
+                // Try Laravel Pint first, then php-cs-fixer
+                $workspacePath = $workspace->full_path;
+                $pintBin       = $workspacePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'pint';
+                $fixer         = $workspacePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-cs-fixer';
+
+                if (is_file($pintBin)) {
+                    @exec(escapeshellcmd($pintBin) . ' ' . escapeshellarg($tmpFile) . ' --no-interaction 2>&1', $out, $code);
+                } elseif (is_file($fixer)) {
+                    @exec(escapeshellcmd($fixer) . ' fix ' . escapeshellarg($tmpFile) . ' 2>&1', $out, $code);
+                }
+                // Read back the formatted result
+                if (is_file($tmpFile)) {
+                    $result = file_get_contents($tmpFile);
+                    if ($result !== false && $result !== '') {
+                        $formatted = $result;
+                    }
+                }
+            } elseif (in_array($ext, ['js', 'jsx', 'ts', 'tsx', 'json', 'css', 'scss', 'html'], true)) {
+                $workspacePath = $workspace->full_path;
+                $prettier      = $workspacePath . DIRECTORY_SEPARATOR . 'node_modules' . DIRECTORY_SEPARATOR . '.bin' . DIRECTORY_SEPARATOR . 'prettier';
+
+                if (!is_file($prettier)) {
+                    // Try global prettier
+                    $prettier = 'prettier';
+                }
+
+                $parserMap = [
+                    'js' => 'babel', 'jsx' => 'babel',
+                    'ts' => 'typescript', 'tsx' => 'typescript',
+                    'json' => 'json',
+                    'css' => 'css', 'scss' => 'scss',
+                    'html' => 'html',
+                ];
+                $parser = $parserMap[$ext] ?? 'babel';
+
+                $cmd = escapeshellcmd($prettier)
+                    . ' --write ' . escapeshellarg($tmpFile)
+                    . ' --parser ' . escapeshellarg($parser)
+                    . ' 2>&1';
+                @exec($cmd, $out, $code);
+
+                if (is_file($tmpFile)) {
+                    $result = file_get_contents($tmpFile);
+                    if ($result !== false && $result !== '') {
+                        $formatted = $result;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // Any error → return original content unchanged
+        } finally {
+            if ($tmpFile && is_file($tmpFile)) {
+                @unlink($tmpFile);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'content' => $formatted,
         ]);
     }
 

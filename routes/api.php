@@ -258,6 +258,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files
+        Route::get('files/search', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'search']);
         Route::get('files', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'files']);
         Route::get('files/list', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'listDirectory']);
         Route::get('files/read', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'readFile']);
@@ -265,6 +266,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('files/create', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'createFile']);
         Route::delete('files/delete', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'deleteFile']);
         Route::put('files/rename', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'renameFile']);
+        Route::post('files/format', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'formatFile']);
 
         // Terminal
         Route::post('terminal/execute', [\App\Http\Controllers\Workspace\TerminalController::class, 'execute']);
@@ -274,15 +276,29 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('git/init', [\App\Http\Controllers\Workspace\GitController::class, 'init']);
         Route::get('git/status', [\App\Http\Controllers\Workspace\GitController::class, 'status']);
         Route::post('git/add', [\App\Http\Controllers\Workspace\GitController::class, 'add']);
+        Route::post('git/stage', [\App\Http\Controllers\Workspace\GitController::class, 'stage']);
+        Route::post('git/unstage', [\App\Http\Controllers\Workspace\GitController::class, 'unstage']);
         Route::post('git/commit', [\App\Http\Controllers\Workspace\GitController::class, 'commit']);
         Route::post('git/push', [\App\Http\Controllers\Workspace\GitController::class, 'push']);
         Route::post('git/pull', [\App\Http\Controllers\Workspace\GitController::class, 'pull']);
         Route::get('git/log', [\App\Http\Controllers\Workspace\GitController::class, 'log']);
+        // B-16: Stash Management
+        Route::get('git/stash', [\App\Http\Controllers\Workspace\GitController::class, 'stashList']);
+        Route::post('git/stash', [\App\Http\Controllers\Workspace\GitController::class, 'stashCreate']);
+        Route::post('git/stash/pop', [\App\Http\Controllers\Workspace\GitController::class, 'stashPop']);
+        Route::delete('git/stash', [\App\Http\Controllers\Workspace\GitController::class, 'stashDrop']);
         Route::get('git/diff', [\App\Http\Controllers\Workspace\GitController::class, 'diff']);
+        Route::get('git/blame', [\App\Http\Controllers\Workspace\GitController::class, 'blame']);
+        Route::get('git/diff-parsed', [\App\Http\Controllers\Workspace\GitController::class, 'parsedDiff']);
+        Route::get('git/branches', [\App\Http\Controllers\Workspace\GitController::class, 'branches']);
+        Route::post('git/branch', [\App\Http\Controllers\Workspace\GitController::class, 'createBranch']);
+        Route::post('git/checkout', [\App\Http\Controllers\Workspace\GitController::class, 'checkout']);
 
         // AI Commands
         Route::post('ai/chat', [\App\Http\Controllers\Workspace\AICommandController::class, 'chat']);
         Route::post('ai/chat-stream', [\App\Http\Controllers\Workspace\AICommandController::class, 'chatStream']); // SSE streaming
+        Route::post('ai/complete', [\App\Http\Controllers\Workspace\AICommandController::class, 'complete']); // B-06: inline ghost text
+        Route::post('ai/sketch-to-code', [\App\Http\Controllers\Workspace\AICommandController::class, 'sketchToCode']); // C-02: whiteboard AI
         Route::get('ai/approvals', [\App\Http\Controllers\Workspace\AICommandController::class, 'pendingApprovals']);
         Route::get('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'index']);
         Route::post('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'store']);
@@ -298,6 +314,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('react/templates', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'getTemplates']);
         Route::post('react/create', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'createReactApp']);
         Route::post('react/create-from-template', [\App\Http\Controllers\Workspace\ReactScaffolderController::class, 'createFromTemplate']);
+
+        // B-20: Presence / Collaboration Indicators
+        Route::get('presence', [\App\Http\Controllers\Workspace\PresenceController::class, 'list']);
+        Route::post('presence/heartbeat', [\App\Http\Controllers\Workspace\PresenceController::class, 'heartbeat']);
+
+        // C-03: MCP Store
+        Route::get('mcp/catalog',    [\App\Http\Controllers\Workspace\MCPController::class, 'catalog']);
+        Route::get('mcp/installed',  [\App\Http\Controllers\Workspace\MCPController::class, 'installed']);
+        Route::post('mcp/install',   [\App\Http\Controllers\Workspace\MCPController::class, 'install']);
+        Route::post('mcp/uninstall', [\App\Http\Controllers\Workspace\MCPController::class, 'uninstall']);
+        Route::post('mcp/configure', [\App\Http\Controllers\Workspace\MCPController::class, 'configure']);
     });
 
     // AI Command Approvals

@@ -31,7 +31,7 @@ class GitService
         'init', 'status', 'add', 'commit', 'push', 'pull', 'fetch',
         'branch', 'checkout', 'merge', 'log', 'diff', 'clone',
         'remote', 'tag', 'stash', 'reset', 'revert', 'show',
-        'config', 'ls-files', 'rev-parse', 'describe'
+        'config', 'ls-files', 'rev-parse', 'describe', 'blame', 'restore'
     ];
 
     /**

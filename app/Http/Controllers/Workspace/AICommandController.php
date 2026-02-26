@@ -8,6 +8,7 @@ use App\Models\AIConversationEvent;
 use App\Models\AICommandApproval;
 use App\Models\Workspace;
 use App\Services\AI\AIManager;
+use App\Services\AI\AIOrchestrator;
 use App\Support\ResolvesWorkspacePaths;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ class AICommandController extends Controller
 
     public function __construct(
         protected AIManager $aiManager,
+        protected AIOrchestrator $orchestrator,
         private Filesystem $fs
     )
     {
@@ -79,6 +81,110 @@ class AICommandController extends Controller
             return response()->json($result);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * C-02: Whiteboard sketch-to-code conversion
+     * Accepts an SVG string from Excalidraw and returns AI-generated code.
+     */
+    public function sketchToCode(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'svg'    => 'required|string|max:200000',
+            'format' => 'required|in:react,css,tokens',
+        ]);
+
+        $prompts = [
+            'react'  => "Convert this SVG wireframe/sketch into a React functional component using JSX and Tailwind CSS utility classes. Return ONLY the component code — no markdown fences, no explanations.",
+            'css'    => "Convert this SVG wireframe/sketch into a complete CSS stylesheet that recreates the layout and visual style. Return ONLY the CSS — no markdown fences, no explanations.",
+            'tokens' => "Extract all design tokens (colours, spacing values, font sizes, border radii, shadows) visible in this SVG sketch and output them as CSS custom properties (--token-name: value). Return ONLY the :root { } block — no markdown fences, no explanations.",
+        ];
+
+        $prompt = $prompts[$data['format']] . "\n\nSVG sketch:\n" . mb_substr($data['svg'], 0, 12000);
+
+        try {
+            $result = $this->aiManager->chatWithCode([
+                'message'     => $prompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $code = $result['text'] ?? '';
+            // Strip accidental markdown fences
+            $code = preg_replace('/^```[a-z]*\n?/i', '', $code);
+            $code = preg_replace('/\n?```$/i', '', $code);
+
+            return response()->json(['success' => true, 'code' => trim($code)]);
+        } catch (\Exception) {
+            return response()->json(['success' => false, 'code' => '', 'error' => 'AI conversion failed'], 500);
+        }
+    }
+
+    /**
+     * B-06: AI Inline Ghost Text completion
+     * Takes cursor position + file content, returns a short code completion.
+     */
+    public function complete(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'path'    => 'required|string',
+            'content' => 'required|string',
+            'line'    => 'required|integer|min:1',
+            'column'  => 'required|integer|min:1',
+        ]);
+
+        // Build context: last 40 lines before cursor + current line prefix
+        $allLines  = preg_split('/\r\n|\r|\n/', $data['content']);
+        $lineIdx   = $data['line'] - 1;
+        $col       = max(0, $data['column'] - 1);
+
+        $beforeLines       = array_slice($allLines, max(0, $lineIdx - 40), min($lineIdx, 40));
+        $currentLinePrefix = substr($allLines[$lineIdx] ?? '', 0, $col);
+        $contextBefore     = implode("\n", $beforeLines) . "\n" . $currentLinePrefix;
+
+        // Include a small look-ahead so the model knows what comes after
+        $afterLines    = array_slice($allLines, $lineIdx + 1, 8);
+        $contextAfter  = implode("\n", $afterLines);
+
+        $prompt = <<<EOT
+Code completion task. Return ONLY the text to insert at <cursor>. No explanations, no markdown fences, no extra lines.
+
+File: {$data['path']}
+
+Code before cursor:
+{$contextBefore}<cursor>
+
+Code after cursor:
+{$contextAfter}
+EOT;
+
+        try {
+            $result     = $this->aiManager->chatWithCode([
+                'message'     => $prompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $completion = $result['text'] ?? '';
+
+            // Strip accidental markdown fences
+            $completion = preg_replace('/^```[a-z]*\n?/i', '', $completion);
+            $completion = preg_replace('/\n?```$/i', '', $completion);
+
+            return response()->json(['success' => true, 'completion' => trim($completion)]);
+        } catch (\Exception) {
+            return response()->json(['success' => false, 'completion' => '']);
         }
     }
 
@@ -144,8 +250,15 @@ class AICommandController extends Controller
         ]);
         $conversation->update(['last_activity_at' => now()]);
 
+        // Classify message before streaming (orchestration)
+        $classification = $this->orchestrator->classify($message);
+        $orchestratorAddendum = $this->orchestrator->getOrchestratorSystemAddendum(
+            $classification['needs_planning'],
+            $classification['is_vague']
+        );
+
         // SSE headers
-        return response()->stream(function () use ($request, $workspace, $conversation) {
+        return response()->stream(function () use ($request, $workspace, $conversation, $orchestratorAddendum) {
             // Send headers for SSE
             header('Content-Type: text/event-stream');
             header('Cache-Control: no-cache');
@@ -160,6 +273,10 @@ class AICommandController extends Controller
                     'conversation_id' => $conversation?->id,
                 ]);
 
+                // Chunk buffer for first-line prefix detection (PLAN: / CLARIFY:)
+                $chunkBuffer = '';
+                $prefixResolved = false;
+
                 // Stream AI response
                 $this->aiManager->chatWithCodeStream([
                     'message' => $request->message,
@@ -170,13 +287,83 @@ class AICommandController extends Controller
                     'open_files' => $request->open_files ?? [],
                     'workspace' => $workspace,
                     'user' => auth()->user(),
+                    'extra_system' => $orchestratorAddendum,
                     'should_stop' => function () use ($conversation) {
                         if (connection_aborted()) {
                             return true;
                         }
                         return (bool) cache()->get("ai_cancel:conversation:{$conversation->id}", false);
                     },
-                ], function ($event, $data) use ($workspace, $conversation) {
+                ], function ($event, $data) use ($workspace, $conversation, &$chunkBuffer, &$prefixResolved) {
+                    // ── Chunk buffering: intercept until first newline for prefix detection ──
+                    if ($event === 'chunk' && !$prefixResolved) {
+                        $chunkBuffer .= $data['text'] ?? '';
+
+                        if (!str_contains($chunkBuffer, "\n")) {
+                            return; // Still building the first line — don't forward yet
+                        }
+
+                        $prefixResolved = true;
+                        $firstLineEnd = strpos($chunkBuffer, "\n");
+                        $firstLine = substr($chunkBuffer, 0, $firstLineEnd);
+
+                        // Check CLARIFY: prefix
+                        $clarify = $this->orchestrator->parseClarifyPrefix($firstLine);
+                        if ($clarify) {
+                            $this->sendSSE('clarification_needed', $clarify);
+                            AIConversationEvent::create([
+                                'conversation_id' => $conversation->id,
+                                'type' => 'clarification_needed',
+                                'payload' => $clarify,
+                            ]);
+                            $conversation->update(['last_activity_at' => now()]);
+                            $chunkBuffer = ''; // Discard the prefix line
+                            return;
+                        }
+
+                        // Check PLAN: prefix
+                        $plan = $this->orchestrator->parsePlanPrefix($firstLine);
+                        if ($plan) {
+                            $taskList = $this->orchestrator->createTaskList($conversation->id, $plan['tasks']);
+                            $payload = [
+                                'task_list_id' => $taskList->id,
+                                'tasks' => $taskList->tasks->map(fn($t) => [
+                                    'id'          => $t->id,
+                                    'title'       => $t->title,
+                                    'description' => $t->description,
+                                    'status'      => $t->status,
+                                ])->toArray(),
+                            ];
+                            $this->sendSSE('plan_created', $payload);
+                            AIConversationEvent::create([
+                                'conversation_id' => $conversation->id,
+                                'type' => 'plan_created',
+                                'payload' => $payload,
+                            ]);
+                            $conversation->update(['last_activity_at' => now()]);
+
+                            // Forward remainder (text after the PLAN: line)
+                            $rest = ltrim(substr($chunkBuffer, $firstLineEnd + 1));
+                            if ($rest !== '') {
+                                $this->sendSSE('chunk', ['text' => $rest]);
+                            }
+                            $chunkBuffer = '';
+                            return;
+                        }
+
+                        // No recognized prefix — forward everything buffered as a normal chunk
+                        $this->sendSSE('chunk', ['text' => $chunkBuffer]);
+                        $chunkBuffer = '';
+                        return;
+                    }
+
+                    // ── For non-chunk events, flush any remaining buffer first ──
+                    if (!$prefixResolved && $chunkBuffer !== '') {
+                        $prefixResolved = true;
+                        $this->sendSSE('chunk', ['text' => $chunkBuffer]);
+                        $chunkBuffer = '';
+                    }
+
                     // Stream callback - send each chunk to frontend
                     $this->sendSSE($event, $data);
 

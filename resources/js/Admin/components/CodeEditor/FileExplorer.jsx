@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
     ChevronRight, ChevronDown, File, Folder, FolderOpen,
     Search, FolderPlus, FilePlus, Trash2, Pencil,
-    MoreVertical, RefreshCw
+    MoreVertical, RefreshCw, Copy, Link, Star, X, Clock
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 
@@ -27,6 +27,8 @@ function TreeNode({
     onSubmitRename,
     onSubmitCreate,
     onInputKeyDown,
+    bookmarkedPaths,
+    onToggleBookmark,
 }) {
     const [expanded, setExpanded] = useState(depth < 2);
     const isActive = currentFile?.path === item.path;
@@ -93,6 +95,16 @@ function TreeNode({
                     <span className="file-name">{item.name}</span>
                 )}
 
+                {!isRenaming && item.type === 'file' && onToggleBookmark && (
+                    <span
+                        className="file-actions-btn"
+                        onClick={(e) => { e.stopPropagation(); onToggleBookmark(item); }}
+                        title={bookmarkedPaths?.has(item.path) ? 'Remove bookmark' : 'Bookmark file'}
+                        style={{ opacity: bookmarkedPaths?.has(item.path) ? 1 : undefined, color: bookmarkedPaths?.has(item.path) ? '#d29922' : undefined }}
+                    >
+                        <Star size={12} fill={bookmarkedPaths?.has(item.path) ? 'currentColor' : 'none'} />
+                    </span>
+                )}
                 {!isRenaming && (
                     <span
                         className="file-actions-btn"
@@ -123,6 +135,8 @@ function TreeNode({
                             onSubmitRename={onSubmitRename}
                             onSubmitCreate={onSubmitCreate}
                             onInputKeyDown={onInputKeyDown}
+                            bookmarkedPaths={bookmarkedPaths}
+                            onToggleBookmark={onToggleBookmark}
                         />
                     ))}
 
@@ -155,7 +169,7 @@ function TreeNode({
 // ──────────────────────────────────────────────────
 // Main FileExplorer component
 // ──────────────────────────────────────────────────
-export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh }) {
+export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [] }) {
     const [tree, setTree] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -675,6 +689,26 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
         }
     }, []);
 
+    const handleCopyPath = useCallback((item) => {
+        setContextMenu(null);
+        const path = item.path.replace(/\\/g, '/');
+        navigator.clipboard.writeText(path).then(() => {
+            toast.success('Path copied to clipboard');
+        }).catch(() => {
+            toast.error('Failed to copy path');
+        });
+    }, []);
+
+    const handleCopyRelativePath = useCallback((item) => {
+        setContextMenu(null);
+        const rel = item.path.replace(/\\/g, '/').replace(/^\/+/, '');
+        navigator.clipboard.writeText(rel).then(() => {
+            toast.success('Relative path copied');
+        }).catch(() => {
+            toast.error('Failed to copy path');
+        });
+    }, []);
+
     // ── Render ──
 
     if (!workspace) {
@@ -705,6 +739,9 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
         );
     }
 
+    // Build a Set of bookmarked paths for O(1) lookup
+    const bookmarkedPaths = new Set(bookmarks.map(b => b.path));
+
     return (
         <div className="file-explorer">
             <div className="file-explorer-header">
@@ -721,6 +758,65 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
                     </button>
                 </div>
             </div>
+
+            {/* B-11: Recently Opened section */}
+            {recentFiles.length > 0 && (
+                <div style={{ borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
+                    <div style={{
+                        padding: '5px 10px 4px',
+                        fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
+                        color: '#8b949e', textTransform: 'uppercase',
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                    }}>
+                        <Clock size={10} style={{ color: '#8b949e' }} /> RECENT
+                    </div>
+                    {recentFiles.map(rf => (
+                        <div
+                            key={rf.path}
+                            className={`file-tree-item ${currentFile?.path === rf.path ? 'active' : ''}`}
+                            style={{ paddingLeft: '10px' }}
+                            onClick={() => onFileSelect(rf)}
+                        >
+                            <span style={{ fontSize: '11px', flexShrink: 0 }}>📄</span>
+                            <span className="file-name" style={{ flex: 1 }} title={rf.path}>{rf.name}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* B-10: Bookmarks section */}
+            {bookmarks.length > 0 && (
+                <div style={{ borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
+                    <div style={{
+                        padding: '5px 10px 4px',
+                        fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
+                        color: '#8b949e', textTransform: 'uppercase',
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                    }}>
+                        <Star size={10} style={{ color: '#d29922' }} /> BOOKMARKS
+                    </div>
+                    {bookmarks.map(bm => (
+                        <div
+                            key={bm.path}
+                            className={`file-tree-item ${currentFile?.path === bm.path ? 'active' : ''}`}
+                            style={{ paddingLeft: '10px' }}
+                            onClick={() => onFileSelect(bm)}
+                        >
+                            <Star size={11} fill="currentColor" style={{ color: '#d29922', flexShrink: 0 }} />
+                            <span className="file-name" style={{ flex: 1 }} title={bm.path}>{bm.name}</span>
+                            {onToggleBookmark && (
+                                <span
+                                    className="file-actions-btn"
+                                    onClick={(e) => { e.stopPropagation(); onToggleBookmark(bm); }}
+                                    title="Remove bookmark"
+                                >
+                                    <X size={11} style={{ color: '#f85149' }} />
+                                </span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             <div className="file-explorer-search">
                 <div className="input-group input-group-sm">
@@ -755,6 +851,8 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
                             onSubmitRename={doSubmitRename}
                             onSubmitCreate={doSubmitCreate}
                             onInputKeyDown={handleInputKeyDown}
+                            bookmarkedPaths={bookmarkedPaths}
+                            onToggleBookmark={onToggleBookmark}
                         />
                     ))
                 ) : (
@@ -809,6 +907,13 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
                     </button>
                     <button className="text-danger" onClick={() => handleDelete(contextMenu.item)}>
                         <Trash2 size={14} /> Delete
+                    </button>
+                    <div className="context-menu-divider" />
+                    <button onClick={() => handleCopyPath(contextMenu.item)}>
+                        <Copy size={14} /> Copy Path
+                    </button>
+                    <button onClick={() => handleCopyRelativePath(contextMenu.item)}>
+                        <Link size={14} /> Copy Relative Path
                     </button>
                 </div>
             )}
