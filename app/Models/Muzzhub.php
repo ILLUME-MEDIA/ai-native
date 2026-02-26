@@ -67,6 +67,57 @@ class Muzzhub extends Model
         'auto_accept'       => 'boolean',
     ];
 
+    // ── Amenities accessor ────────────────────────────────────────────────────
+    // Overrides the raw (null) `amenities` column with a structured object
+    // built from the existing scattered amenity fields in this table.
+
+    public function getAmenitiesAttribute(): array
+    {
+        $bool = fn($key) => (bool) ($this->attributes[$key] ?? false);
+        $str  = fn($key) => isset($this->attributes[$key]) && $this->attributes[$key] !== '' ? $this->attributes[$key] : null;
+
+        return [
+            'halal' => [
+                'menu_level'  => (int) ($this->attributes['halal_menu'] ?? 0), // 0=none,1=partial,2=mostly,3=fully
+                'authority'   => $str('halal_authority'),
+                'slaughter'   => $str('slaughter_method'),
+                'compliance'  => $str('compliance'),
+                'chain'       => $bool('halal_chain'),
+                'items'       => $str('halal_items'),
+                'options'     => $str('halal_options'),
+                'description' => $str('description_halal'),
+            ],
+            'food' => [
+                'alcohol'         => $bool('alcohol'),
+                'alcohol_options' => $str('alcohol_options'),
+                'pork'            => $bool('pork'),
+                'organic'         => $bool('organic'),
+                'shisha'          => $bool('shisha'),
+                'kids_menu'       => $bool('kids_menu'),
+            ],
+            'service' => [
+                'delivery'     => $bool('delivery'),
+                'catering'     => $bool('catering'),
+                'to_go'        => $bool('to_go'),
+                'reservations' => $bool('reservations'),
+                'drive_thru'   => $bool('drive_thru'),
+                'cash_only'    => $bool('cash_only'),
+                'credit_cards' => $str('credit_cards'),
+            ],
+            'facilities' => [
+                'wifi'             => $bool('wifi'),
+                'parking'          => $bool('parking'),
+                'outdoor_seating'  => $bool('outdoor_seating'),
+                'wheelchair_access'=> $bool('wheelchair_access'),
+                'restrooms'        => $bool('restrooms'),
+                'pray_space'       => $bool('pray_space'),
+                'prayer'           => $bool('prayer'),
+                'transit'          => $bool('transit'),
+                'capacity'         => isset($this->attributes['capacity']) ? (int) $this->attributes['capacity'] : null,
+            ],
+        ];
+    }
+
     public function category(): BelongsTo
     {
         return $this->belongsTo(MuzzhubCategory::class, 'category_id');

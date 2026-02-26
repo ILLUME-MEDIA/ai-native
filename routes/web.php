@@ -95,6 +95,7 @@ Route::get('/run-migrations', function () {
             'CodeEditorPermissionSeeder',
             'MCPCatalogSeeder',
             'MenuCategoryTypeSeeder',
+            'RestaurantSampleDataSeeder',
         ];
         foreach ($seeders as $seeder) {
             try {
