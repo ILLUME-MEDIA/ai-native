@@ -70,6 +70,21 @@ class StripeController extends Controller
         return $row?->name ?? null;
     }
 
+    // ── Public config (publishable key for frontend) ──────────────────────────
+
+    /**
+     * GET /api/payment/stripe/config
+     *
+     * Returns the Stripe publishable key so the frontend can initialise Stripe.js
+     * without needing a build-time VITE_ env variable.
+     */
+    public function config(): JsonResponse
+    {
+        return response()->json([
+            'publishable_key' => config('services.stripe.publishable') ?? '',
+        ]);
+    }
+
     // ── Setup Intent (Step 1 — save card without charging) ───────────────────
 
     /**

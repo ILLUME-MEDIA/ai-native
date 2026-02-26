@@ -9,9 +9,8 @@ import {
   Row, Spinner
 } from 'react-bootstrap';
 
-const SESSION_KEY = 'ecom_session_id';
-const STRIPE_PK   = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
-const TAX_RATE    = 10; // percent
+const SESSION_KEY  = 'ecom_session_id';
+const TAX_RATE     = 10; // percent
 const DELIVERY_FEE = 3.99;
 
 function getSessionId() {
@@ -75,6 +74,9 @@ export default function CheckoutPage() {
   const [successOrder, setSuccessOrder] = useState(null);
   const [toast,        setToast]        = useState(null);
 
+  // Stripe publishable key — try build-time env first, fall back to backend config
+  const [stripePk, setStripePk] = useState(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+
   // payment state
   const [paymentMethod,  setPaymentMethod]  = useState('cod'); // 'cod' | 'stripe'
   const [savedCards,     setSavedCards]     = useState([]);
@@ -106,16 +108,24 @@ export default function CheckoutPage() {
       .finally(() => setLoadingCart(false));
   }, []);
 
+  // ── Fetch Stripe publishable key from backend if not in build env ─────────
+  useEffect(() => {
+    if (stripePk) return; // already have it from build-time env
+    axios.get('/api/payment/stripe/config')
+      .then(r => { if (r.data.publishable_key) setStripePk(r.data.publishable_key); })
+      .catch(() => {}); // silently fail — user just won't see Stripe option
+  }, []);
+
   // ── Load Stripe.js ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (!STRIPE_PK) return;
-    if (window.Stripe) { setStripeObj(window.Stripe(STRIPE_PK)); return; }
+    if (!stripePk) return;
+    if (window.Stripe) { setStripeObj(window.Stripe(stripePk)); return; }
     const script = document.createElement('script');
     script.src   = 'https://js.stripe.com/v3/';
     script.async = true;
-    script.onload = () => setStripeObj(window.Stripe(STRIPE_PK));
+    script.onload = () => setStripeObj(window.Stripe(stripePk));
     document.head.appendChild(script);
-  }, []);
+  }, [stripePk]);
 
   // ── Load saved cards when Stripe tab selected and logged in ─────────────
   useEffect(() => {
@@ -577,7 +587,7 @@ export default function CheckoutPage() {
 
                 {paymentMethod === 'stripe' && (
                   <>
-                    {!STRIPE_PK && (
+                    {!stripePk && (
                       <Alert variant="warning" className="mb-3">
                         <Icon name="alert-triangle" size={14} className="me-1" />
                         Stripe not configured. Add <code>VITE_STRIPE_PUBLISHABLE_KEY</code> to your <code>.env</code> file.
@@ -709,7 +719,7 @@ export default function CheckoutPage() {
                           </div>
                         )}
 
-                        {selectedCard === 'new' && STRIPE_PK && (
+                        {selectedCard === 'new' && stripePk && (
                           <div>
                             <FormLabel className="fw-semibold mb-2">Card Details</FormLabel>
                             <div

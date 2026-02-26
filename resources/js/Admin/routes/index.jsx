@@ -114,6 +114,9 @@ export const routes = [
     path: '/apps/ecommerce/menu-categories',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/menu-categories'))
   }, {
+    path: '/apps/ecommerce/menu-modifiers',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/menu-modifiers'))
+  }, {
     path: '/apps/ecommerce/menu-category-types',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/menu-category-types'))
   }, {

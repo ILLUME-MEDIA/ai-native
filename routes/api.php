@@ -405,6 +405,7 @@ Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->wit
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
 Route::prefix('payment/stripe')->group(function () {
+    Route::get('config',                   [StripeController::class, 'config']);       // public — no auth
     Route::post('setup-intent',            [StripeController::class, 'setupIntent']);
     Route::post('save-method',             [StripeController::class, 'saveMethod']);
     Route::get('methods',                  [StripeController::class, 'listMethods']);
