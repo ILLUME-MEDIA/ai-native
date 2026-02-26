@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class MCPServer extends Model
 {
+    protected $table = 'mcp_servers';
+
     protected $fillable = [
         'slug', 'name', 'description', 'category', 'author',
         'command', 'args_schema', 'env_schema', 'npm_package', 'docs_url',
