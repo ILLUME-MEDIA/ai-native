@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class MenuItem extends Model
 {
@@ -28,5 +29,12 @@ class MenuItem extends Model
     public function menuCategoryType(): BelongsTo
     {
         return $this->belongsTo(MenuCategoryType::class, 'menu_category_type_id');
+    }
+
+    public function modifierGroups(): HasMany
+    {
+        return $this->hasMany(MenuItemModifierGroup::class)
+                    ->orderBy('sort_order')
+                    ->orderBy('id');
     }
 }

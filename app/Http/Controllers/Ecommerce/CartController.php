@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Ecommerce;
 use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\MenuItem;
+use App\Models\MenuItemModifierOption;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -65,7 +66,11 @@ class CartController extends Controller
             ->with(['menuItem', 'business'])
             ->get();
 
-        $subtotal = $items->sum(fn ($i) => ($i->menuItem->price ?? 0) * $i->quantity);
+        $subtotal = $items->sum(function ($i) {
+            $base   = $i->menuItem->price ?? 0;
+            $modAdj = collect($i->modifiers ?? [])->sum('price_adjustment');
+            return ($base + $modAdj) * $i->quantity;
+        });
 
         return response()->json(['items' => $items, 'subtotal' => round($subtotal, 2), 'count' => $items->count()]);
     }
@@ -76,6 +81,8 @@ class CartController extends Controller
             'menu_item_id' => 'required|exists:menu_items,id',
             'quantity'     => 'integer|min:1|max:99',
             'notes'        => 'nullable|string|max:300',
+            'modifiers'    => 'nullable|array',
+            'modifiers.*'  => 'integer|exists:menu_item_modifier_options,id',
         ]);
 
         $menuItem = MenuItem::findOrFail($data['menu_item_id']);
@@ -87,6 +94,7 @@ class CartController extends Controller
                 'business_id' => $menuItem->business_id,
                 'quantity'    => $data['quantity'] ?? 1,
                 'notes'       => $data['notes'] ?? null,
+                'modifiers'   => $this->buildModifierSnapshot($data['modifiers'] ?? []),
             ]
         );
 
@@ -96,11 +104,43 @@ class CartController extends Controller
     public function update(Request $request, CartItem $cartItem): JsonResponse
     {
         $data = $request->validate([
-            'quantity' => 'required|integer|min:1|max:99',
-            'notes'    => 'nullable|string|max:300',
+            'quantity'    => 'required|integer|min:1|max:99',
+            'notes'       => 'nullable|string|max:300',
+            'modifiers'   => 'nullable|array',
+            'modifiers.*' => 'integer|exists:menu_item_modifier_options,id',
         ]);
+
+        if (array_key_exists('modifiers', $data)) {
+            $data['modifiers'] = $this->buildModifierSnapshot($data['modifiers'] ?? []);
+        }
+
         $cartItem->update($data);
         return response()->json($cartItem->load('menuItem'));
+    }
+
+    /**
+     * Resolve selected modifier option IDs into a snapshot array.
+     * [{group_id, group_name, option_id, option_name, price_adjustment}]
+     */
+    private function buildModifierSnapshot(array $optionIds): ?array
+    {
+        if (empty($optionIds)) {
+            return null;
+        }
+
+        return MenuItemModifierOption::with('modifierGroup')
+            ->whereIn('id', $optionIds)
+            ->where('is_active', true)
+            ->get()
+            ->map(fn ($o) => [
+                'group_id'         => $o->modifierGroup->id,
+                'group_name'       => $o->modifierGroup->name,
+                'option_id'        => $o->id,
+                'option_name'      => $o->name,
+                'price_adjustment' => $o->price_adjustment,
+            ])
+            ->values()
+            ->all();
     }
 
     public function destroy(CartItem $cartItem): JsonResponse

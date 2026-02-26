@@ -146,6 +146,10 @@ export const menuItems = [{
       url: "/apps/ecommerce/settings",
       slug: "pages:apps-ecommerce-settings",
       label: "Settings"
+    }, {
+      url: "/apps/ecommerce/pos",
+      slug: "pages:apps-ecommerce-pos",
+      label: "POS Integration"
     }]
   }, {
     icon: "file-text",

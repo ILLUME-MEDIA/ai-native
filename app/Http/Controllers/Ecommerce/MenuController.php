@@ -130,7 +130,7 @@ class MenuController extends Controller
     public function showItem(Business $business, MenuItem $item): JsonResponse
     {
         abort_unless($item->business_id === $business->id, 404);
-        return response()->json($item->load(['menuCategory', 'menuCategoryType']));
+        return response()->json($item->load(['menuCategory', 'menuCategoryType', 'modifierGroups.options']));
     }
 
     public function destroyItem(Business $business, MenuItem $item): JsonResponse

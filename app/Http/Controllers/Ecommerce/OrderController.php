@@ -96,7 +96,11 @@ class OrderController extends Controller
             return response()->json(['message' => 'Cart is empty for this business.'], 422);
         }
 
-        $subtotal     = round($cartItems->sum(fn ($ci) => ($ci->menuItem->price ?? 0) * $ci->quantity), 2);
+        $subtotal     = round($cartItems->sum(function ($ci) {
+            $base   = $ci->menuItem->price ?? 0;
+            $modAdj = collect($ci->modifiers ?? [])->sum('price_adjustment');
+            return ($base + $modAdj) * $ci->quantity;
+        }), 2);
         $taxRate      = (float) ($data['tax_rate'] ?? 0);
         $tax          = round($subtotal * ($taxRate / 100), 2);
         $deliveryFee  = round((float) ($data['delivery_fee'] ?? 0), 2);
@@ -123,14 +127,16 @@ class OrderController extends Controller
         ]);
 
         foreach ($cartItems as $ci) {
+            $itemPrice = ($ci->menuItem->price ?? 0) + collect($ci->modifiers ?? [])->sum('price_adjustment');
             OrderItem::create([
                 'order_id'     => $order->id,
                 'menu_item_id' => $ci->menu_item_id,
                 'name'         => $ci->menuItem->name,
-                'price'        => $ci->menuItem->price,
+                'price'        => round($itemPrice, 2),
                 'quantity'     => $ci->quantity,
-                'subtotal'     => round($ci->menuItem->price * $ci->quantity, 2),
+                'subtotal'     => round($itemPrice * $ci->quantity, 2),
                 'notes'        => $ci->notes,
+                'modifiers'    => $ci->modifiers,
             ]);
         }
 

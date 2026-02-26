@@ -180,6 +180,9 @@ export const routes = [
     path: '/apps/ecommerce/settings',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/settings'))
   }, {
+    path: '/apps/ecommerce/pos',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/pos'))
+  }, {
     path: '/apps/ecommerce/warehouse',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/inventory/warehouse'))
   }, {

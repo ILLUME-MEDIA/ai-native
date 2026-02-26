@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SectionBuilder\SectionBuilderController;
+use App\Http\Controllers\Ecommerce\PosController;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -108,6 +109,10 @@ Route::get('/run-migrations', function () {
         throw $e;
     }
 })->name('run-migrations');
+
+// ── POS OAuth Callbacks (Square + Clover redirect here after user authorizes) ──
+Route::get('/pos/square/callback', [PosController::class, 'squareCallback'])->name('pos.square.callback');
+Route::get('/pos/clover/callback', [PosController::class, 'cloverCallback'])->name('pos.clover.callback');
 
 // ── Storage fallback (serves files directly if /public/storage symlink returns 403) ──
 Route::get('/storage/{path}', function ($path) {

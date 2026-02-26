@@ -23,6 +23,8 @@ jobs:
           cache: 'npm'
 
       - name: Install NPM dependencies & Build React
+        env:
+          VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
         run: |
           npm install
           npm run build

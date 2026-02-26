@@ -49,6 +49,19 @@ return [
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
     ],
 
+    'square' => [
+        'app_id'                => env('SQUARE_APP_ID'),
+        'app_secret'            => env('SQUARE_APP_SECRET'),
+        'environment'           => env('SQUARE_ENVIRONMENT', 'sandbox'),
+        'webhook_signature_key' => env('SQUARE_WEBHOOK_SIGNATURE_KEY'),
+    ],
+
+    'clover' => [
+        'app_id'      => env('CLOVER_APP_ID'),
+        'app_secret'  => env('CLOVER_APP_SECRET'),
+        'environment' => env('CLOVER_ENVIRONMENT', 'sandbox'),
+    ],
+
     'doordash' => [
         'env' => env('DOORDASH_ENV', 'sandbox'), // "sandbox" or "production"
 

@@ -13,6 +13,7 @@ use App\Http\Controllers\Ecommerce\BusinessController;
 use App\Http\Controllers\Ecommerce\MuzzhubController;
 use App\Http\Controllers\Ecommerce\MuzzhubCategoryController;
 use App\Http\Controllers\Ecommerce\MenuController;
+use App\Http\Controllers\Ecommerce\MenuItemModifierController;
 use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
 use App\Http\Controllers\Ecommerce\CartController;
 use App\Http\Controllers\Ecommerce\OrderController;
@@ -22,6 +23,10 @@ use App\Http\Controllers\Ecommerce\DataSourceController;
 use App\Http\Controllers\Ecommerce\BusinessRegistrationController;
 use App\Http\Controllers\Ecommerce\DoorDashController;
 use App\Http\Controllers\Ecommerce\StripeController;
+use App\Http\Controllers\Ecommerce\PosController;
+use App\Http\Controllers\Ecommerce\PosCatalogController;
+use App\Http\Controllers\Ecommerce\PosPaymentController;
+use App\Http\Controllers\Ecommerce\PosWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -116,6 +121,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('businesses/{business}/menu-items',             [MenuController::class, 'storeItem']);
         Route::patch('businesses/{business}/menu-items/{item}',     [MenuController::class, 'updateItem']);
         Route::delete('businesses/{business}/menu-items/{item}',    [MenuController::class, 'destroyItem']);
+
+        // Menu item modifier groups (admin)
+        Route::post('businesses/{business}/menu-items/{item}/modifier-groups',                                    [MenuItemModifierController::class, 'storeGroup']);
+        Route::patch('businesses/{business}/menu-items/{item}/modifier-groups/{group}',                           [MenuItemModifierController::class, 'updateGroup']);
+        Route::delete('businesses/{business}/menu-items/{item}/modifier-groups/{group}',                          [MenuItemModifierController::class, 'destroyGroup']);
+
+        // Menu item modifier options (admin)
+        Route::post('businesses/{business}/menu-items/{item}/modifier-groups/{group}/options',                    [MenuItemModifierController::class, 'storeOption']);
+        Route::patch('businesses/{business}/menu-items/{item}/modifier-groups/{group}/options/{option}',          [MenuItemModifierController::class, 'updateOption']);
+        Route::delete('businesses/{business}/menu-items/{item}/modifier-groups/{group}/options/{option}',         [MenuItemModifierController::class, 'destroyOption']);
 
         // Orders admin (list all + status update)
         Route::get('orders',                        [OrderController::class, 'index']);
@@ -352,6 +367,41 @@ Route::prefix('ecommerce/discovery-users/me')->group(function () {
     Route::delete('location',[DiscoveryUserController::class, 'locationDestroy']);
 });
 
+// ── POS Admin Routes (Sanctum auth required) ─────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('ecommerce/pos')->group(function () {
+    // ── Literal routes first (must come before /{connection} wildcard) ────────
+    Route::get('/',                                     [PosController::class, 'index']);
+    Route::get('/square/auth-url',                      [PosController::class, 'squareAuthUrl']);
+    Route::get('/clover/auth-url',                      [PosController::class, 'cloverAuthUrl']);
+
+    // ── Dynamic connection routes ─────────────────────────────────────────────
+    Route::get('/{connection}',                         [PosController::class, 'show']);
+    Route::patch('/{connection}',                       [PosController::class, 'update']);
+    Route::delete('/{connection}',                      [PosController::class, 'disconnect']);
+    Route::get('/{connection}/locations',               [PosController::class, 'locations']);
+    Route::patch('/{connection}/location',              [PosController::class, 'setLocation']);
+
+    // Catalog sync
+    Route::get('/{connection}/catalog-maps',            [PosCatalogController::class, 'maps']);
+    Route::post('/{connection}/push-catalog',           [PosCatalogController::class, 'push']);
+    Route::post('/{connection}/pull-catalog',           [PosCatalogController::class, 'pull']);
+    Route::delete('/{connection}/catalog-maps/{map}',   [PosCatalogController::class, 'unlink']);
+
+    // POS Terminal / Checkout
+    Route::get('/{connection}/devices',                         [PosPaymentController::class, 'devices']);
+    Route::post('/{connection}/checkout',                       [PosPaymentController::class, 'createCheckout']);
+    Route::get('/{connection}/checkout/{checkoutId}/status',    [PosPaymentController::class, 'checkoutStatus']);
+    Route::post('/{connection}/checkout/{checkoutId}/cancel',   [PosPaymentController::class, 'cancelCheckout']);
+    Route::post('/{connection}/pay',                            [PosPaymentController::class, 'squarePay']);
+});
+
+// ── POS order lookup (admin) ──────────────────────────────────────────────────
+Route::middleware('auth:sanctum')->get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
+
+// ── POS Webhooks (no auth — verified by signature) ────────────────────────────
+Route::post('webhooks/pos/square', [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->withoutMiddleware(['auth:sanctum']);
+
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
 Route::prefix('payment/stripe')->group(function () {
@@ -378,11 +428,12 @@ Route::middleware('mcp.auth')->prefix('mcp')->group(function () {
 // - Logged-in admin (Sanctum cookie), OR
 // - Valid MCP_API_KEY as Bearer token.
 // AND must pass MCP permissions via mcp.check.
-Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
-    // Special-case: force /api/entities/case-studies to use the custom
-    // CaseStudyController so that the response shape matches the legacy API.
-    Route::get('/entities/case-studies', [CaseStudyController::class, 'index']);
+// Public read-only alias: /api/entities/case-studies (no auth required)
+// Used by external sites (e.g. javed.io) to fetch portfolio case studies.
+Route::get('/entities/case-studies', [CaseStudyController::class, 'index']);
+Route::get('/entities/case-studies/{slug}', [CaseStudyController::class, 'show']);
 
+Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
     Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
     Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
     Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
