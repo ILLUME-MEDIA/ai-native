@@ -71,11 +71,36 @@ class MenuController extends Controller
 
     public function items(Request $request, Business $business): JsonResponse
     {
-        $q = $business->menuItems()->with(['menuCategory', 'menuCategoryType'])->orderBy('sort_order')->orderBy('name');
+        $q = $business->menuItems()
+            ->with(['menuCategory', 'menuCategoryType', 'modifierGroups.options'])
+            ->where('is_available', true)
+            ->orderBy('sort_order')
+            ->orderBy('name');
+
         if ($request->filled('category_id')) {
             $q->where('menu_category_id', $request->category_id);
         }
-        return response()->json($q->get());
+
+        $items = $q->get();
+
+        // Seller info: prefer linked Muzzhub (has amenities), fallback to Business
+        $muzzhub  = $business->muzzhub;
+        $seller   = $muzzhub
+            ? array_merge($muzzhub->toArray(), ['source' => 'muzzhub'])
+            : array_merge($business->toArray(),  ['source' => 'business', 'amenities' => null]);
+
+        $categories = $business->menuCategories()
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->where('is_active', true)
+            ->withCount(['menuItems' => fn($q) => $q->where('is_available', true)])
+            ->get();
+
+        return response()->json([
+            'seller'     => $seller,
+            'categories' => $categories,
+            'items'      => $items,
+        ]);
     }
 
     public function storeItem(Request $request, Business $business): JsonResponse
@@ -159,10 +184,30 @@ class MenuController extends Controller
         if (!$business) {
             return response()->json(['message' => 'No business linked for this seller.'], 404);
         }
-        $q = $business->menuItems()->with('menuCategory')->orderBy('sort_order')->orderBy('name');
+
+        $q = $business->menuItems()
+            ->with(['menuCategory', 'menuCategoryType', 'modifierGroups.options'])
+            ->where('is_available', true)
+            ->orderBy('sort_order')
+            ->orderBy('name');
+
         if ($request->filled('category_id')) {
             $q->where('menu_category_id', $request->category_id);
         }
-        return response()->json($q->get());
+
+        $items = $q->get();
+
+        $categories = $business->menuCategories()
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->where('is_active', true)
+            ->withCount(['menuItems' => fn($q) => $q->where('is_available', true)])
+            ->get();
+
+        return response()->json([
+            'seller'     => array_merge($muzzhub->toArray(), ['source' => 'muzzhub']),
+            'categories' => $categories,
+            'items'      => $items,
+        ]);
     }
 }
