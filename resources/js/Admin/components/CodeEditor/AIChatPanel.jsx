@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
@@ -650,16 +650,100 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 </button>
             </div>
 
+            {/* ── Conversation Tabs ─────────────────────────────────── */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                borderBottom: '1px solid #1c2128',
+                background: '#010409',
+                overflowX: 'auto',
+                scrollbarWidth: 'none',
+                flexShrink: 0,
+            }}>
+                {/* Existing conversation tabs */}
+                {conversations.map(c => {
+                    const isActive = conversationId === c.id;
+                    const label = c.title ? c.title.slice(0, 16) : `Chat #${c.id}`;
+                    return (
+                        <button
+                            key={c.id}
+                            onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
+                            title={c.title || `Chat #${c.id}`}
+                            style={{
+                                padding: '6px 12px',
+                                background: isActive ? '#0d1117' : 'transparent',
+                                border: 'none',
+                                borderRight: '1px solid #1c2128',
+                                borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
+                                color: isActive ? '#c9d1d9' : '#6e7681',
+                                cursor: loading ? 'not-allowed' : 'pointer',
+                                fontSize: '11px',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '130px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                flexShrink: 0,
+                                transition: 'color 0.15s, border-bottom-color 0.15s',
+                            }}
+                            onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#c9d1d9'; }}
+                            onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#6e7681'; }}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+
+                {/* "New chat" tab — shown when no conversation is selected */}
+                {!conversationId && (
+                    <button
+                        style={{
+                            padding: '6px 12px',
+                            background: '#0d1117',
+                            border: 'none',
+                            borderRight: '1px solid #1c2128',
+                            borderBottom: '2px solid #ff6b35',
+                            color: '#c9d1d9',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                        }}
+                    >
+                        New chat
+                    </button>
+                )}
+
+                {/* "+" new chat button */}
+                <button
+                    onClick={() => { if (!loading) { setConversationId(null); setMessages([]); } }}
+                    disabled={loading}
+                    title="New chat"
+                    style={{
+                        padding: '6px 10px',
+                        background: 'transparent',
+                        border: 'none',
+                        borderBottom: '2px solid transparent',
+                        color: '#484f58',
+                        cursor: loading ? 'not-allowed' : 'pointer',
+                        fontSize: '11px',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; }}
+                >
+                    <Plus size={14} />
+                </button>
+
+                {/* Idle/timer pushed to right */}
+                <span style={{ marginLeft: 'auto', paddingRight: '8px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
+                </span>
+            </div>
+
             <div className="chat-controls chat-controls-compact">
                 <div className="chat-controls-bar">
-                    <div className="chat-controls-summary">
-                        <span className="badge bg-secondary">
-                            Chat {conversationId ? `#${conversationId}` : 'New'}
-                        </span>
-                        <span className="text-muted small">
-                            {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
-                        </span>
-                    </div>
                     <button
                         type="button"
                         className="btn btn-sm btn-outline-secondary chat-settings-toggle"
@@ -668,7 +752,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         title={settingsOpen ? 'Hide settings' : 'Show settings'}
                     >
                         <SlidersHorizontal size={14} className="me-1" />
-                        {settingsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        <span style={{ fontSize: '11px' }}>Settings</span>
+                        {settingsOpen ? <ChevronUp size={12} className="ms-1" /> : <ChevronDown size={12} className="ms-1" />}
                     </button>
                 </div>
 
@@ -691,31 +776,6 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                 <div className="form-text">
                                     For UI/page requests, the AI will follow this target and avoid creating the wrong file types.
                                 </div>
-                            </div>
-
-                            <div className="col-12">
-                                <label className="form-label mb-1">Conversation</label>
-                                <select
-                                    className="form-select form-select-sm"
-                                    value={conversationId || ''}
-                                    onChange={async (e) => {
-                                        const id = e.target.value ? Number(e.target.value) : null;
-                                        setConversationId(id);
-                                        if (id) {
-                                            await loadConversation(id);
-                                        } else {
-                                            setMessages([]);
-                                        }
-                                    }}
-                                    disabled={loading}
-                                >
-                                    <option value="">New chat (auto)</option>
-                                    {conversations.map(c => (
-                                        <option key={c.id} value={c.id}>
-                                            #{c.id} {c.title ? `- ${c.title}` : ''}
-                                        </option>
-                                    ))}
-                                </select>
                             </div>
 
                             <div className="col-12">
