@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
@@ -19,8 +19,14 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [selectedModel, setSelectedModel] = useState('AUTO');
     const [isAuto, setIsAuto] = useState(true);
     const [uiTarget, setUiTarget] = useState(() => localStorage.getItem('codeEditor.uiTarget') || 'ask');
-    const [pendingClarification, setPendingClarification] = useState(null); // { questions: [...] }
-    const [activePlanTasks, setActivePlanTasks] = useState(null); // { task_list_id, tasks: [...] }
+    const [pendingClarification, setPendingClarification] = useState(null);
+    const [activePlanTasks, setActivePlanTasks] = useState(null);
+    // Image attachments
+    const [attachedImages, setAttachedImages] = useState([]); // [{dataUrl, name}]
+    const fileInputRef = useRef(null);
+    // Voice input
+    const [isListening, setIsListening] = useState(false);
+    const recognitionRef = useRef(null);
     const messagesEndRef = useRef(null);
     const eventSourceRef = useRef(null);
     const abortRef = useRef(null);
@@ -226,8 +232,73 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         }
     }
 
+    // ── Image helpers ──────────────────────────────────────────────────────────
+    function addImageFile(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            setAttachedImages(prev => [...prev, { dataUrl: e.target.result, name: file.name || 'image.png' }]);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function handlePaste(e) {
+        const items = e.clipboardData?.items || [];
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                addImageFile(item.getAsFile());
+                return;
+            }
+        }
+    }
+
+    function handleFileInput(e) {
+        Array.from(e.target.files || []).forEach(addImageFile);
+        e.target.value = '';
+    }
+
+    function removeImage(idx) {
+        setAttachedImages(prev => prev.filter((_, i) => i !== idx));
+    }
+
+    // ── Voice input ────────────────────────────────────────────────────────────
+    function toggleVoice() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            toast.error('Voice input is not supported in this browser. Use Chrome or Edge.');
+            return;
+        }
+
+        if (isListening) {
+            recognitionRef.current?.stop();
+            setIsListening(false);
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = false;
+        recognitionRef.current = recognition;
+
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend   = () => setIsListening(false);
+        recognition.onerror = () => { setIsListening(false); toast.error('Voice recognition failed.'); };
+
+        recognition.onresult = (event) => {
+            const transcript = Array.from(event.results)
+                .map(r => r[0].transcript)
+                .join('');
+            setInput(prev => prev + transcript);
+        };
+
+        recognition.start();
+    }
+
+    // ── Send ───────────────────────────────────────────────────────────────────
     async function handleSend() {
-        if (!input.trim() || loading) return;
+        if ((!input.trim() && attachedImages.length === 0) || loading) return;
 
         if (!workspace?.id) {
             toast.error('No workspace selected. Please open or create a workspace first.');
@@ -249,12 +320,15 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         const userMessage = {
             role: 'user',
             content: input,
+            images: attachedImages.map(i => i.dataUrl),
             timestamp: new Date()
         };
 
         setMessages(prev => [...prev, userMessage]);
         const userInput = input;
+        const userImages = [...attachedImages];
         setInput('');
+        setAttachedImages([]);
         setLoading(true);
         setStreamingMessage('');
         setStreamingStatus('Connecting...');
@@ -274,8 +348,18 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             const url = `/api/workspaces/${workspace.id}/ai/chat-stream`;
 
             // Create FormData for POST request
+            // Build message — append image descriptions when images are attached
+            let fullMessage = userInput;
+            if (userImages.length > 0) {
+                fullMessage += `\n\n[User attached ${userImages.length} image(s). Treat them as visual context for this request.]`;
+            }
+
             const formData = new FormData();
-            formData.append('message', userInput);
+            formData.append('message', fullMessage);
+            // Attach images as base64 for vision-capable models
+            userImages.forEach((img, i) => {
+                formData.append(`images[${i}]`, img.dataUrl);
+            });
             formData.append('endpoint_id', selectedEndpoint);
             formData.append('model_id', isAuto ? 'AUTO' : selectedModel);
             formData.append('ui_target', uiTarget || 'ask');
@@ -640,14 +724,22 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                     className="form-select form-select-sm"
                                     value={selectedEndpoint || ''}
                                     onChange={(e) => setSelectedEndpoint(Number(e.target.value))}
-                                    disabled={loading}
+                                    disabled={loading || endpoints.length === 0}
                                 >
-                                    {endpoints.map(ep => (
-                                        <option key={ep.id} value={ep.id}>
-                                            {ep.name} ({ep.provider})
-                                        </option>
-                                    ))}
+                                    {endpoints.length === 0
+                                        ? <option value="">— No providers configured —</option>
+                                        : endpoints.map(ep => (
+                                            <option key={ep.id} value={ep.id}>
+                                                {ep.name} ({ep.provider})
+                                            </option>
+                                        ))
+                                    }
                                 </select>
+                                {endpoints.length === 0 && (
+                                    <div className="form-text text-warning" style={{ fontSize: '10px' }}>
+                                        No active AI providers found. Go to <strong>Settings → AI Endpoints</strong> to add one.
+                                    </div>
+                                )}
                             </div>
 
                             <div className="col-12">
@@ -770,38 +862,166 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 </div>
             )}
 
-            <div className="chat-input">
+            {/* ── Chat Input ─────────────────────────────────────────────── */}
+            <div style={{
+                borderTop: '1px solid #1c2128',
+                background: '#0d1117',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+            }}>
                 {!workspace?.id && (
-                    <div className="alert alert-warning py-2 px-3 mb-2 small mb-0">
+                    <div style={{ fontSize: '11px', color: '#f85149', padding: '4px 6px', background: 'rgba(248,81,73,0.1)', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.2)' }}>
                         Select a workspace first to use AI chat.
                     </div>
                 )}
+
+                {/* Image previews */}
+                {attachedImages.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {attachedImages.map((img, i) => (
+                            <div key={i} style={{ position: 'relative', width: '56px', height: '56px' }}>
+                                <img
+                                    src={img.dataUrl}
+                                    alt={img.name}
+                                    style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #30363d' }}
+                                />
+                                <button
+                                    onClick={() => removeImage(i)}
+                                    style={{
+                                        position: 'absolute', top: '-4px', right: '-4px',
+                                        background: '#f85149', border: 'none', borderRadius: '50%',
+                                        width: '16px', height: '16px', cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        padding: 0, color: '#fff',
+                                    }}
+                                >
+                                    <X size={9} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Textarea */}
                 <textarea
-                    className="form-control"
-                    placeholder={workspace?.id ? "Ask AI to help with your code..." : "No workspace selected..."}
+                    placeholder={workspace?.id ? "Ask AI… (Enter to send, Shift+Enter = new line)" : "No workspace selected…"}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onPaste={handlePaste}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSend();
-                        }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
                     }}
                     rows={3}
                     disabled={loading || !workspace?.id}
+                    style={{
+                        width: '100%',
+                        background: '#0a0c0f',
+                        color: '#c9d1d9',
+                        border: '1px solid #30363d',
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '12px',
+                        fontFamily: 'inherit',
+                        resize: 'none',
+                        outline: 'none',
+                        lineHeight: '1.5',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(255,107,53,0.5)'; }}
+                    onBlur={e => { e.target.style.borderColor = '#30363d'; }}
                 />
-                <div className="d-flex gap-2">
-                    {loading ? (
-                        <button className="btn btn-outline-secondary" onClick={handleCancel} title="Cancel">
-                            <X size={18} />
-                        </button>
-                    ) : null}
+
+                {/* Action buttons row */}
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={handleFileInput}
+                    />
+
+                    {/* Attach image button */}
                     <button
-                        className="btn btn-primary"
-                        onClick={handleSend}
-                        disabled={loading || !input.trim() || !workspace?.id}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={loading || !workspace?.id}
+                        title="Attach image (or paste from clipboard)"
+                        style={{
+                            background: 'none', border: '1px solid #30363d', borderRadius: '4px',
+                            color: '#8b949e', cursor: 'pointer', padding: '4px 7px',
+                            display: 'flex', alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; e.currentTarget.style.color = '#8b949e'; }}
                     >
-                        {loading ? <Loader size={18} className="spinning" /> : <Send size={18} />}
+                        <Paperclip size={14} />
+                    </button>
+
+                    {/* Voice input button */}
+                    <button
+                        onClick={toggleVoice}
+                        disabled={loading || !workspace?.id}
+                        title={isListening ? 'Stop recording' : 'Start voice input'}
+                        style={{
+                            background: isListening ? 'rgba(248,81,73,0.15)' : 'none',
+                            border: `1px solid ${isListening ? 'rgba(248,81,73,0.5)' : '#30363d'}`,
+                            borderRadius: '4px',
+                            color: isListening ? '#f85149' : '#8b949e',
+                            cursor: 'pointer', padding: '4px 7px',
+                            display: 'flex', alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { if (!isListening) { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; } }}
+                        onMouseLeave={e => { if (!isListening) { e.currentTarget.style.borderColor = '#30363d'; e.currentTarget.style.color = '#8b949e'; } }}
+                    >
+                        {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+                    </button>
+
+                    {isListening && (
+                        <span style={{ fontSize: '10px', color: '#f85149', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f85149', animation: 'pulse 1s infinite' }} />
+                            Listening…
+                        </span>
+                    )}
+
+                    <div style={{ flex: 1 }} />
+
+                    {/* Cancel button */}
+                    {loading && (
+                        <button
+                            onClick={handleCancel}
+                            title="Cancel"
+                            style={{
+                                background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                                borderRadius: '4px', color: '#f85149', cursor: 'pointer',
+                                padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px',
+                            }}
+                        >
+                            <X size={13} /> Cancel
+                        </button>
+                    )}
+
+                    {/* Send button */}
+                    <button
+                        onClick={handleSend}
+                        disabled={loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id}
+                        title="Send (Enter)"
+                        style={{
+                            background: 'rgba(255,107,53,0.15)',
+                            border: '1px solid rgba(255,107,53,0.4)',
+                            borderRadius: '4px',
+                            color: '#ff6b35',
+                            cursor: 'pointer',
+                            padding: '4px 12px',
+                            fontSize: '11px',
+                            display: 'flex', alignItems: 'center', gap: '5px',
+                            opacity: (loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id) ? 0.4 : 1,
+                        }}
+                    >
+                        {loading ? <Loader size={13} className="spinning" /> : <Send size={13} />}
+                        Send
                     </button>
                 </div>
             </div>
@@ -872,6 +1092,13 @@ function renderGroupedMessages(messages, handleApply) {
                 </div>
                 <div className="message-content">
                     {msg.content}
+                    {msg.images?.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                            {msg.images.map((src, i) => (
+                                <img key={i} src={src} alt={`attachment ${i + 1}`} style={{ maxWidth: '120px', maxHeight: '80px', borderRadius: '4px', objectFit: 'cover' }} />
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {msg.tool_calls && msg.tool_calls.length > 0 && (

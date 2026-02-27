@@ -547,6 +547,18 @@ EOT;
                 [$filePath, $relativePath] = $this->resolveWorkspacePath($workspace, (string) $change['path']);
                 $content = (string) ($change['content'] ?? '');
 
+                // Guard: never overwrite an existing file with empty content —
+                // this prevents data loss when the AI puts code in the chat
+                // message instead of in the code_changes[].content field.
+                if ($content === '' && $this->fs->exists($filePath)) {
+                    $results[] = [
+                        'file'    => $relativePath,
+                        'success' => false,
+                        'error'   => 'Approval has no content — file not overwritten. Re-ask the AI to regenerate the file.',
+                    ];
+                    continue;
+                }
+
                 $this->assertExtensionAllowed($filePath);
 
                 // Ensure directory exists
