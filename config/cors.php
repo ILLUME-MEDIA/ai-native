@@ -24,7 +24,7 @@ return [
         explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,https://javed.io'))
     )),
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => ['#^https://.*\.illumemedia\.app$#'],
 
     'allowed_headers' => ['*'],
 
