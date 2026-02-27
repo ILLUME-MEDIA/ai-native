@@ -53,8 +53,8 @@ return [
         'del ',
         'format ',
         'mkfs',
-        'dd ',
-        '>',
+        'dd if=',   // dangerous dd usage (was 'dd ' which falsely matched 'git add')
+        'dd of=',   // dangerous dd usage
         'sudo ',
         'chmod 777',
         'chown ',
