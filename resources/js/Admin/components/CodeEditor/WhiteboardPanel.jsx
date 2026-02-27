@@ -54,7 +54,14 @@ export default function WhiteboardPanel({ workspace, onCreateFile }) {
     }
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+            {/* Excalidraw canvas — fills entire space */}
+            <Excalidraw
+                excalidrawAPI={handleExcalidrawAPI}
+                theme="dark"
+                UIOptions={{ canvasActions: { export: { saveFileToDisk: false }, loadScene: false } }}
+            />
+
             {/* AI Toolbar — floating top-right */}
             <div style={{
                 position: 'absolute', top: '12px', right: '12px', zIndex: 100,
@@ -96,15 +103,6 @@ export default function WhiteboardPanel({ workspace, onCreateFile }) {
                 >
                     <Trash2 size={12} />
                 </button>
-            </div>
-
-            {/* Excalidraw canvas */}
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-                <Excalidraw
-                    excalidrawAPI={handleExcalidrawAPI}
-                    theme="dark"
-                    UIOptions={{ canvasActions: { export: { saveFileToDisk: false }, loadScene: false } }}
-                />
             </div>
         </div>
     );
