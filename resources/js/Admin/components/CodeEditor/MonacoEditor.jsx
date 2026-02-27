@@ -115,6 +115,8 @@ export default function MonacoEditor({
                     if (model !== editor.getModel()) return { items: [] };
                     if (!ghostTextEnabledRef.current) return { items: [] };
                     if (!workspaceIdRef.current) return { items: [] };
+                    // Skip if no file is open — backend requires a non-empty path (422 otherwise)
+                    if (!filePathRef.current) return { items: [] };
 
                     // 800ms debounce — resolved false if timed out, true if cancelled
                     const cancelled = await new Promise(resolve => {
@@ -140,7 +142,10 @@ export default function MonacoEditor({
                         return { items: [] };
                     }
                 },
+                // freeInlineCompletions + disposeInlineCompletions both needed —
+                // Monaco calls different method names across versions
                 freeInlineCompletions: () => {},
+                disposeInlineCompletions: () => {},
             });
             editor.onDidDispose(() => ghostDisposable.dispose());
         }
