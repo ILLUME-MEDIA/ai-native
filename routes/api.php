@@ -304,6 +304,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'store']);
         Route::get('ai/conversations/{conversation}', [\App\Http\Controllers\Workspace\AIConversationController::class, 'show']);
         Route::post('ai/conversations/{conversation}/cancel', [\App\Http\Controllers\Workspace\AIConversationController::class, 'cancel']);
+        Route::delete('ai/conversations/{conversation}', [\App\Http\Controllers\Workspace\AIConversationController::class, 'destroy']);
 
         // Theme
         Route::get('theme', [\App\Http\Controllers\Workspace\ThemeController::class, 'getTheme']);

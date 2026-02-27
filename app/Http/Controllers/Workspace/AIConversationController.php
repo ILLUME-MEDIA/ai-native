@@ -113,5 +113,18 @@ class AIConversationController extends Controller
 
         return response()->json(['success' => true]);
     }
+
+    public function destroy(Request $request, Workspace $workspace, AIConversation $conversation)
+    {
+        $this->authorize('update', $workspace);
+
+        if ($conversation->workspace_id !== $workspace->id || $conversation->user_id !== auth()->id()) {
+            abort(404);
+        }
+
+        $conversation->delete();
+
+        return response()->json(['success' => true]);
+    }
 }
 

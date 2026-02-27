@@ -21,6 +21,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [uiTarget, setUiTarget] = useState(() => localStorage.getItem('codeEditor.uiTarget') || 'ask');
     const [pendingClarification, setPendingClarification] = useState(null);
     const [activePlanTasks, setActivePlanTasks] = useState(null);
+    const [hoveredTabId, setHoveredTabId] = useState(null);
     // Image attachments
     const [attachedImages, setAttachedImages] = useState([]); // [{dataUrl, name}]
     const fileInputRef = useRef(null);
@@ -653,91 +654,132 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             {/* ── Conversation Tabs ─────────────────────────────────── */}
             <div style={{
                 display: 'flex',
-                alignItems: 'center',
+                alignItems: 'stretch',
                 borderBottom: '1px solid #1c2128',
                 background: '#010409',
                 overflowX: 'auto',
                 scrollbarWidth: 'none',
                 flexShrink: 0,
+                minHeight: '32px',
             }}>
                 {/* Existing conversation tabs */}
                 {conversations.map(c => {
                     const isActive = conversationId === c.id;
-                    const label = c.title ? c.title.slice(0, 16) : `Chat #${c.id}`;
+                    const isHovered = hoveredTabId === c.id;
+                    const label = c.title ? c.title.slice(0, 14) : `Chat #${c.id}`;
                     return (
-                        <button
+                        <div
                             key={c.id}
-                            onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
-                            title={c.title || `Chat #${c.id}`}
+                            onMouseEnter={() => setHoveredTabId(c.id)}
+                            onMouseLeave={() => setHoveredTabId(null)}
                             style={{
-                                padding: '6px 12px',
-                                background: isActive ? '#0d1117' : 'transparent',
-                                border: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '0 8px 0 12px',
+                                background: isActive ? '#0d1117' : isHovered ? '#0a0c0f' : 'transparent',
                                 borderRight: '1px solid #1c2128',
                                 borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
-                                color: isActive ? '#c9d1d9' : '#6e7681',
                                 cursor: loading ? 'not-allowed' : 'pointer',
-                                fontSize: '11px',
-                                whiteSpace: 'nowrap',
-                                maxWidth: '130px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
                                 flexShrink: 0,
-                                transition: 'color 0.15s, border-bottom-color 0.15s',
+                                transition: 'background 0.1s',
                             }}
-                            onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#c9d1d9'; }}
-                            onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#6e7681'; }}
                         >
-                            {label}
-                        </button>
+                            {/* Tab label */}
+                            <span
+                                onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
+                                title={c.title || `Chat #${c.id}`}
+                                style={{
+                                    color: isActive ? '#c9d1d9' : isHovered ? '#c9d1d9' : '#6e7681',
+                                    fontSize: '11px',
+                                    whiteSpace: 'nowrap',
+                                    maxWidth: '110px',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    userSelect: 'none',
+                                }}
+                            >
+                                {label}
+                            </span>
+                            {/* × close button — always rendered, visible on hover */}
+                            <span
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (loading) return;
+                                    try {
+                                        await axios.delete(`/api/workspaces/${workspace.id}/ai/conversations/${c.id}`);
+                                    } catch (_) { /* ignore */ }
+                                    setConversations(prev => prev.filter(x => x.id !== c.id));
+                                    if (conversationId === c.id) {
+                                        setConversationId(null);
+                                        setMessages([]);
+                                    }
+                                }}
+                                title="Close conversation"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    width: '14px',
+                                    height: '14px',
+                                    borderRadius: '3px',
+                                    color: isHovered || isActive ? '#6e7681' : 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '10px',
+                                    flexShrink: 0,
+                                    transition: 'color 0.1s, background 0.1s',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; e.currentTarget.style.background = 'rgba(248,81,73,0.15)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.color = isHovered || isActive ? '#6e7681' : 'transparent'; e.currentTarget.style.background = 'transparent'; }}
+                            >
+                                <X size={10} />
+                            </span>
+                        </div>
                     );
                 })}
 
-                {/* "New chat" tab — shown when no conversation is selected */}
+                {/* "New chat" tab — active when no conversation selected */}
                 {!conversationId && (
-                    <button
-                        style={{
-                            padding: '6px 12px',
-                            background: '#0d1117',
-                            border: 'none',
-                            borderRight: '1px solid #1c2128',
-                            borderBottom: '2px solid #ff6b35',
-                            color: '#c9d1d9',
-                            cursor: 'pointer',
-                            fontSize: '11px',
-                            whiteSpace: 'nowrap',
-                            flexShrink: 0,
-                        }}
-                    >
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 12px',
+                        background: '#0d1117',
+                        borderRight: '1px solid #1c2128',
+                        borderBottom: '2px solid #ff6b35',
+                        color: '#c9d1d9',
+                        fontSize: '11px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
+                    }}>
                         New chat
-                    </button>
+                    </div>
                 )}
 
                 {/* "+" new chat button */}
                 <button
-                    onClick={() => { if (!loading) { setConversationId(null); setMessages([]); } }}
+                    onClick={() => { setConversationId(null); setMessages([]); }}
                     disabled={loading}
                     title="New chat"
                     style={{
-                        padding: '6px 10px',
+                        padding: '0 10px',
                         background: 'transparent',
                         border: 'none',
                         borderBottom: '2px solid transparent',
                         color: '#484f58',
                         cursor: loading ? 'not-allowed' : 'pointer',
-                        fontSize: '11px',
                         flexShrink: 0,
                         display: 'flex',
                         alignItems: 'center',
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; }}
                 >
                     <Plus size={14} />
                 </button>
 
                 {/* Idle/timer pushed to right */}
-                <span style={{ marginLeft: 'auto', paddingRight: '8px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                <span style={{ marginLeft: 'auto', paddingRight: '10px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
                     {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
                 </span>
             </div>
