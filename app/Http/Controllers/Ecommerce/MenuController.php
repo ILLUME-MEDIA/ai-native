@@ -58,14 +58,14 @@ class MenuController extends Controller
 
     public function allItems(Request $request): JsonResponse
     {
-        $q = MenuItem::with(['business', 'menuCategory', 'menuCategoryType'])->orderBy('name');
+        $q = MenuItem::with(['menuCategory', 'menuCategoryType'])->orderBy('name');
         if ($request->filled('business_id'))   $q->where('business_id', $request->business_id);
         if ($request->filled('category_id'))   $q->where('menu_category_id', $request->category_id);
         if ($request->filled('search'))        $q->where(function ($qb) use ($request) {
             $qb->where('name', 'like', '%' . $request->search . '%')
                ->orWhere('description', 'like', '%' . $request->search . '%');
         });
-        if ($request->has('is_available'))      $q->where('is_available', $request->boolean('is_available'));
+        if ($request->has('is_available'))     $q->where('is_available', $request->boolean('is_available'));
         return response()->json($q->paginate((int) $request->input('per_page', 30)));
     }
 
@@ -84,10 +84,11 @@ class MenuController extends Controller
         $items = $q->get();
 
         // Seller info: prefer linked Muzzhub (has amenities), fallback to Business
-        $muzzhub  = $business->muzzhub;
-        $seller   = $muzzhub
-            ? array_merge($muzzhub->toArray(), ['source' => 'muzzhub'])
-            : array_merge($business->toArray(),  ['source' => 'business', 'amenities' => null]);
+        // makeHidden ensures no nested relations (e.g. 'business') bleed into the seller object
+        $muzzhub = $business->muzzhub;
+        $seller  = $muzzhub
+            ? array_merge($muzzhub->makeHidden(['business', 'category'])->toArray(), ['source' => 'muzzhub'])
+            : array_merge($business->makeHidden(['muzzhub'])->toArray(), ['source' => 'business', 'amenities' => null]);
 
         $categories = $business->menuCategories()
             ->orderBy('sort_order')
@@ -204,8 +205,13 @@ class MenuController extends Controller
             ->withCount(['menuItems' => fn($q) => $q->where('is_available', true)])
             ->get();
 
+        // Strip the loaded 'business' relation from seller — it was only needed
+        // to resolve the business_id; we don't want it nested inside seller.
+        $sellerData = $muzzhub->makeHidden(['business', 'category'])->toArray();
+        $sellerData['source'] = 'muzzhub';
+
         return response()->json([
-            'seller'     => array_merge($muzzhub->toArray(), ['source' => 'muzzhub']),
+            'seller'     => $sellerData,
             'categories' => $categories,
             'items'      => $items,
         ]);
