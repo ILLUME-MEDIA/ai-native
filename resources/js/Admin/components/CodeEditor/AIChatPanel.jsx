@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus, History } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
@@ -22,9 +22,11 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [pendingClarification, setPendingClarification] = useState(null);
     const [activePlanTasks, setActivePlanTasks] = useState(null);
     const [hoveredTabId, setHoveredTabId] = useState(null);
+    const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
     // Image attachments
     const [attachedImages, setAttachedImages] = useState([]); // [{dataUrl, name}]
     const fileInputRef = useRef(null);
+    const historyDropdownRef = useRef(null);
     // Voice input
     const [isListening, setIsListening] = useState(false);
     const recognitionRef = useRef(null);
@@ -125,6 +127,18 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         }, 1000);
         return () => clearInterval(t);
     }, [loading, streamSeconds]);
+
+    // Close history dropdown when clicking outside
+    useEffect(() => {
+        if (!showHistoryDropdown) return;
+        function onClickOutside(e) {
+            if (historyDropdownRef.current && !historyDropdownRef.current.contains(e.target)) {
+                setShowHistoryDropdown(false);
+            }
+        }
+        document.addEventListener('mousedown', onClickOutside);
+        return () => document.removeEventListener('mousedown', onClickOutside);
+    }, [showHistoryDropdown]);
 
     async function loadEndpoints() {
         try {
@@ -657,131 +671,211 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 alignItems: 'stretch',
                 borderBottom: '1px solid #1c2128',
                 background: '#010409',
-                overflowX: 'auto',
-                scrollbarWidth: 'none',
                 flexShrink: 0,
                 minHeight: '32px',
             }}>
-                {/* Existing conversation tabs */}
-                {conversations.map(c => {
-                    const isActive = conversationId === c.id;
-                    const isHovered = hoveredTabId === c.id;
-                    const label = c.title ? c.title.slice(0, 14) : `Chat #${c.id}`;
-                    return (
-                        <div
-                            key={c.id}
-                            onMouseEnter={() => setHoveredTabId(c.id)}
-                            onMouseLeave={() => setHoveredTabId(null)}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '0 8px 0 12px',
-                                background: isActive ? '#0d1117' : isHovered ? '#0a0c0f' : 'transparent',
-                                borderRight: '1px solid #1c2128',
-                                borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
-                                cursor: loading ? 'not-allowed' : 'pointer',
-                                flexShrink: 0,
-                                transition: 'background 0.1s',
-                            }}
-                        >
-                            {/* Tab label */}
-                            <span
-                                onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
-                                title={c.title || `Chat #${c.id}`}
-                                style={{
-                                    color: isActive ? '#c9d1d9' : isHovered ? '#c9d1d9' : '#6e7681',
-                                    fontSize: '11px',
-                                    whiteSpace: 'nowrap',
-                                    maxWidth: '110px',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    userSelect: 'none',
-                                }}
-                            >
-                                {label}
-                            </span>
-                            {/* × close button — always rendered, visible on hover */}
-                            <span
-                                onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (loading) return;
-                                    try {
-                                        await axios.delete(`/api/workspaces/${workspace.id}/ai/conversations/${c.id}`);
-                                    } catch (_) { /* ignore */ }
-                                    setConversations(prev => prev.filter(x => x.id !== c.id));
-                                    if (conversationId === c.id) {
-                                        setConversationId(null);
-                                        setMessages([]);
-                                    }
-                                }}
-                                title="Close conversation"
+                {/* Scrollable tabs area */}
+                <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', overflowX: 'auto', scrollbarWidth: 'none' }}>
+                    {/* Existing conversation tabs */}
+                    {conversations.map(c => {
+                        const isActive = conversationId === c.id;
+                        const isHovered = hoveredTabId === c.id;
+                        const label = c.title ? c.title.slice(0, 14) : `Chat #${c.id}`;
+                        return (
+                            <div
+                                key={c.id}
+                                onMouseEnter={() => setHoveredTabId(c.id)}
+                                onMouseLeave={() => setHoveredTabId(null)}
                                 style={{
                                     display: 'flex',
                                     alignItems: 'center',
-                                    justifyContent: 'center',
-                                    width: '14px',
-                                    height: '14px',
-                                    borderRadius: '3px',
-                                    color: isHovered || isActive ? '#6e7681' : 'transparent',
-                                    cursor: 'pointer',
-                                    fontSize: '10px',
+                                    gap: '4px',
+                                    padding: '0 8px 0 12px',
+                                    background: isActive ? '#0d1117' : isHovered ? '#0a0c0f' : 'transparent',
+                                    borderRight: '1px solid #1c2128',
+                                    borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
                                     flexShrink: 0,
-                                    transition: 'color 0.1s, background 0.1s',
+                                    transition: 'background 0.1s',
                                 }}
-                                onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; e.currentTarget.style.background = 'rgba(248,81,73,0.15)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.color = isHovered || isActive ? '#6e7681' : 'transparent'; e.currentTarget.style.background = 'transparent'; }}
                             >
-                                <X size={10} />
-                            </span>
+                                {/* Tab label */}
+                                <span
+                                    onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
+                                    title={c.title || `Chat #${c.id}`}
+                                    style={{
+                                        color: isActive ? '#c9d1d9' : isHovered ? '#c9d1d9' : '#6e7681',
+                                        fontSize: '11px',
+                                        whiteSpace: 'nowrap',
+                                        maxWidth: '110px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        userSelect: 'none',
+                                    }}
+                                >
+                                    {label}
+                                </span>
+                                {/* × close button — visible on hover */}
+                                <span
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (loading) return;
+                                        try {
+                                            await axios.delete(`/api/workspaces/${workspace.id}/ai/conversations/${c.id}`);
+                                        } catch (_) { /* ignore */ }
+                                        setConversations(prev => prev.filter(x => x.id !== c.id));
+                                        if (conversationId === c.id) {
+                                            setConversationId(null);
+                                            setMessages([]);
+                                        }
+                                    }}
+                                    title="Close conversation"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '14px',
+                                        height: '14px',
+                                        borderRadius: '3px',
+                                        color: isHovered || isActive ? '#6e7681' : 'transparent',
+                                        cursor: 'pointer',
+                                        fontSize: '10px',
+                                        flexShrink: 0,
+                                        transition: 'color 0.1s, background 0.1s',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; e.currentTarget.style.background = 'rgba(248,81,73,0.15)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.color = isHovered || isActive ? '#6e7681' : 'transparent'; e.currentTarget.style.background = 'transparent'; }}
+                                >
+                                    <X size={10} />
+                                </span>
+                            </div>
+                        );
+                    })}
+
+                    {/* "New chat" tab — active when no conversation selected */}
+                    {!conversationId && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 12px',
+                            background: '#0d1117',
+                            borderRight: '1px solid #1c2128',
+                            borderBottom: '2px solid #ff6b35',
+                            color: '#c9d1d9',
+                            fontSize: '11px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                        }}>
+                            New chat
                         </div>
-                    );
-                })}
+                    )}
 
-                {/* "New chat" tab — active when no conversation selected */}
-                {!conversationId && (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '0 12px',
-                        background: '#0d1117',
-                        borderRight: '1px solid #1c2128',
-                        borderBottom: '2px solid #ff6b35',
-                        color: '#c9d1d9',
-                        fontSize: '11px',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                    }}>
-                        New chat
+                    {/* "+" new chat button */}
+                    <button
+                        onClick={() => { setConversationId(null); setMessages([]); }}
+                        disabled={loading}
+                        title="New chat"
+                        style={{
+                            padding: '0 10px',
+                            background: 'transparent',
+                            border: 'none',
+                            borderBottom: '2px solid transparent',
+                            color: '#484f58',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; }}
+                    >
+                        <Plus size={14} />
+                    </button>
+                </div>
+
+                {/* Right-fixed area: History + Idle */}
+                <div style={{ display: 'flex', alignItems: 'center', borderLeft: '1px solid #1c2128', flexShrink: 0 }}>
+                    {/* History dropdown */}
+                    <div ref={historyDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <button
+                            onClick={() => setShowHistoryDropdown(v => !v)}
+                            title="Chat history"
+                            style={{
+                                padding: '0 9px',
+                                height: '100%',
+                                background: showHistoryDropdown ? 'rgba(255,107,53,0.1)' : 'transparent',
+                                border: 'none',
+                                color: showHistoryDropdown ? '#ff6b35' : '#484f58',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                            }}
+                            onMouseEnter={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; } }}
+                            onMouseLeave={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; } }}
+                        >
+                            <History size={13} />
+                        </button>
+
+                        {showHistoryDropdown && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '100%',
+                                right: 0,
+                                zIndex: 999,
+                                background: '#161b22',
+                                border: '1px solid #30363d',
+                                borderRadius: '6px',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                                minWidth: '220px',
+                                maxHeight: '260px',
+                                overflowY: 'auto',
+                                scrollbarWidth: 'thin',
+                            }}>
+                                <div style={{ padding: '6px 12px', fontSize: '10px', color: '#484f58', borderBottom: '1px solid #1c2128', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                                    Conversation History
+                                </div>
+                                {conversations.length === 0 && (
+                                    <div style={{ padding: '10px 12px', color: '#6e7681', fontSize: '12px' }}>No conversations yet</div>
+                                )}
+                                {conversations.map(c => (
+                                    <div
+                                        key={c.id}
+                                        onClick={async () => {
+                                            setConversationId(c.id);
+                                            await loadConversation(c.id);
+                                            setShowHistoryDropdown(false);
+                                        }}
+                                        style={{
+                                            padding: '7px 12px',
+                                            cursor: 'pointer',
+                                            color: conversationId === c.id ? '#ff6b35' : '#c9d1d9',
+                                            fontSize: '12px',
+                                            background: conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent',
+                                            borderBottom: '1px solid #1c2128',
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.1)'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent'; }}
+                                    >
+                                        <span style={{ opacity: 0.5, fontSize: '10px', flexShrink: 0 }}>#{c.id}</span>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title || `Chat #${c.id}`}</span>
+                                        {conversationId === c.id && <Check size={11} style={{ marginLeft: 'auto', flexShrink: 0 }} />}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
-                )}
 
-                {/* "+" new chat button */}
-                <button
-                    onClick={() => { setConversationId(null); setMessages([]); }}
-                    disabled={loading}
-                    title="New chat"
-                    style={{
-                        padding: '0 10px',
-                        background: 'transparent',
-                        border: 'none',
-                        borderBottom: '2px solid transparent',
-                        color: '#484f58',
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        flexShrink: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; }}
-                >
-                    <Plus size={14} />
-                </button>
-
-                {/* Idle/timer pushed to right */}
-                <span style={{ marginLeft: 'auto', paddingRight: '10px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                    {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
-                </span>
+                    {/* Idle/timer */}
+                    <span style={{ padding: '0 10px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+                        {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
+                    </span>
+                </div>
             </div>
 
             <div className="chat-controls chat-controls-compact">

@@ -111,7 +111,7 @@ async function getMonacoSymbols(editor) {
         const providers = registry.ordered ? registry.ordered(model) : [];
         if (!providers || providers.length === 0) return null;
 
-        const token = new monaco.CancellationTokenSource?.()?.token;
+        const token = monaco.CancellationTokenSource ? new monaco.CancellationTokenSource().token : null;
         if (!token) return null;
 
         const result = await providers[0].provideDocumentSymbols(model, token);
