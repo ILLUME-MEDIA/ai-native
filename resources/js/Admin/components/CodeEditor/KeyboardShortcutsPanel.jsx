@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { X, Keyboard } from 'lucide-react';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 const SHORTCUTS = [
     {
@@ -64,6 +65,7 @@ const SHORTCUTS = [
 ];
 
 export default function KeyboardShortcutsPanel({ visible, onClose }) {
+    const { tokens: t } = useCodeEditorTheme();
     useEffect(() => {
         if (!visible) return;
         function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -89,8 +91,8 @@ export default function KeyboardShortcutsPanel({ visible, onClose }) {
         >
             <div
                 style={{
-                    background: '#161b22',
-                    border: '1px solid #30363d',
+                    background: t.bg3,
+                    border: `1px solid ${t.scrollbar}`,
                     borderRadius: '10px',
                     width: '560px',
                     maxHeight: '78vh',
@@ -107,16 +109,16 @@ export default function KeyboardShortcutsPanel({ visible, onClose }) {
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     padding: '14px 18px',
-                    borderBottom: '1px solid #1c2128',
+                    borderBottom: `1px solid ${t.border}`,
                     flexShrink: 0,
                 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#e6edf3', fontSize: '13px', fontWeight: '600' }}>
-                        <Keyboard size={15} style={{ color: '#ff6b35' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: t.text1, fontSize: '13px', fontWeight: '600' }}>
+                        <Keyboard size={15} style={{ color: t.accent }} />
                         Keyboard Shortcuts
                     </div>
                     <button
                         onClick={onClose}
-                        style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                        style={{ background: 'none', border: 'none', color: t.text3, cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
                         title="Close (Esc)"
                     >
                         <X size={16} />
@@ -131,7 +133,7 @@ export default function KeyboardShortcutsPanel({ visible, onClose }) {
                                 fontSize: '9px',
                                 fontWeight: '600',
                                 letterSpacing: '0.1em',
-                                color: '#ff6b35',
+                                color: t.accent,
                                 textTransform: 'uppercase',
                                 marginBottom: '6px',
                             }}>
@@ -153,14 +155,14 @@ export default function KeyboardShortcutsPanel({ visible, onClose }) {
                                         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.06)'; }}
                                         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                                     >
-                                        <span style={{ fontSize: '11px', color: '#c9d1d9', flex: 1 }}>{action}</span>
+                                        <span style={{ fontSize: '11px', color: t.text2, flex: 1 }}>{action}</span>
                                         <kbd style={{
-                                            background: '#0d0f14',
-                                            border: '1px solid #30363d',
+                                            background: t.bg1,
+                                            border: `1px solid ${t.scrollbar}`,
                                             borderRadius: '4px',
                                             padding: '2px 7px',
                                             fontSize: '10px',
-                                            color: '#ff6b35',
+                                            color: t.accent,
                                             fontFamily: 'inherit',
                                             whiteSpace: 'nowrap',
                                             flexShrink: 0,
@@ -175,9 +177,9 @@ export default function KeyboardShortcutsPanel({ visible, onClose }) {
                 </div>
 
                 {/* Footer */}
-                <div style={{ padding: '8px 18px', borderTop: '1px solid #1c2128', fontSize: '10px', color: '#484f58', textAlign: 'center', flexShrink: 0 }}>
+                <div style={{ padding: '8px 18px', borderTop: `1px solid ${t.border}`, fontSize: '10px', color: t.text4, textAlign: 'center', flexShrink: 0 }}>
                     Press{' '}
-                    <kbd style={{ background: '#0d0f14', border: '1px solid #30363d', borderRadius: '3px', padding: '1px 5px', color: '#8b949e', fontFamily: 'inherit', fontSize: '10px' }}>
+                    <kbd style={{ background: t.bg1, border: `1px solid ${t.scrollbar}`, borderRadius: '3px', padding: '1px 5px', color: t.text3, fontFamily: 'inherit', fontSize: '10px' }}>
                         Esc
                     </kbd>
                     {' '}or click outside to close

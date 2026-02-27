@@ -169,7 +169,7 @@ function TreeNode({
 // ──────────────────────────────────────────────────
 // Main FileExplorer component
 // ──────────────────────────────────────────────────
-export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [] }) {
+export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [], isDark = true }) {
     const [tree, setTree] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -761,14 +761,14 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
 
             {/* B-11: Recently Opened section */}
             {recentFiles.length > 0 && (
-                <div style={{ borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
+                <div style={{ borderBottom: `1px solid ${isDark ? '#1c2128' : '#d0d7de'}`, flexShrink: 0 }}>
                     <div style={{
                         padding: '5px 10px 4px',
                         fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
-                        color: '#8b949e', textTransform: 'uppercase',
+                        color: isDark ? '#8b949e' : '#57606a', textTransform: 'uppercase',
                         display: 'flex', alignItems: 'center', gap: '5px',
                     }}>
-                        <Clock size={10} style={{ color: '#8b949e' }} /> RECENT
+                        <Clock size={10} style={{ color: isDark ? '#8b949e' : '#57606a' }} /> RECENT
                     </div>
                     {recentFiles.map(rf => (
                         <div
@@ -786,11 +786,11 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
 
             {/* B-10: Bookmarks section */}
             {bookmarks.length > 0 && (
-                <div style={{ borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
+                <div style={{ borderBottom: `1px solid ${isDark ? '#1c2128' : '#d0d7de'}`, flexShrink: 0 }}>
                     <div style={{
                         padding: '5px 10px 4px',
                         fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
-                        color: '#8b949e', textTransform: 'uppercase',
+                        color: isDark ? '#8b949e' : '#57606a', textTransform: 'uppercase',
                         display: 'flex', alignItems: 'center', gap: '5px',
                     }}>
                         <Star size={10} style={{ color: '#d29922' }} /> BOOKMARKS

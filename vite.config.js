@@ -7,8 +7,8 @@ export default defineConfig({
     server: {
         // Local development server (Vite)
         // Access via: http://127.0.0.1:5173 or http://localhost:5173
-        // host: '127.0.0.1', // Listen on all interfaces (IPv4 + IPv6)
-        // port: 5173,
+        host: '127.0.0.1',
+        port: 5173,
         strictPort: true,
         // cors: true,
         // hmr: {

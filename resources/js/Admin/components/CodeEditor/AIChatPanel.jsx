@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus, History } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
+    const { isDark, tokens: t } = useCodeEditorTheme();
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -173,6 +175,19 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             }
         } catch (e) {
             console.error('Failed to load conversations', e);
+        }
+    }
+
+    // Only refresh the list without auto-selecting (safe to call anytime)
+    async function refreshConversationList() {
+        if (!workspace?.id) return;
+        try {
+            const resp = await axios.get(`/api/workspaces/${workspace.id}/ai/conversations`, {
+                params: { limit: 20 },
+            });
+            setConversations(resp.data?.conversations || []);
+        } catch (e) {
+            console.error('Failed to refresh conversation list', e);
         }
     }
 
@@ -669,8 +684,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             <div style={{
                 display: 'flex',
                 alignItems: 'stretch',
-                borderBottom: '1px solid #1c2128',
-                background: '#010409',
+                borderBottom: `1px solid ${t.border}`,
+                background: t.bgTab,
                 flexShrink: 0,
                 minHeight: '32px',
             }}>
@@ -691,8 +706,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                     alignItems: 'center',
                                     gap: '4px',
                                     padding: '0 8px 0 12px',
-                                    background: isActive ? '#0d1117' : isHovered ? '#0a0c0f' : 'transparent',
-                                    borderRight: '1px solid #1c2128',
+                                    background: isActive ? t.bg2 : isHovered ? (isDark ? '#0a0c0f' : t.bg4) : 'transparent',
+                                    borderRight: `1px solid ${t.border}`,
                                     borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
                                     cursor: loading ? 'not-allowed' : 'pointer',
                                     flexShrink: 0,
@@ -704,7 +719,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                     onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
                                     title={c.title || `Chat #${c.id}`}
                                     style={{
-                                        color: isActive ? '#c9d1d9' : isHovered ? '#c9d1d9' : '#6e7681',
+                                        color: isActive ? t.text2 : isHovered ? t.text2 : t.text3,
                                         fontSize: '11px',
                                         whiteSpace: 'nowrap',
                                         maxWidth: '110px',
@@ -758,10 +773,10 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                             display: 'flex',
                             alignItems: 'center',
                             padding: '0 12px',
-                            background: '#0d1117',
-                            borderRight: '1px solid #1c2128',
+                            background: t.bg2,
+                            borderRight: `1px solid ${t.border}`,
                             borderBottom: '2px solid #ff6b35',
-                            color: '#c9d1d9',
+                            color: t.text2,
                             fontSize: '11px',
                             whiteSpace: 'nowrap',
                             flexShrink: 0,
@@ -780,38 +795,38 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                             background: 'transparent',
                             border: 'none',
                             borderBottom: '2px solid transparent',
-                            color: '#484f58',
+                            color: t.text4,
                             cursor: loading ? 'not-allowed' : 'pointer',
                             flexShrink: 0,
                             display: 'flex',
                             alignItems: 'center',
                         }}
                         onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; }}
                     >
                         <Plus size={14} />
                     </button>
                 </div>
 
                 {/* Right-fixed area: History + Idle */}
-                <div style={{ display: 'flex', alignItems: 'center', borderLeft: '1px solid #1c2128', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', borderLeft: `1px solid ${t.border}`, flexShrink: 0 }}>
                     {/* History dropdown */}
                     <div ref={historyDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                         <button
-                            onClick={() => setShowHistoryDropdown(v => !v)}
+                            onClick={() => { const next = !showHistoryDropdown; setShowHistoryDropdown(next); if (next) refreshConversationList(); }}
                             title="Chat history"
                             style={{
                                 padding: '0 9px',
                                 height: '100%',
                                 background: showHistoryDropdown ? 'rgba(255,107,53,0.1)' : 'transparent',
                                 border: 'none',
-                                color: showHistoryDropdown ? '#ff6b35' : '#484f58',
+                                color: showHistoryDropdown ? '#ff6b35' : t.text4,
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                             }}
                             onMouseEnter={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; } }}
-                            onMouseLeave={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#484f58'; e.currentTarget.style.background = 'transparent'; } }}
+                            onMouseLeave={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; } }}
                         >
                             <History size={13} />
                         </button>
@@ -822,8 +837,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                 top: '100%',
                                 right: 0,
                                 zIndex: 999,
-                                background: '#161b22',
-                                border: '1px solid #30363d',
+                                background: t.bg3,
+                                border: `1px solid ${t.scrollbar}`,
                                 borderRadius: '6px',
                                 boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
                                 minWidth: '220px',
@@ -831,11 +846,11 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                 overflowY: 'auto',
                                 scrollbarWidth: 'thin',
                             }}>
-                                <div style={{ padding: '6px 12px', fontSize: '10px', color: '#484f58', borderBottom: '1px solid #1c2128', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                                <div style={{ padding: '6px 12px', fontSize: '10px', color: t.text4, borderBottom: `1px solid ${t.border}`, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                                     Conversation History
                                 </div>
                                 {conversations.length === 0 && (
-                                    <div style={{ padding: '10px 12px', color: '#6e7681', fontSize: '12px' }}>No conversations yet</div>
+                                    <div style={{ padding: '10px 12px', color: t.text3, fontSize: '12px' }}>No conversations yet</div>
                                 )}
                                 {conversations.map(c => (
                                     <div
@@ -848,10 +863,10 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                         style={{
                                             padding: '7px 12px',
                                             cursor: 'pointer',
-                                            color: conversationId === c.id ? '#ff6b35' : '#c9d1d9',
+                                            color: conversationId === c.id ? '#ff6b35' : t.text2,
                                             fontSize: '12px',
                                             background: conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent',
-                                            borderBottom: '1px solid #1c2128',
+                                            borderBottom: `1px solid ${t.border}`,
                                             whiteSpace: 'nowrap',
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
@@ -872,7 +887,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     </div>
 
                     {/* Idle/timer */}
-                    <span style={{ padding: '0 10px', fontSize: '10px', color: '#484f58', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+                    <span style={{ padding: '0 10px', fontSize: '10px', color: t.text4, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
                         {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
                     </span>
                 </div>
@@ -997,25 +1012,23 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 {renderGroupedMessages(messages, handleApply)}
 
                 {loading && (
-                    <div className="chat-message assistant streaming">
-                        <div className="message-header">
-                            <strong>AI</strong>
-                            <span className="badge bg-info">
-                                <Loader size={12} className="me-1 spinning" />
-                                Streaming
-                            </span>
-                        </div>
-                        {streamingStatus && (
-                            <div className="streaming-status">
-                                <small className="text-muted">
-                                    <Loader size={12} className="me-1 spinning" />
-                                    {streamingStatus}
-                                </small>
+                    <div className="chat-msg-row chat-msg-row--ai">
+                        <div className="chat-avatar chat-avatar--ai pulse">AI</div>
+                        <div className="chat-bubble-wrap">
+                            <div className="chat-bubble chat-bubble--ai streaming">
+                                {streamingStatus && (
+                                    <div className="streaming-status">
+                                        <small className="text-muted">
+                                            <Loader size={12} className="me-1 spinning" />
+                                            {streamingStatus}
+                                        </small>
+                                    </div>
+                                )}
+                                <div className="message-content streaming-content">
+                                    {streamingMessage || 'Waiting for response...'}
+                                    <span className="streaming-cursor">▋</span>
+                                </div>
                             </div>
-                        )}
-                        <div className="message-content streaming-content">
-                            {streamingMessage || 'Waiting for response...'}
-                            <span className="streaming-cursor">▋</span>
                         </div>
                     </div>
                 )}
@@ -1060,8 +1073,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
 
             {/* ── Chat Input ─────────────────────────────────────────────── */}
             <div style={{
-                borderTop: '1px solid #1c2128',
-                background: '#0d1117',
+                borderTop: `1px solid ${t.border}`,
+                background: t.bg2,
                 padding: '8px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -1081,7 +1094,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                                 <img
                                     src={img.dataUrl}
                                     alt={img.name}
-                                    style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #30363d' }}
+                                    style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '4px', border: `1px solid ${t.scrollbar}` }}
                                 />
                                 <button
                                     onClick={() => removeImage(i)}
@@ -1113,9 +1126,9 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     disabled={loading || !workspace?.id}
                     style={{
                         width: '100%',
-                        background: '#0a0c0f',
-                        color: '#c9d1d9',
-                        border: '1px solid #30363d',
+                        background: isDark ? '#0a0c0f' : t.bg3,
+                        color: t.text2,
+                        border: `1px solid ${t.scrollbar}`,
                         borderRadius: '6px',
                         padding: '8px 10px',
                         fontSize: '12px',
@@ -1125,7 +1138,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         lineHeight: '1.5',
                     }}
                     onFocus={e => { e.target.style.borderColor = 'rgba(255,107,53,0.5)'; }}
-                    onBlur={e => { e.target.style.borderColor = '#30363d'; }}
+                    onBlur={e => { e.target.style.borderColor = t.scrollbar; }}
                 />
 
                 {/* Action buttons row */}
@@ -1146,12 +1159,12 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         disabled={loading || !workspace?.id}
                         title="Attach image (or paste from clipboard)"
                         style={{
-                            background: 'none', border: '1px solid #30363d', borderRadius: '4px',
-                            color: '#8b949e', cursor: 'pointer', padding: '4px 7px',
+                            background: 'none', border: `1px solid ${t.scrollbar}`, borderRadius: '4px',
+                            color: t.text3, cursor: 'pointer', padding: '4px 7px',
                             display: 'flex', alignItems: 'center',
                         }}
                         onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#30363d'; e.currentTarget.style.color = '#8b949e'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; }}
                     >
                         <Paperclip size={14} />
                     </button>
@@ -1163,14 +1176,14 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         title={isListening ? 'Stop recording' : 'Start voice input'}
                         style={{
                             background: isListening ? 'rgba(248,81,73,0.15)' : 'none',
-                            border: `1px solid ${isListening ? 'rgba(248,81,73,0.5)' : '#30363d'}`,
+                            border: `1px solid ${isListening ? 'rgba(248,81,73,0.5)' : t.scrollbar}`,
                             borderRadius: '4px',
-                            color: isListening ? '#f85149' : '#8b949e',
+                            color: isListening ? '#f85149' : t.text3,
                             cursor: 'pointer', padding: '4px 7px',
                             display: 'flex', alignItems: 'center',
                         }}
                         onMouseEnter={e => { if (!isListening) { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; } }}
-                        onMouseLeave={e => { if (!isListening) { e.currentTarget.style.borderColor = '#30363d'; e.currentTarget.style.color = '#8b949e'; } }}
+                        onMouseLeave={e => { if (!isListening) { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; } }}
                     >
                         {isListening ? <MicOff size={14} /> : <Mic size={14} />}
                     </button>
@@ -1275,66 +1288,69 @@ function renderGroupedMessages(messages, handleApply) {
             continue;
         }
 
+        const isUser = msg.role === 'user';
         out.push(
-            <div key={idx} className={`chat-message ${msg.role} ${msg.isError ? 'error' : ''}`}>
-                <div className="message-header">
-                    <strong>{msg.role === 'user' ? 'You' : 'AI'}</strong>
-                    {msg.model_used && (
-                        <span className="badge bg-primary">{msg.model_used}</span>
-                    )}
-                    <span className="message-time">
-                        {msg.timestamp.toLocaleTimeString()}
-                    </span>
-                </div>
-                <div className="message-content">
-                    {msg.content}
-                    {msg.images?.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-                            {msg.images.map((src, i) => (
-                                <img key={i} src={src} alt={`attachment ${i + 1}`} style={{ maxWidth: '120px', maxHeight: '80px', borderRadius: '4px', objectFit: 'cover' }} />
-                            ))}
+            <div key={idx} className={`chat-msg-row ${isUser ? 'chat-msg-row--user' : 'chat-msg-row--ai'} ${msg.isError ? 'error' : ''}`}>
+                {/* AI avatar (left) */}
+                {!isUser && (
+                    <div className="chat-avatar chat-avatar--ai">AI</div>
+                )}
+
+                <div className="chat-bubble-wrap">
+                    <div className={`chat-bubble ${isUser ? 'chat-bubble--user' : 'chat-bubble--ai'}`}>
+                        <div className="message-content">
+                            {msg.content}
+                            {msg.images?.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                                    {msg.images.map((src, i) => (
+                                        <img key={i} src={src} alt={`attachment ${i + 1}`} style={{ maxWidth: '120px', maxHeight: '80px', borderRadius: '4px', objectFit: 'cover' }} />
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    )}
+
+                        {msg.tool_calls && msg.tool_calls.length > 0 && (
+                            <div className="tool-calls mt-2">
+                                <div className="small text-muted mb-1">Tools used</div>
+                                {msg.tool_calls.map((tool, toolIdx) => (
+                                    <div key={toolIdx} className="tool-call-item mb-1">
+                                        <span className={`badge ${tool.result?.success ? 'bg-success' : 'bg-danger'}`}>{tool.name}</span>
+                                        {tool.result?.path && <span className="ms-2 small text-muted">{tool.result.path}</span>}
+                                        {tool.result?.message && <span className="ms-2 small text-muted">— {tool.result.message}</span>}
+                                        {tool.result?.requires_approval && <span className="ms-2 small text-warning">Pending Approval</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {msg.requires_approval && (
+                            <div className="alert alert-warning mt-2 mb-0 small">
+                                ⚠️ This action requires approval. Check the Approvals panel.
+                            </div>
+                        )}
+
+                        {msg.code_changes && msg.code_changes.length > 0 && !msg.requires_approval && (
+                            <div className="message-actions mt-2">
+                                <button className="btn btn-sm btn-primary" onClick={() => handleApply(msg.code_changes)}>
+                                    <Check size={14} className="me-1" />
+                                    Apply Changes ({msg.code_changes.length})
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Meta: time + model */}
+                    <div className={`chat-bubble-meta ${isUser ? 'chat-bubble-meta--right' : ''}`}>
+                        {msg.model_used && !isUser && (
+                            <span className="badge bg-primary me-2" style={{ fontSize: '9px' }}>{msg.model_used}</span>
+                        )}
+                        <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
                 </div>
 
-                {msg.tool_calls && msg.tool_calls.length > 0 && (
-                    <div className="tool-calls mt-2">
-                        <div className="small text-muted mb-1">Tools</div>
-                        {msg.tool_calls.map((tool, toolIdx) => (
-                            <div key={toolIdx} className="tool-call-item mb-1">
-                                <span className={`badge ${tool.result?.success ? 'bg-success' : 'bg-danger'}`}>
-                                    {tool.name}
-                                </span>
-                                {tool.result?.path && (
-                                    <span className="ms-2 small text-muted">{tool.result.path}</span>
-                                )}
-                                {tool.result?.message && (
-                                    <span className="ms-2 small text-muted">— {tool.result.message}</span>
-                                )}
-                                {tool.result?.requires_approval && (
-                                    <span className="ms-2 small text-warning">Pending Approval</span>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {msg.requires_approval && (
-                    <div className="alert alert-warning mt-2 mb-0 small">
-                        ⚠️ This action requires approval. Check the Approvals panel.
-                    </div>
-                )}
-
-                {msg.code_changes && msg.code_changes.length > 0 && !msg.requires_approval && (
-                    <div className="message-actions mt-2">
-                        <button
-                            className="btn btn-sm btn-primary"
-                            onClick={() => handleApply(msg.code_changes)}
-                        >
-                            <Check size={14} className="me-1" />
-                            Apply Changes ({msg.code_changes.length})
-                        </button>
-                    </div>
+                {/* User avatar (right) */}
+                {isUser && (
+                    <div className="chat-avatar chat-avatar--me">Me</div>
                 )}
             </div>
         );

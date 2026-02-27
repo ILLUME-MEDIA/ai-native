@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { Search, File, Terminal, ChevronRight } from 'lucide-react';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 // ── File icon based on extension ─────────────────────────────────────────────
 function fileIcon(path) {
@@ -161,6 +162,7 @@ export default function CommandPalette({
     onRunCommand,
     monacoEditorRef,
 }) {
+    const { tokens: t } = useCodeEditorTheme();
     const [query, setQuery] = useState('');
     const [allFiles, setAllFiles] = useState([]);
     const [filesLoading, setFilesLoading] = useState(false);
@@ -270,8 +272,8 @@ export default function CommandPalette({
                 style={{
                     width: '100%',
                     maxWidth: '600px',
-                    background: '#161b22',
-                    border: '1px solid #1c2128',
+                    background: t.bg3,
+                    border: `1px solid ${t.border}`,
                     borderRadius: '8px',
                     boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
                     display: 'flex',
@@ -287,10 +289,10 @@ export default function CommandPalette({
                     alignItems: 'center',
                     gap: '8px',
                     padding: '0 12px',
-                    borderBottom: '1px solid #1c2128',
-                    background: '#0d0f14',
+                    borderBottom: `1px solid ${t.border}`,
+                    background: t.bg1,
                 }}>
-                    <Search size={14} color="#484f58" style={{ flexShrink: 0 }} />
+                    <Search size={14} color={t.text4} style={{ flexShrink: 0 }} />
                     <input
                         ref={inputRef}
                         type="text"
@@ -303,7 +305,7 @@ export default function CommandPalette({
                             flex: 1,
                             background: 'none',
                             border: 'none',
-                            color: '#e6edf3',
+                            color: t.text1,
                             fontSize: '13px',
                             fontFamily: 'inherit',
                             padding: '12px 0',
@@ -312,8 +314,8 @@ export default function CommandPalette({
                     />
                     <span style={{
                         fontSize: '10px',
-                        color: '#484f58',
-                        background: '#1c2128',
+                        color: t.text4,
+                        background: t.bg4,
                         padding: '2px 5px',
                         borderRadius: '3px',
                         flexShrink: 0,
@@ -332,11 +334,11 @@ export default function CommandPalette({
                     }}
                 >
                     {filesLoading && mode === 'files' ? (
-                        <div style={{ padding: '20px', textAlign: 'center', color: '#484f58', fontSize: '12px' }}>
+                        <div style={{ padding: '20px', textAlign: 'center', color: t.text4, fontSize: '12px' }}>
                             Loading files…
                         </div>
                     ) : results.length === 0 ? (
-                        <div style={{ padding: '20px', textAlign: 'center', color: '#484f58', fontSize: '12px' }}>
+                        <div style={{ padding: '20px', textAlign: 'center', color: t.text4, fontSize: '12px' }}>
                             {query ? 'No results found' : 'Start typing to search…'}
                         </div>
                     ) : (
@@ -358,8 +360,8 @@ export default function CommandPalette({
                             >
                                 {mode === 'commands' ? (
                                     <>
-                                        <Terminal size={13} color="#8b949e" style={{ flexShrink: 0 }} />
-                                        <span style={{ fontSize: '12px', color: '#c9d1d9', flex: 1 }}>
+                                        <Terminal size={13} color={t.text3} style={{ flexShrink: 0 }} />
+                                        <span style={{ fontSize: '12px', color: t.text2, flex: 1 }}>
                                             {item.label}
                                         </span>
                                     </>
@@ -368,17 +370,17 @@ export default function CommandPalette({
                                         {fileIcon(item.path)}
                                         <span style={{
                                             fontSize: '12px',
-                                            color: '#c9d1d9',
+                                            color: t.text2,
                                             flex: 1,
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             whiteSpace: 'nowrap',
                                         }} title={item.path}>
-                                            <span style={{ color: '#e6edf3' }}>
+                                            <span style={{ color: t.text1 }}>
                                                 {item.path.split('/').pop()}
                                             </span>
                                             {item.path.includes('/') && (
-                                                <span style={{ color: '#484f58', marginLeft: '6px', fontSize: '11px' }}>
+                                                <span style={{ color: t.text4, marginLeft: '6px', fontSize: '11px' }}>
                                                     {item.path.substring(0, item.path.lastIndexOf('/'))}
                                                 </span>
                                             )}
@@ -394,15 +396,15 @@ export default function CommandPalette({
                 {results.length > 0 && (
                     <div style={{
                         padding: '4px 12px',
-                        borderTop: '1px solid #1c2128',
+                        borderTop: `1px solid ${t.border}`,
                         display: 'flex',
                         gap: '16px',
                         fontSize: '10px',
-                        color: '#484f58',
+                        color: t.text4,
                     }}>
-                        <span><kbd style={{ background: '#1c2128', borderRadius: '2px', padding: '1px 4px' }}>↑↓</kbd> navigate</span>
-                        <span><kbd style={{ background: '#1c2128', borderRadius: '2px', padding: '1px 4px' }}>Enter</kbd> select</span>
-                        <span><kbd style={{ background: '#1c2128', borderRadius: '2px', padding: '1px 4px' }}>Esc</kbd> close</span>
+                        <span><kbd style={{ background: t.bg4, borderRadius: '2px', padding: '1px 4px' }}>↑↓</kbd> navigate</span>
+                        <span><kbd style={{ background: t.bg4, borderRadius: '2px', padding: '1px 4px' }}>Enter</kbd> select</span>
+                        <span><kbd style={{ background: t.bg4, borderRadius: '2px', padding: '1px 4px' }}>Esc</kbd> close</span>
                     </div>
                 )}
             </div>

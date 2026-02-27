@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Plus, Folder, RefreshCw, Edit2, Trash2, MoreVertical, GitBranch, Files } from 'lucide-react';
 import { toast } from 'react-toastify';
 
-export default function WorkspaceSelector({ onWorkspaceSelect, currentWorkspace, leftView = 'explorer', onOpenGit, onOpenExplorer }) {
+export default function WorkspaceSelector({ onWorkspaceSelect, currentWorkspace, leftView = 'explorer', onOpenGit, onOpenExplorer, isDark = true }) {
     const [workspaces, setWorkspaces] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);

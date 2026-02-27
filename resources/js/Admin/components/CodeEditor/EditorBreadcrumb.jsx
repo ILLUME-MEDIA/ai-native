@@ -24,19 +24,25 @@ function parsePath(path) {
     return path.replace(/\\/g, '/').split('/').filter(Boolean);
 }
 
-export default function EditorBreadcrumb({ activeTab, actions }) {
+export default function EditorBreadcrumb({ activeTab, actions, isDark = true }) {
+    const bg   = isDark ? '#161b22' : '#ffffff';
+    const bd   = isDark ? '#1c2128' : '#d0d7de';
+    const muted = isDark ? '#484f58' : '#afb8c1';
+    const seg3  = isDark ? '#8b949e' : '#57606a';
+    const defFileColor = isDark ? '#c9d1d9' : '#24292f';
+
     if (!activeTab) {
         return (
             <div style={{
                 height: '28px',
-                background: '#161b22',
-                borderBottom: '1px solid #1c2128',
+                background: bg,
+                borderBottom: `1px solid ${bd}`,
                 display: 'flex',
                 alignItems: 'center',
                 paddingLeft: '12px',
                 flexShrink: 0,
             }}>
-                <span style={{ fontSize: '11px', color: '#484f58', fontFamily: 'inherit' }}>
+                <span style={{ fontSize: '11px', color: muted, fontFamily: 'inherit' }}>
                     No file open
                 </span>
             </div>
@@ -45,13 +51,13 @@ export default function EditorBreadcrumb({ activeTab, actions }) {
 
     const segments = parsePath(activeTab.path);
     const ext = getExt(activeTab.path);
-    const fileColor = EXT_COLORS[ext] || '#c9d1d9';
+    const fileColor = EXT_COLORS[ext] || defFileColor;
 
     return (
         <div style={{
             height: '28px',
-            background: '#161b22',
-            borderBottom: '1px solid #1c2128',
+            background: bg,
+            borderBottom: `1px solid ${bd}`,
             display: 'flex',
             alignItems: 'center',
             paddingLeft: '12px',
@@ -62,7 +68,7 @@ export default function EditorBreadcrumb({ activeTab, actions }) {
         }}>
             {segments.map((seg, i) => {
                 const isLast = i === segments.length - 1;
-                const color = isLast ? fileColor : '#8b949e';
+                const color = isLast ? fileColor : seg3;
                 const fontWeight = isLast ? '500' : '400';
 
                 return (
@@ -100,7 +106,7 @@ export default function EditorBreadcrumb({ activeTab, actions }) {
                         {!isLast && (
                             <ChevronRight
                                 size={10}
-                                style={{ color: '#484f58', flexShrink: 0, margin: '0 1px' }}
+                                style={{ color: muted, flexShrink: 0, margin: '0 1px' }}
                             />
                         )}
                     </React.Fragment>

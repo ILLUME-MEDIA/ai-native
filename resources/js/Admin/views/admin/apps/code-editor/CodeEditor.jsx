@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import axios from 'axios';
+import { useCodeEditorTheme } from '@/Admin/components/CodeEditor/useCodeEditorTheme';
 import MonacoEditor from '@/Admin/components/CodeEditor/MonacoEditor';
 import FileExplorer from '@/Admin/components/CodeEditor/FileExplorer';
 import EditorTabs from '@/Admin/components/CodeEditor/EditorTabs';
@@ -77,6 +78,9 @@ export default function CodeEditor() {
 
     // B-14: Keyboard Shortcuts Panel
     const [showShortcuts, setShowShortcuts] = useState(false);
+
+    // ── Theme (light / dark / system) ──────────────────────────────
+    const { isDark, tokens: t } = useCodeEditorTheme();
 
     // B-06: AI Ghost Text
     const [ghostTextEnabled, setGhostTextEnabled] = useState(() => {
@@ -544,9 +548,9 @@ export default function CodeEditor() {
             disabled={blameLoading}
             style={{
                 background: showBlame ? 'rgba(255,107,53,0.12)' : 'none',
-                border: showBlame ? '1px solid rgba(255,107,53,0.3)' : '1px solid transparent',
+                border: showBlame ? `1px solid ${t.accentBorder}` : '1px solid transparent',
                 borderRadius: '3px',
-                color: showBlame ? '#ff6b35' : blameLoading ? '#484f58' : '#8b949e',
+                color: showBlame ? t.accent : blameLoading ? t.text4 : t.text3,
                 cursor: blameLoading ? 'wait' : 'pointer',
                 padding: '2px 5px',
                 display: 'flex',
@@ -592,11 +596,11 @@ export default function CodeEditor() {
                     display: 'flex',
                     alignItems: 'center',
                     gap: '2px',
-                    background: '#161b22',
-                    border: '1px solid #30363d',
+                    background: t.bg3,
+                    border: `1px solid ${t.border}`,
                     borderRadius: '6px',
                     padding: '3px',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                    boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.6)' : '0 4px 16px rgba(0,0,0,0.15)',
                     fontFamily: "'JetBrains Mono', monospace",
                 }}>
                     {[
@@ -613,7 +617,7 @@ export default function CodeEditor() {
                             style={{
                                 background: 'none',
                                 border: 'none',
-                                color: '#c9d1d9',
+                                color: t.text2,
                                 cursor: 'pointer',
                                 padding: '3px 8px',
                                 fontSize: '10px',
@@ -623,8 +627,8 @@ export default function CodeEditor() {
                                 alignItems: 'center',
                                 gap: '3px',
                             }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.1)'; e.currentTarget.style.color = '#ff6b35'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#c9d1d9'; }}
+                            onMouseEnter={e => { e.currentTarget.style.background = t.accentBg; e.currentTarget.style.color = t.accent; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = t.text2; }}
                         >
                             <Zap size={9} />
                             {label}
@@ -633,9 +637,9 @@ export default function CodeEditor() {
                     <button
                         onClick={() => setSelectionActionBar(null)}
                         title="Dismiss"
-                        style={{ background: 'none', border: 'none', color: '#484f58', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', marginLeft: '2px' }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#8b949e'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; }}
+                        style={{ background: 'none', border: 'none', color: t.text4, cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', marginLeft: '2px' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = t.text3; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = t.text4; }}
                     >
                         <XIcon size={10} />
                     </button>
@@ -649,26 +653,26 @@ export default function CodeEditor() {
                 .ce-root { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; }
                 .ce-root ::-webkit-scrollbar { width: 4px; height: 4px; }
                 .ce-root ::-webkit-scrollbar-track { background: transparent; }
-                .ce-root ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+                .ce-root ::-webkit-scrollbar-thumb { background: ${t.scrollbar}; border-radius: 4px; }
 
                 .ce-activity-btn { transition: color 0.15s, background 0.15s, border-color 0.15s; }
-                .ce-activity-btn:hover { color: #ff6b35 !important; background: rgba(255,107,53,0.08) !important; border-color: rgba(255,107,53,0.2) !important; }
+                .ce-activity-btn:hover { color: ${t.accent} !important; background: ${t.accentBg} !important; border-color: ${t.accentBorder} !important; }
 
                 .ce-panel-tab { transition: color 0.15s, border-color 0.15s, opacity 0.15s; }
-                .ce-panel-tab:hover { opacity: 1 !important; color: #ff6b35 !important; }
+                .ce-panel-tab:hover { opacity: 1 !important; color: ${t.accent} !important; }
 
                 .ce-resizer { transition: background 0.15s; }
                 .ce-resizer:hover { background: rgba(255, 107, 53, 0.4) !important; }
 
                 .ce-status-item { transition: color 0.15s; cursor: default; }
-                .ce-status-item:hover { color: #c9d1d9 !important; }
+                .ce-status-item:hover { color: ${t.text1} !important; }
             `}</style>
 
             <div
                 className="ce-root code-editor-container"
                 style={{
-                    background: '#0d0f14',
-                    color: '#c9d1d9',
+                    background: t.bg1,
+                    color: t.text2,
                     overflow: 'hidden',
                     height: 'calc(100vh - 65px)',
                     margin: '0 -1.25rem',
@@ -678,8 +682,8 @@ export default function CodeEditor() {
                     {/* Activity Bar — hidden in zen mode */}
                     <div style={{
                         width: zenMode ? 0 : '44px',
-                        background: '#0d0f14',
-                        borderRight: zenMode ? 'none' : '1px solid #1c2128',
+                        background: t.bg1,
+                        borderRight: zenMode ? 'none' : `1px solid ${t.border}`,
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
@@ -698,9 +702,9 @@ export default function CodeEditor() {
                                     onClick={action}
                                     title={label}
                                     style={{
-                                        background: active ? 'rgba(255,107,53,0.1)' : 'none',
-                                        border: active ? '1px solid rgba(255,107,53,0.2)' : '1px solid transparent',
-                                        color: active ? '#ff6b35' : '#8b949e',
+                                        background: active ? t.accentBg : 'none',
+                                        border: active ? `1px solid ${t.accentBorder}` : '1px solid transparent',
+                                        color: active ? t.accent : t.text3,
                                         width: '36px',
                                         height: '36px',
                                         borderRadius: '8px',
@@ -723,8 +727,8 @@ export default function CodeEditor() {
                             className="code-editor-sidebar"
                             style={{
                                 width: `${sidebarWidth}px`,
-                                background: '#0d0f14',
-                                borderRight: '1px solid #1c2128',
+                                background: t.bg2,
+                                borderRight: `1px solid ${t.border}`,
                                 display: 'flex',
                                 flexDirection: 'column',
                                 flexShrink: 0,
@@ -737,6 +741,7 @@ export default function CodeEditor() {
                                 leftView={leftView}
                                 onOpenGit={() => setLeftView('git')}
                                 onOpenExplorer={() => setLeftView('explorer')}
+                                isDark={isDark}
                             />
 
                             {leftView === 'explorer' && (
@@ -748,6 +753,7 @@ export default function CodeEditor() {
                                     bookmarks={getWorkspaceBookmarks()}
                                     onToggleBookmark={toggleBookmark}
                                     recentFiles={getWorkspaceRecents()}
+                                    isDark={isDark}
                                 />
                             )}
 
@@ -755,11 +761,12 @@ export default function CodeEditor() {
                                 <SearchPanel
                                     workspace={workspace}
                                     onResultClick={handleResultClick}
+                                    isDark={isDark}
                                 />
                             )}
 
                             {leftView === 'git' && (
-                                <div className="git-panel git-panel-embedded" style={{ flex: 1, overflow: 'hidden' }}>
+                                <div className={`git-panel git-panel-embedded${isDark ? '' : ' git-panel-light'}`} style={{ flex: 1, overflow: 'hidden' }}>
                                     <GitPanel
                                         workspace={workspace}
                                         onClose={() => {}}
@@ -774,6 +781,7 @@ export default function CodeEditor() {
                                 <OutlinePanel
                                     monacoEditorRef={monacoEditorRef}
                                     activeFile={activeTab?.path}
+                                    isDark={isDark}
                                     onJumpToLine={(line) => {
                                         if (monacoEditorRef.current) {
                                             monacoEditorRef.current.revealLineInCenter(line);
@@ -788,12 +796,13 @@ export default function CodeEditor() {
                                 <SettingsPanel
                                     settings={editorSettings}
                                     onChange={updateEditorSettings}
+                                    isDark={isDark}
                                 />
                             )}
 
                             {/* C-03: MCP Store */}
                             {leftView === 'mcp' && (
-                                <MCPStorePanel workspace={workspace} />
+                                <MCPStorePanel workspace={workspace} isDark={isDark} />
                             )}
                         </div>
                     )}
@@ -811,7 +820,7 @@ export default function CodeEditor() {
                             title="Drag to resize sidebar"
                             role="separator"
                             aria-orientation="vertical"
-                            style={{ background: '#1c2128', cursor: 'col-resize', width: '3px', flexShrink: 0 }}
+                            style={{ background: t.border, cursor: 'col-resize', width: '3px', flexShrink: 0 }}
                         />
                     )}
 
@@ -823,11 +832,11 @@ export default function CodeEditor() {
                             display: 'flex',
                             flexDirection: 'column',
                             overflow: 'hidden',
-                            background: '#161b22',
+                            background: t.bg3,
                         }}
                     >
                         {/* Tab bar row: EditorTabs + Split button */}
-                        <div style={{ display: 'flex', alignItems: 'stretch', borderBottom: '1px solid #1c2128', flexShrink: 0, background: '#0d0f14' }}>
+                        <div style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0, background: t.bgTab }}>
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                                 <EditorTabs
                                     tabs={tabs}
@@ -860,10 +869,10 @@ export default function CodeEditor() {
                                 }}
                                 title={splitMode ? 'Close Split Editor' : 'Split Editor Right'}
                                 style={{
-                                    background: splitMode ? 'rgba(255,107,53,0.1)' : 'none',
+                                    background: splitMode ? t.accentBg : 'none',
                                     border: 'none',
-                                    borderLeft: '1px solid #1c2128',
-                                    color: splitMode ? '#ff6b35' : '#8b949e',
+                                    borderLeft: `1px solid ${t.border}`,
+                                    color: splitMode ? t.accent : t.text3,
                                     padding: '0 10px',
                                     cursor: 'pointer',
                                     display: 'flex',
@@ -880,7 +889,7 @@ export default function CodeEditor() {
                         </div>
 
                         <div className="editor-split" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                            <EditorBreadcrumb activeTab={focusedPane === 'split' ? splitActiveTab : activeTab} actions={blameBtn} />
+                            <EditorBreadcrumb activeTab={focusedPane === 'split' ? splitActiveTab : activeTab} actions={blameBtn} isDark={isDark} />
 
                             {/* B-15: Merge conflict banner */}
                             {conflictCount > 0 && centerView !== 'merge' && (
@@ -911,9 +920,9 @@ export default function CodeEditor() {
 
                             <div className="editor-canvas" style={{ flex: 1, overflow: 'hidden' }}>
                                 {!workspace ? (
-                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
+                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                         <Code size={52} />
-                                        <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#8b949e' }}>No workspace selected</h4>
+                                        <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: t.text3 }}>No workspace selected</h4>
                                         <p style={{ margin: 0, fontSize: '12px' }}>Create or select a workspace to start coding</p>
                                     </div>
                                 ) : (
@@ -971,7 +980,7 @@ export default function CodeEditor() {
                                             <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
                                                 {/* Left / Main pane */}
                                                 <div
-                                                    style={{ flex: 1, display: 'flex', overflow: 'hidden', outline: focusedPane === 'main' && splitMode ? '1px solid rgba(255,107,53,0.25)' : 'none' }}
+                                                    style={{ flex: 1, display: 'flex', overflow: 'hidden', outline: focusedPane === 'main' && splitMode ? `1px solid ${t.accentBorder}` : 'none' }}
                                                     onClick={() => setFocusedPane('main')}
                                                 >
                                                     {activeTab ? (
@@ -995,13 +1004,14 @@ export default function CodeEditor() {
                                                                     settings={editorSettings}
                                                                     ghostTextEnabled={ghostTextEnabled}
                                                                     workspaceId={workspace?.id}
+                                                                    theme={t.monacoTheme}
                                                                 />
                                                             </div>
                                                         </>
                                                     ) : (
-                                                        <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
+                                                        <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                                             <Code size={52} />
-                                                            <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#8b949e' }}>No file open</h4>
+                                                            <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: t.text3 }}>No file open</h4>
                                                             <p style={{ margin: 0, fontSize: '12px' }}>Select a file from the explorer to start editing</p>
                                                         </div>
                                                     )}
@@ -1010,13 +1020,13 @@ export default function CodeEditor() {
                                                 {/* S3-1: Right split pane */}
                                                 {splitMode && (
                                                     <>
-                                                        <div style={{ width: '1px', background: '#1c2128', flexShrink: 0 }} />
+                                                        <div style={{ width: '1px', background: t.border, flexShrink: 0 }} />
                                                         <div
-                                                            style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', outline: focusedPane === 'split' ? '1px solid rgba(255,107,53,0.25)' : 'none' }}
+                                                            style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', outline: focusedPane === 'split' ? `1px solid ${t.accentBorder}` : 'none' }}
                                                             onClick={() => setFocusedPane('split')}
                                                         >
                                                             {/* Split pane tab bar */}
-                                                            <div style={{ background: '#0d0f14', borderBottom: '1px solid #1c2128', display: 'flex', overflow: 'hidden', flexShrink: 0, minHeight: '34px' }}>
+                                                            <div style={{ background: t.bg2, borderBottom: `1px solid ${t.border}`, display: 'flex', overflow: 'hidden', flexShrink: 0, minHeight: '34px' }}>
                                                                 {splitTabs.map((tab, index) => (
                                                                     <div
                                                                         key={`split-${tab.path}-${index}`}
@@ -1024,11 +1034,11 @@ export default function CodeEditor() {
                                                                         style={{
                                                                             display: 'flex', alignItems: 'center', gap: '5px',
                                                                             padding: '5px 10px',
-                                                                            borderRight: '1px solid #1c2128',
+                                                                            borderRight: `1px solid ${t.border}`,
                                                                             cursor: 'pointer',
-                                                                            background: splitActiveTab?.path === tab.path ? '#161b22' : 'transparent',
-                                                                            borderBottom: splitActiveTab?.path === tab.path ? '2px solid #ff6b35' : '2px solid transparent',
-                                                                            color: splitActiveTab?.path === tab.path ? '#e6edf3' : '#8b949e',
+                                                                            background: splitActiveTab?.path === tab.path ? t.bg3 : 'transparent',
+                                                                            borderBottom: splitActiveTab?.path === tab.path ? `2px solid ${t.accent}` : '2px solid transparent',
+                                                                            color: splitActiveTab?.path === tab.path ? t.text1 : t.text3,
                                                                             fontSize: '11px',
                                                                             fontFamily: 'inherit',
                                                                             whiteSpace: 'nowrap',
@@ -1046,7 +1056,7 @@ export default function CodeEditor() {
                                                                     </div>
                                                                 ))}
                                                                 {splitTabs.length === 0 && (
-                                                                    <div style={{ padding: '5px 10px', color: '#484f58', fontSize: '11px', fontFamily: 'inherit', alignSelf: 'center' }}>
+                                                                    <div style={{ padding: '5px 10px', color: t.text4, fontSize: '11px', fontFamily: 'inherit', alignSelf: 'center' }}>
                                                                         Click a file to open here
                                                                     </div>
                                                                 )}
@@ -1063,12 +1073,13 @@ export default function CodeEditor() {
                                                                         onEditorMount={(editor) => { monacoSplitRef.current = editor; }}
                                                                         onSelectionChange={(sel) => { if (focusedPane === 'split') handleSelectionChange(sel); }}
                                                                         settings={editorSettings}
+                                                                        theme={t.monacoTheme}
                                                                     />
                                                                 ) : (
-                                                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#484f58' }}>
+                                                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                                                         <Columns2 size={36} />
                                                                         <p style={{ margin: 0, fontSize: '12px' }}>Click a file in the explorer</p>
-                                                                        <p style={{ margin: 0, fontSize: '11px', color: '#30363d' }}>This pane is focused</p>
+                                                                        <p style={{ margin: 0, fontSize: '11px', color: t.scrollbar }}>This pane is focused</p>
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -1084,10 +1095,10 @@ export default function CodeEditor() {
                             {/* Bottom Dock: Terminal + Problems tabs — hidden in zen mode */}
                             <div
                                 className={`bottom-dock ${terminalOpen && !zenMode ? 'open' : 'closed'}`}
-                                style={{ background: '#0a0c0f', borderTop: terminalOpen && !zenMode ? '1px solid #1c2128' : 'none', flexShrink: 0, display: zenMode ? 'none' : 'flex', flexDirection: 'column' }}
+                                style={{ background: t.bg1, borderTop: terminalOpen && !zenMode ? `1px solid ${t.border}` : 'none', flexShrink: 0, display: zenMode ? 'none' : 'flex', flexDirection: 'column' }}
                             >
                                 {terminalOpen && (
-                                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #1c2128', background: '#0d0f14', flexShrink: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${t.border}`, background: t.bg2, flexShrink: 0 }}>
                                         {[
                                             { id: 'terminal', label: 'TERMINAL', icon: null },
                                             { id: 'problems', label: 'PROBLEMS', icon: <Wrench size={10} /> },
@@ -1098,8 +1109,8 @@ export default function CodeEditor() {
                                                 style={{
                                                     background: 'none', border: 'none', cursor: 'pointer',
                                                     padding: '4px 12px',
-                                                    color: bottomTab === id ? '#ff6b35' : '#8b949e',
-                                                    borderBottom: bottomTab === id ? '2px solid #ff6b35' : '2px solid transparent',
+                                                    color: bottomTab === id ? t.accent : t.text3,
+                                                    borderBottom: bottomTab === id ? `2px solid ${t.accent}` : '2px solid transparent',
                                                     fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em',
                                                     fontFamily: 'inherit',
                                                     display: 'flex', alignItems: 'center', gap: '4px',
@@ -1113,7 +1124,7 @@ export default function CodeEditor() {
                                         <div style={{ marginLeft: 'auto', paddingRight: '8px' }}>
                                             <button
                                                 onClick={() => setTerminalOpen(false)}
-                                                style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                                style={{ background: 'none', border: 'none', color: t.text3, cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
                                                 title="Close panel"
                                             >
                                                 <XIcon size={12} />
@@ -1127,12 +1138,14 @@ export default function CodeEditor() {
                                             workspace={workspace}
                                             onClose={() => setTerminalOpen(false)}
                                             onTerminalApi={handleTerminalApi}
+                                            isDark={isDark}
                                         />
                                     </div>
                                     {bottomTab === 'problems' && (
                                         <ProblemsPanel
                                             tabs={tabs}
                                             monacoEditorRef={monacoEditorRef}
+                                            isDark={isDark}
                                             onJumpToFile={(path, line) => {
                                                 pendingScrollLineRef.current = line;
                                                 const existing = tabs.find(t => t.path === path);
@@ -1153,8 +1166,8 @@ export default function CodeEditor() {
                         {/* Status Bar */}
                         <div style={{
                             height: '24px',
-                            background: '#0d0f14',
-                            borderTop: '1px solid #1c2128',
+                            background: t.bg1,
+                            borderTop: `1px solid ${t.border}`,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
@@ -1163,7 +1176,7 @@ export default function CodeEditor() {
                         }}>
                             <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                                 {[`⎇ ${currentBranch}`, activeTab?.language ?? 'plaintext'].map(s => (
-                                    <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: '#8b949e' }}>{s}</span>
+                                    <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: t.text3 }}>{s}</span>
                                 ))}
                             </div>
                             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -1173,7 +1186,7 @@ export default function CodeEditor() {
                                     openFile={activeTab?.path ?? null}
                                 />
                                 {['UTF-8', 'LF'].map(s => (
-                                    <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: '#8b949e' }}>{s}</span>
+                                    <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: t.text3 }}>{s}</span>
                                 ))}
                                 {/* B-06: AI Ghost Text toggle */}
                                 <button
@@ -1187,7 +1200,7 @@ export default function CodeEditor() {
                                     style={{
                                         background: 'none', border: 'none', padding: '0 2px',
                                         cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px',
-                                        color: ghostTextEnabled ? '#ff6b35' : '#8b949e',
+                                        color: ghostTextEnabled ? t.accent : t.text3,
                                         fontSize: '10px',
                                     }}
                                 >
@@ -1198,7 +1211,7 @@ export default function CodeEditor() {
                                     onClick={() => setShowShortcuts(true)}
                                     title="Keyboard Shortcuts (Ctrl+K S)"
                                     className="ce-status-item"
-                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#8b949e' }}
+                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: t.text3 }}
                                 >
                                     <Keyboard size={11} />
                                 </button>
@@ -1207,7 +1220,7 @@ export default function CodeEditor() {
                                     onClick={() => setZenMode(v => !v)}
                                     title={zenMode ? 'Exit Zen Mode (Esc)' : 'Zen Mode (Ctrl+K Z)'}
                                     className="ce-status-item"
-                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: zenMode ? '#ff6b35' : '#8b949e' }}
+                                    style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: zenMode ? t.accent : t.text3 }}
                                 >
                                     {zenMode ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
                                 </button>
@@ -1219,8 +1232,8 @@ export default function CodeEditor() {
                     <div
                         className="code-editor-right"
                         style={{
-                            background: '#0d0f14',
-                            borderLeft: '1px solid #1c2128',
+                            background: t.bg1,
+                            borderLeft: `1px solid ${t.border}`,
                             display: zenMode ? 'none' : 'flex',
                             flexDirection: 'column',
                         }}
@@ -1230,7 +1243,7 @@ export default function CodeEditor() {
                             className="panel-tabs"
                             style={{
                                 display: 'flex',
-                                borderBottom: '1px solid #1c2128',
+                                borderBottom: `1px solid ${t.border}`,
                                 height: '44px',
                                 alignItems: 'stretch',
                                 flexShrink: 0,
@@ -1252,8 +1265,8 @@ export default function CodeEditor() {
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         gap: '2px',
-                                        color: activePanel === id ? '#ff6b35' : '#8b949e',
-                                        borderBottom: activePanel === id ? '2px solid #ff6b35' : '2px solid transparent',
+                                        color: activePanel === id ? t.accent : t.text3,
+                                        borderBottom: activePanel === id ? `2px solid ${t.accent}` : '2px solid transparent',
                                         opacity: activePanel === id ? 1 : 0.65,
                                         fontSize: '8px',
                                         fontWeight: '600',

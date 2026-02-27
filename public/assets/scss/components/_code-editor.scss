@@ -127,88 +127,111 @@
 
 .editor-tabs {
     display: flex;
-    background: var(--bs-secondary-bg, #f8f9fa);
-    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    background: #010409;
+    border-bottom: 1px solid #1c2128;
     overflow-x: auto;
-    min-height: 40px;
+    min-height: 34px;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar { display: none; }
 }
 
 .editor-tabs-actions {
     margin-left: auto;
     display: flex;
     align-items: center;
-    padding-right: 6px;
-    gap: 6px;
+    padding-right: 4px;
+    gap: 2px;
+    flex-shrink: 0;
+    border-left: 1px solid #1c2128;
 }
 
 .editor-tab-action {
     background: none;
     border: none;
-    padding: 6px;
-    border-radius: 4px;
+    padding: 5px 8px;
+    border-radius: 3px;
     cursor: pointer;
-    opacity: 0.7;
+    color: #484f58;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: color 0.15s, background 0.15s;
 
     &:hover {
-        opacity: 1;
-        background: var(--bs-tertiary-bg, #e9ecef);
+        color: #ff6b35;
+        background: rgba(255, 107, 53, 0.08);
     }
 
     &.active {
-        opacity: 1;
-        background: var(--bs-primary, #0d6efd);
-        color: #fff;
+        color: #ff6b35;
+        background: rgba(255, 107, 53, 0.12);
     }
 }
 
 .editor-tab {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    border-right: 1px solid var(--bs-border-color, #dee2e6);
+    gap: 5px;
+    padding: 0 10px 0 12px;
+    border-right: 1px solid #1c2128;
+    border-bottom: 2px solid transparent;
     cursor: pointer;
     user-select: none;
-    transition: background 0.2s;
+    transition: background 0.1s;
+    min-height: 34px;
+    flex-shrink: 0;
+    color: #6e7681;
 
     &.active {
-        background: var(--bs-body-bg);
-        border-bottom: 2px solid var(--bs-primary, #0d6efd);
+        background: #0d1117;
+        border-bottom-color: #ff6b35;
+        color: #c9d1d9;
     }
 
-    &:hover {
-        background: var(--bs-tertiary-bg, #e9ecef);
+    &:hover:not(.active) {
+        background: #0a0c0f;
+        color: #c9d1d9;
     }
 }
 
 .tab-icon {
-    font-size: 14px;
+    font-size: 13px;
+    line-height: 1;
 }
 
 .tab-name {
-    font-size: 13px;
+    font-size: 11.5px;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
 
 .unsaved-indicator {
-    color: var(--bs-warning, #ffc107);
-    margin-left: 4px;
+    color: #e3b341;
+    margin-left: 3px;
+    font-size: 10px;
 }
 
 .tab-close {
     background: none;
     border: none;
-    padding: 2px;
+    padding: 1px;
     cursor: pointer;
-    opacity: 0.6;
+    color: transparent;
     display: flex;
     align-items: center;
+    border-radius: 3px;
+    transition: color 0.1s, background 0.1s;
+    margin-left: 2px;
+
+    .editor-tab:hover &,
+    .editor-tab.active & {
+        color: #6e7681;
+    }
 
     &:hover {
-        opacity: 1;
+        color: #f85149 !important;
+        background: rgba(248, 81, 73, 0.15);
     }
 }
 
@@ -289,7 +312,7 @@
     position: relative;
 
     &:hover {
-        background: var(--bs-secondary-bg, #f8f9fa);
+        background: rgba(255, 107, 53, 0.06);
 
         .file-actions-btn {
             opacity: 1;
@@ -297,8 +320,8 @@
     }
 
     &.active {
-        background: var(--bs-primary-bg-subtle, #cfe2ff);
-        color: var(--bs-primary, #0d6efd);
+        background: rgba(255, 107, 53, 0.14);
+        color: #ff6b35;
     }
 
     .expand-button,
@@ -572,6 +595,7 @@
     }
 }
 
+// Old class kept for backward compat
 .chat-message {
     margin-bottom: 8px;
     padding: 8px 10px;
@@ -600,6 +624,112 @@
 
     &.loading {
         opacity: 0.7;
+    }
+}
+
+// ── Chat Bubble layout (Chat.jsx style) ────────────────────────────────────
+
+.chat-msg-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-bottom: 14px;
+
+    &.chat-msg-row--user {
+        flex-direction: row-reverse;
+    }
+
+    &.error .chat-bubble {
+        background: rgba(248, 81, 73, 0.12) !important;
+        border-color: rgba(248, 81, 73, 0.4) !important;
+        color: #f85149 !important;
+    }
+}
+
+.chat-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+
+    &.chat-avatar--ai {
+        background: linear-gradient(135deg, #ff6b35 0%, #f7451a 100%);
+        color: #fff;
+        box-shadow: 0 2px 6px rgba(255, 107, 53, 0.35);
+    }
+
+    &.chat-avatar--me {
+        background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
+        color: #fff;
+        box-shadow: 0 2px 6px rgba(31, 111, 235, 0.35);
+    }
+
+    &.pulse {
+        animation: avatarPulse 1.4s ease-in-out infinite;
+    }
+}
+
+@keyframes avatarPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.92); }
+}
+
+.chat-bubble-wrap {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+    min-width: 0;
+
+    .chat-msg-row--user & {
+        align-items: flex-end;
+    }
+}
+
+.chat-bubble {
+    padding: 10px 14px;
+    border-radius: 16px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    word-break: break-word;
+    white-space: pre-wrap;
+
+    &.chat-bubble--user {
+        background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
+        color: #ffffff;
+        border-bottom-right-radius: 4px;
+        box-shadow: 0 2px 8px rgba(31, 111, 235, 0.25);
+    }
+
+    &.chat-bubble--ai {
+        background: #161b22;
+        border: 1px solid #21262d;
+        color: #c9d1d9;
+        border-bottom-left-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    &.streaming {
+        border-color: rgba(255, 107, 53, 0.3);
+        box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.12);
+    }
+}
+
+.chat-bubble-meta {
+    display: flex;
+    align-items: center;
+    font-size: 10px;
+    color: #484f58;
+    margin-top: 4px;
+    padding: 0 2px;
+
+    &.chat-bubble-meta--right {
+        justify-content: flex-end;
     }
 }
 
@@ -705,7 +835,7 @@
 
 .workspace-actions .btn-icon.active {
     opacity: 1;
-    background: var(--bs-primary-bg-subtle, #cfe2ff);
+    background: rgba(255, 107, 53, 0.14);
     border-radius: 4px;
 }
 
@@ -725,12 +855,12 @@
     font-size: 13px;
 
     &:hover {
-        background: var(--bs-secondary-bg, #f8f9fa);
+        background: rgba(255, 107, 53, 0.06);
     }
 
     &.active {
-        background: var(--bs-primary-bg-subtle, #cfe2ff);
-        color: var(--bs-primary, #0d6efd);
+        background: rgba(255, 107, 53, 0.14);
+        color: #ff6b35;
     }
 }
 
@@ -1301,13 +1431,15 @@
     border: none;
     cursor: pointer;
     padding: 4px;
+    border-radius: 4px;
     display: flex;
     align-items: center;
     opacity: 0.7;
-    transition: opacity 0.2s;
+    transition: opacity 0.2s, background 0.15s;
 
     &:hover {
         opacity: 1;
+        background: rgba(255, 107, 53, 0.1);
     }
 }
 
@@ -1371,13 +1503,13 @@
         transition: background 0.2s;
 
         &:hover {
-            background: var(--bs-secondary-bg, #f8f9fa);
+            background: rgba(255, 107, 53, 0.06);
         }
     }
 
     &.active .workspace-main {
-        background: var(--bs-primary-bg-subtle, #cfe2ff);
-        border-left: 3px solid var(--bs-primary);
+        background: rgba(255, 107, 53, 0.14);
+        border-left: 3px solid #ff6b35;
     }
 
     .workspace-menu-trigger {
@@ -2573,3 +2705,414 @@
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// LIGHT THEME OVERRIDES  (data-bs-theme="light")
+// All dark-hardcoded classes get their light counterparts here.
+// ═══════════════════════════════════════════════════════════════════
+
+[data-bs-theme="light"] {
+
+    // ── Editor tabs row ────────────────────────────────────────────
+    .editor-tabs {
+        background: #f6f8fa;
+        border-bottom-color: #d0d7de;
+    }
+
+    .editor-tabs-actions {
+        border-left-color: #d0d7de;
+    }
+
+    .editor-tab {
+        color: #57606a;
+        border-right-color: #d0d7de;
+
+        &.active {
+            background: #ffffff;
+            border-bottom-color: #ff6b35;
+            color: #24292f;
+        }
+
+        &:hover:not(.active) {
+            background: #eaeef2;
+            color: #24292f;
+        }
+    }
+
+    .editor-tab-action {
+        color: #6e7681;
+
+        &:hover {
+            color: #ff6b35;
+            background: rgba(255, 107, 53, 0.08);
+        }
+
+        &.active {
+            color: #ff6b35;
+            background: rgba(255, 107, 53, 0.1);
+        }
+    }
+
+    .tab-close {
+        .editor-tab:hover &,
+        .editor-tab.active & {
+            color: #57606a;
+        }
+
+        &:hover {
+            color: #cf222e !important;
+            background: rgba(207, 34, 46, 0.1);
+        }
+    }
+
+    // ── File context menu ──────────────────────────────────────────
+    .file-context-menu {
+        background: #ffffff;
+        border-color: #d0d7de;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+
+        button {
+            color: #24292f;
+
+            svg { color: #57606a; }
+
+            &:hover {
+                background: rgba(255, 107, 53, 0.06);
+                color: #24292f;
+
+                svg { color: #ff6b35; }
+            }
+
+            &.text-danger {
+                color: #cf222e;
+                svg { color: #cf222e; }
+
+                &:hover {
+                    background: rgba(207, 34, 46, 0.08);
+                }
+            }
+        }
+
+        .context-menu-divider {
+            background: #d0d7de;
+        }
+    }
+
+    // ── AI Chat panel ──────────────────────────────────────────────
+    .chat-header {
+        border-bottom-color: #d0d7de;
+        background: #f6f8fa;
+        color: #24292f;
+
+        .btn-icon {
+            color: #57606a;
+            &:hover { color: #24292f; }
+        }
+    }
+
+    .chat-controls {
+        border-bottom-color: #d0d7de;
+        background: #f6f8fa;
+        color: #24292f;
+
+        .form-label { color: #57606a; }
+
+        .form-select,
+        .form-control {
+            background-color: #ffffff;
+            border-color: #d0d7de;
+            color: #24292f;
+
+            &:focus {
+                background-color: #ffffff;
+                border-color: rgba(255, 107, 53, 0.5);
+                color: #24292f;
+            }
+
+            option {
+                background: #ffffff;
+                color: #24292f;
+            }
+
+            &:disabled {
+                background-color: #f6f8fa;
+                color: #afb8c1;
+                border-color: #eaeef2;
+            }
+        }
+
+        .form-check-input {
+            background-color: #ffffff;
+            border-color: #d0d7de;
+        }
+
+        .form-check-label { color: #57606a; }
+        .form-text { color: #6e7681; }
+
+        .badge.bg-secondary {
+            background-color: #eaeef2 !important;
+            color: #57606a;
+        }
+
+        .btn-outline-secondary {
+            border-color: #d0d7de;
+            color: #57606a;
+
+            &:hover {
+                background-color: #eaeef2;
+                border-color: #afb8c1;
+                color: #24292f;
+            }
+        }
+    }
+
+    .chat-bubble--ai {
+        background: #f6f8fa;
+        border-color: #d0d7de;
+        color: #24292f;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    .message-actions {
+        border-top-color: #d0d7de;
+    }
+
+    .chat-message.system,
+    .chat-message.system-group {
+        border-left-color: #d0d7de;
+    }
+
+    .system-line { color: #57606a; }
+    .message-time { color: #afb8c1; }
+    .chat-bubble-meta { color: #afb8c1; }
+
+    // ── Panel tabs (right sidebar) ─────────────────────────────────
+    .panel-tabs {
+        border-bottom-color: #d0d7de;
+        background: #f6f8fa;
+    }
+
+    .panel-tab {
+        color: #57606a;
+
+        &:hover {
+            background: rgba(255, 107, 53, 0.05);
+            color: #ff6b35;
+        }
+
+        &.active {
+            border-bottom-color: #ff6b35;
+            background: #f6f8fa;
+            color: #ff6b35;
+        }
+    }
+
+    // ── Outline panel ──────────────────────────────────────────────
+    .ce-outline-panel {
+        .ce-outline-symbol {
+            &:hover { background: rgba(0, 0, 0, 0.04); }
+
+            &.ce-outline-symbol--active {
+                background: rgba(255, 107, 53, 0.07);
+                border-left-color: rgba(255, 107, 53, 0.4);
+            }
+
+            .ce-outline-name { color: #24292f; }
+            .ce-outline-line { color: #afb8c1; }
+        }
+    }
+
+    // ── Git panel (light mode) ─────────────────────────────────────
+    .git-panel-light {
+        background: #f6f8fa;
+        color: #24292f;
+    }
+
+    // ── Bottom dock tab buttons ─────────────────────────────────────
+    .bottom-dock {
+        background: #f6f8fa;
+    }
+
+    // ── Sidebar section header ─────────────────────────────────────
+    .sidebar-section-header {
+        background: #f0f3f6;
+    }
+
+    // ── Workspace selector ─────────────────────────────────────────
+    .workspace-item {
+        &.active {
+            background: rgba(255, 107, 53, 0.08);
+            color: #ff6b35;
+        }
+    }
+
+    // ── Inline code in chat ────────────────────────────────────────
+    .chat-bubble--ai code,
+    .chat-bubble--ai pre {
+        background: #eaeef2;
+        border-color: #d0d7de;
+        color: #24292f;
+    }
+
+    // ── Tool calls ─────────────────────────────────────────────────
+    .tool-calls {
+        background: rgba(0, 0, 0, 0.03);
+        border-left-color: #0969da;
+    }
+
+    // ── Problems panel ─────────────────────────────────────────────
+    .ce-problems-panel {
+        background: #f6f8fa;
+
+        .ce-problems-header {
+            border-bottom-color: #d0d7de;
+            background: #f6f8fa;
+
+            .ce-problems-title { color: #57606a; }
+            .ce-problems-refresh-btn {
+                color: #57606a;
+                &:hover { color: #24292f; }
+            }
+        }
+
+        .ce-problems-filters {
+            border-bottom-color: #d0d7de;
+
+            .ce-problems-filter-chip {
+                border-color: #d0d7de;
+                color: #57606a;
+                &:hover { border-color: #afb8c1; color: #24292f; }
+            }
+        }
+
+        .ce-problems-empty { color: #afb8c1; }
+
+        .ce-problem-file-group { border-bottom-color: rgba(208,215,222,0.4); }
+
+        .ce-problem-file-header {
+            background: rgba(0, 0, 0, 0.04);
+            .ce-problem-file-name { color: #24292f; }
+            .ce-problem-file-path { color: #afb8c1; }
+        }
+
+        .ce-problem-row {
+            &:hover { background: rgba(0, 0, 0, 0.03); }
+            .ce-problem-message { color: #24292f; }
+            .ce-problem-location { color: #afb8c1; }
+        }
+    }
+
+    // ── Approval panel, settings, etc. ────────────────────────────
+    .ce-conversation-tab {
+        background: #f6f8fa;
+        border-color: #d0d7de;
+        color: #57606a;
+
+        &.active {
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+
+        &:hover:not(.active) {
+            background: #eaeef2;
+            color: #24292f;
+        }
+    }
+
+    // ── Git change list ────────────────────────────────────────────
+    .ce-change-name { color: #24292f; }
+
+    .ce-change-diff-btn {
+        border-color: #d0d7de;
+        color: #57606a;
+
+        &:hover {
+            color: #ff6b35;
+            border-color: rgba(255, 107, 53, 0.4);
+        }
+    }
+
+    .ce-change-list {
+        &::-webkit-scrollbar-thumb { background: #d0d7de; }
+    }
+
+    // ── Commit textarea ────────────────────────────────────────────
+    .ce-commit-textarea {
+        background: #f6f8fa;
+        border-color: #d0d7de;
+        color: #24292f;
+
+        &::placeholder { color: #afb8c1; }
+
+        &:focus { border-color: rgba(255, 107, 53, 0.4); }
+    }
+
+    // ── Git panel body background ──────────────────────────────────
+    .git-panel .git-body { background: #f6f8fa; }
+
+    // ── Chat messages ──────────────────────────────────────────────
+    .chat-message {
+        color: #24292f;
+
+        &.user {
+            background: rgba(255, 107, 53, 0.06);
+            border-color: rgba(255, 107, 53, 0.2);
+            color: #24292f;
+        }
+
+        &.assistant {
+            background: #ffffff;
+            border-color: #d0d7de;
+            color: #24292f;
+        }
+    }
+
+    // ── Chat messages area background ─────────────────────────────
+    .chat-messages { background: #f6f8fa; }
+
+    // ── Chat input textarea placeholder ───────────────────────────
+    .chat-input textarea::placeholder { color: #afb8c1; }
+
+    // ── Terminal ───────────────────────────────────────────────────
+    .terminal-panel {
+        background: #f3f4f6;
+        color: #24292f;
+    }
+
+    .terminal-header {
+        background: #eaeef2;
+        border-bottom-color: #d0d7de;
+
+        .btn-icon { color: #57606a; }
+        .terminal-workspace-badge { background: #d0d7de; color: #57606a; }
+    }
+
+    .terminal-body {
+        background: #f3f4f6;
+        color: #24292f;
+    }
+
+    .terminal-prompt-display {
+        .prompt-user     { color: #0550ae; }
+        .prompt-separator{ color: #57606a; }
+        .prompt-path     { color: #0969da; }
+        .prompt-dollar   { color: #57606a; }
+    }
+
+    .terminal-cmd-text   { color: #24292f; }
+    .terminal-output-text { color: #57606a; }
+    .terminal-stderr-text { color: #9a6700; }
+    .terminal-error-text  { color: #cf222e; }
+    .terminal-warning-text { color: #9a6700; }
+
+    .terminal-input-field {
+        color: #24292f;
+        caret-color: #24292f;
+    }
+
+    .terminal-spinner {
+        border-color: #d0d7de;
+        border-top-color: #0969da;
+    }
+}
+

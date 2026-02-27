@@ -1,8 +1,11 @@
 import React, { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { Search, ChevronRight, ChevronDown } from 'lucide-react';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
-export default function SearchPanel({ workspace, onResultClick }) {
+export default function SearchPanel({ workspace, onResultClick, isDark: _isDark }) {
+    const { isDark: ctxDark, tokens: t } = useCodeEditorTheme();
+    const isDark = _isDark !== undefined ? _isDark : ctxDark;
     const [query, setQuery] = useState('');
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [useRegex, setUseRegex] = useState(false);
@@ -82,7 +85,7 @@ export default function SearchPanel({ workspace, onResultClick }) {
 
     if (!workspace) {
         return (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58', fontSize: '12px' }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: t.text4, fontSize: '12px' }}>
                 Select a workspace to search
             </div>
         );
@@ -91,8 +94,8 @@ export default function SearchPanel({ workspace, onResultClick }) {
     return (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
             {/* Header */}
-            <div style={{ padding: '10px 12px 6px', borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
-                <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.08em', color: '#8b949e', marginBottom: '8px', textTransform: 'uppercase' }}>
+            <div style={{ padding: '10px 12px 6px', borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+                <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.08em', color: t.text3, marginBottom: '8px', textTransform: 'uppercase' }}>
                     Search
                 </div>
                 <div style={{ position: 'relative' }}>
@@ -105,17 +108,17 @@ export default function SearchPanel({ workspace, onResultClick }) {
                         autoComplete="off"
                         style={{
                             width: '100%',
-                            background: '#0a0c0f',
-                            border: '1px solid #30363d',
+                            background: isDark ? '#0a0c0f' : '#ffffff',
+                            border: `1px solid ${isDark ? '#30363d' : '#d0d7de'}`,
                             borderRadius: '4px',
-                            color: '#c9d1d9',
+                            color: t.text2,
                             padding: '5px 8px 5px 28px',
                             fontSize: '12px',
                             fontFamily: 'inherit',
                             outline: 'none',
                         }}
                     />
-                    <Search size={12} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: '#484f58', pointerEvents: 'none' }} />
+                    <Search size={12} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: t.text4, pointerEvents: 'none' }} />
                 </div>
                 <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                     {[
@@ -127,10 +130,10 @@ export default function SearchPanel({ workspace, onResultClick }) {
                             onClick={toggle}
                             title={title}
                             style={{
-                                background: active ? 'rgba(255,107,53,0.15)' : 'transparent',
-                                border: active ? '1px solid rgba(255,107,53,0.4)' : '1px solid #30363d',
+                                background: active ? t.accentBg : 'transparent',
+                                border: active ? `1px solid ${t.accentBorder}` : `1px solid ${isDark ? '#30363d' : '#d0d7de'}`,
                                 borderRadius: '3px',
-                                color: active ? '#ff6b35' : '#8b949e',
+                                color: active ? t.accent : t.text3,
                                 fontSize: '10px',
                                 fontWeight: '600',
                                 padding: '2px 6px',
@@ -146,7 +149,7 @@ export default function SearchPanel({ workspace, onResultClick }) {
 
             {/* Results summary */}
             {(searched || loading) && (
-                <div style={{ padding: '5px 12px', fontSize: '10px', color: '#8b949e', borderBottom: '1px solid #1c2128', flexShrink: 0 }}>
+                <div style={{ padding: '5px 12px', fontSize: '10px', color: t.text3, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
                     {loading
                         ? 'Searching…'
                         : totalResults === 0
@@ -167,16 +170,16 @@ export default function SearchPanel({ workspace, onResultClick }) {
                                 gap: '4px',
                                 padding: '5px 10px',
                                 cursor: 'pointer',
-                                background: '#0d0f14',
-                                borderBottom: '1px solid #1c2128',
+                                background: t.bg2,
+                                borderBottom: `1px solid ${t.border}`,
                                 fontSize: '11px',
-                                color: '#c9d1d9',
+                                color: t.text2,
                                 userSelect: 'none',
                             }}
                         >
                             {isExpanded(file) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file}>{file}</span>
-                            <span style={{ background: '#30363d', borderRadius: '8px', padding: '0 5px', fontSize: '9px', color: '#8b949e', flexShrink: 0 }}>
+                            <span style={{ background: isDark ? '#30363d' : '#eaeef2', borderRadius: '8px', padding: '0 5px', fontSize: '9px', color: t.text3, flexShrink: 0 }}>
                                 {fileResults.length}
                             </span>
                         </div>
@@ -191,13 +194,13 @@ export default function SearchPanel({ workspace, onResultClick }) {
                                     display: 'flex',
                                     gap: '8px',
                                     alignItems: 'baseline',
-                                    borderBottom: '1px solid rgba(28,33,40,0.4)',
+                                    borderBottom: `1px solid ${isDark ? 'rgba(28,33,40,0.4)' : 'rgba(208,215,222,0.4)'}`,
                                 }}
-                                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,107,53,0.06)'}
+                                onMouseEnter={e => e.currentTarget.style.background = t.accentBg}
                                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                             >
-                                <span style={{ color: '#484f58', flexShrink: 0, fontSize: '10px', minWidth: '28px' }}>L{r.line}</span>
-                                <span style={{ color: '#8b949e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ color: t.text4, flexShrink: 0, fontSize: '10px', minWidth: '28px' }}>L{r.line}</span>
+                                <span style={{ color: t.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {highlightMatch(r.content, r.match)}
                                 </span>
                             </div>
