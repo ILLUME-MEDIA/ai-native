@@ -1856,6 +1856,30 @@ paths:
           $ref: "#/components/responses/MessageOk"
 
   # ── CART ──────────────────────────────────────────────────────────────────
+  #
+  # ┌─────────────────────────────────────────────────────────────────────┐
+  # │  MODIFIER COMPLETE GUIDE                                            │
+  # ├─────────────────────────────────────────────────────────────────────┤
+  # │  Step 1 — Get modifier options for a menu item:                     │
+  # │    GET /ecommerce/menu-items/{id}                                   │
+  # │    Response: modifier_groups[].options[] → use options[].id         │
+  # │                                                                     │
+  # │  Step 2 — Add to cart with selected option IDs:                     │
+  # │    POST /ecommerce/cart  { menu_item_id, modifiers: [6, 12] }       │
+  # │    Backend resolves: group_name, option_name, price_adjustment      │
+  # │                                                                     │
+  # │  Step 3 — Edit modifiers (e.g. size change):                        │
+  # │    PATCH /ecommerce/cart/{id}  { modifiers: [6, 14] }               │
+  # │    Backend re-resolves everything from DB (client never sets price)  │
+  # │                                                                     │
+  # │  Rules:                                                             │
+  # │    • Only is_active:true options accepted; inactive IDs ignored     │
+  # │    • Omit modifiers key → unchanged                                 │
+  # │    • modifiers: [] → cleared                                        │
+  # │    • Price ALWAYS from DB                                           │
+  # │                                                                     │
+  # │  Subtotal = Σ (base_price + Σ modifier.price_adjustment) × qty     │
+  # └─────────────────────────────────────────────────────────────────────┘
 
   /ecommerce/cart:
     get:
@@ -1864,30 +1888,38 @@ paths:
       security: []
       summary: Get cart items
       description: |
-        Returns all cart items. Two ways to identify your cart:
+        Returns all cart items for the current session with computed subtotal.
 
-        **Option A — OTP Bearer token (recommended for apps):**
-        ```
-        Authorization: Bearer <token-from-otp-verify>
-        ```
-        The user ID is automatically identified from the token. Same token from any device = same cart.
+        **Session identification (pick one):**
 
-        **Option B — Guest (X-Session-Id):**
+        | Method | Header | When to use |
+        |--------|--------|-------------|
+        | OTP Bearer token | `Authorization: Bearer <token>` | Logged-in users — same cart on all devices |
+        | Guest UUID | `X-Session-Id: <uuid>` | Anonymous — persist same UUID per device |
+
+        **Subtotal formula (backend computed, not client):**
         ```
-        X-Session-Id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+        subtotal = Σ ( menu_item.price + Σ modifier.price_adjustment ) × quantity
         ```
-        Send the same UUID in every request.
       parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
+          description: OTP Bearer token from POST /otp-auth/verify
         - name: X-Session-Id
           in: header
           required: false
           schema:
             type: string
             format: uuid
-          description: Session identifier (e.g. UUID). If omitted, uses cookie session or generates one.
+            example: f47ac10b-58cc-4372-a567-0e02b2c3d479
+          description: Guest session UUID — same UUID on every request
       responses:
         "200":
-          description: Cart with items, subtotal and count
+          description: Cart items, subtotal and count
           content:
             application/json:
               schema:
@@ -1896,67 +1928,87 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        id:
-                          type: integer
-                        session_id:
-                          type: string
-                        business_id:
-                          type: integer
-                        menu_item_id:
-                          type: integer
-                        quantity:
-                          type: integer
-                        notes:
-                          type: string
-                        menu_item:
-                          type: object
-                          description: Loaded menu item (name, price, etc.)
-                        business:
-                          type: object
+                      $ref: "#/components/schemas/CartItem"
                   subtotal:
                     type: number
-                    description: Sum of (price * quantity) for all items
+                    description: "( base_price + modifier_adjustments ) × quantity, summed for all items"
+                    example: 27.00
                   count:
                     type: integer
-                    description: Number of cart rows
+                    example: 2
+
     post:
       tags:
         - Cart
       security: []
-      summary: Add item to cart
+      summary: Add item to cart (with optional modifiers)
       description: |
-        Add a menu item to the cart. Two ways to identify your session:
+        Add a menu item to the cart. If the same `menu_item_id` already exists in your session, the
+        row is **updated** (quantity + modifiers replaced), not duplicated.
 
-        **Option A — OTP Bearer token (recommended):**
-        ```
-        Authorization: Bearer <token-from-otp-verify>
-        ```
-        User-bound cart — same cart on all devices with the same token.
+        ---
 
-        **Option B — Guest (X-Session-Id):**
+        ### How modifiers work — step by step
+
+        **Step 1:** Get modifier option IDs for the menu item:
         ```
-        X-Session-Id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+        GET /api/ecommerce/menu-items/1
+        ```
+        ```json
+        {
+          "id": 1, "name": "Burger", "price": 10.00,
+          "modifier_groups": [
+            {
+              "id": 1, "name": "Size", "is_required": true, "min_select": 1, "max_select": 1,
+              "options": [
+                { "id": 5, "name": "Regular", "price_adjustment": 0.00, "is_default": true },
+                { "id": 6, "name": "Large",   "price_adjustment": 2.50 }
+              ]
+            },
+            {
+              "id": 2, "name": "Toppings", "is_required": false, "min_select": 0, "max_select": 3,
+              "options": [
+                { "id": 12, "name": "Extra Cheese", "price_adjustment": 1.00 },
+                { "id": 13, "name": "Jalapeños",    "price_adjustment": 0.50 }
+              ]
+            }
+          ]
+        }
         ```
 
-        Get `menu_item_id` from `GET /ecommerce/menu-items`. Adding the same item again updates quantity.
+        **Step 2:** User selects "Large" (id:6) + "Extra Cheese" (id:12) → send only IDs:
+        ```json
+        POST /api/ecommerce/cart
+        { "menu_item_id": 1, "quantity": 2, "modifiers": [6, 12] }
+        ```
+
+        **Step 3:** Backend resolves and stores a snapshot:
+        ```json
+        "modifiers": [
+          { "group_id": 1, "group_name": "Size",    "option_id": 6,  "option_name": "Large",        "price_adjustment": 2.50 },
+          { "group_id": 2, "group_name": "Toppings", "option_id": 12, "option_name": "Extra Cheese", "price_adjustment": 1.00 }
+        ]
+        ```
+
+        **Line total:** `(10.00 + 2.50 + 1.00) × 2 = **27.00**`
+
+        > **Client never sends prices.** All amounts come from DB.
       parameters:
         - name: Authorization
           in: header
           required: false
-          description: 'Bearer <token> — OTP token from POST /otp-auth/verify'
           schema:
             type: string
             example: 'Bearer eyJpd...'
+          description: OTP Bearer token (recommended for logged-in users)
         - name: X-Session-Id
           in: header
           required: false
-          description: Guest UUID — use if no Bearer token
           schema:
             type: string
             format: uuid
             example: f47ac10b-58cc-4372-a567-0e02b2c3d479
+          description: Guest UUID — use if no Bearer token
       requestBody:
         required: true
         content:
@@ -1968,105 +2020,116 @@ paths:
               properties:
                 menu_item_id:
                   type: integer
-                  description: ID from menu_items (required)
+                  description: ID from GET /ecommerce/menu-items
+                  example: 1
                 quantity:
                   type: integer
                   minimum: 1
                   maximum: 99
                   default: 1
+                  example: 2
                 notes:
                   type: string
                   maxLength: 300
+                  example: "No onions"
                 modifiers:
                   type: array
                   description: |
-                    Array of selected modifier option IDs. Backend resolves names and prices automatically.
-                    Get option IDs from `GET /ecommerce/menu-items/{id}` → `modifier_groups[].options[].id`
+                    Array of **modifier option IDs** selected by the user.
+                    Get IDs from: `GET /ecommerce/menu-items/{id}` → `modifier_groups[].options[].id`
+                    Backend resolves names, group info, price_adjustment from DB.
+                    Only `is_active: true` options accepted; inactive/invalid IDs silently ignored.
                   items:
                     type: integer
-                  example: [5, 12]
-            example:
-              menu_item_id: 1
-              quantity: 2
-              notes: "No onions"
-              modifiers: [5, 12]
+                  example: [6, 12]
+            examples:
+              no_modifiers:
+                summary: Simple item — no modifiers
+                value:
+                  menu_item_id: 1
+                  quantity: 1
+              with_modifiers:
+                summary: Large Burger + Extra Cheese
+                value:
+                  menu_item_id: 1
+                  quantity: 2
+                  notes: "No onions"
+                  modifiers: [6, 12]
+              single_modifier:
+                summary: Size upgrade only
+                value:
+                  menu_item_id: 1
+                  quantity: 1
+                  modifiers: [6]
       responses:
         "201":
-          description: Cart row created/updated with menu_item and business
+          description: Cart row created or updated
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id:
-                    type: integer
-                  session_id:
-                    type: string
-                  business_id:
-                    type: integer
-                  menu_item_id:
-                    type: integer
-                  quantity:
-                    type: integer
-                  notes:
-                    type: string
-                  modifiers:
-                    type: array
-                    description: Resolved modifier snapshot (names + prices from DB, not client)
-                    items:
-                      type: object
-                      properties:
-                        group_id:
-                          type: integer
-                        group_name:
-                          type: string
-                        option_id:
-                          type: integer
-                        option_name:
-                          type: string
-                        price_adjustment:
-                          type: number
-                  menu_item:
-                    type: object
-                  business:
-                    type: object
+                $ref: "#/components/schemas/CartItem"
         "422":
           description: Validation error (e.g. menu_item_id not found)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/responses/ValidationError"
 
   /ecommerce/cart/{cartItem}:
     patch:
       tags:
         - Cart
       security: []
-      summary: Update cart item quantity, notes, or modifiers
+      summary: Update quantity, notes, or modifiers
       description: |
-        All fields are optional — send only what you want to change.
+        Update an existing cart item. **All fields optional** — send only what changes.
 
-        **Quantity increase/decrease pattern (for +/- buttons):**
-        - Get current quantity from `GET /ecommerce/cart`
-        - Click `+` → send `quantity: current + 1`
-        - Click `-` → send `quantity: current - 1` (if result = 0, call `DELETE` instead)
+        ---
 
-        **Modifier rule:** Backend always re-resolves names and prices from DB — client never sets prices.
-        - Omit `modifiers` key → modifiers stay unchanged
-        - Send `modifiers: []` → all modifiers cleared
-        - Send `modifiers: [5, 12]` → replaced with new resolved snapshot
+        ### Quantity +/- buttons
+        ```
+        GET /cart → item.quantity = 2, item.id = 42
 
-        **403**: Returned if the cart item does not belong to your session (X-Session-Id / Bearer token).
+        [+] button  →  PATCH /cart/42  { "quantity": 3 }
+        [-] button  →  PATCH /cart/42  { "quantity": 1 }
+        [-] at qty 1 → DELETE /cart/42   (min is 1, PATCH rejects quantity:0)
+        ```
+
+        ---
+
+        ### Modifier edit (e.g. change Size from Regular to Large)
+
+        | Intent | What to send |
+        |--------|-------------|
+        | Keep modifiers as-is | Omit `modifiers` key |
+        | Change selection | `"modifiers": [6, 12]` — full new list |
+        | Remove all | `"modifiers": []` |
+
+        Backend re-resolves names + `price_adjustment` from DB on every update.
+        **Client never sets prices.**
+
+        **403** — Item belongs to a different session (prevents cross-user tampering).
       parameters:
         - name: cartItem
           in: path
           required: true
           schema:
             type: integer
-          description: Cart item ID (from GET /ecommerce/cart response)
+          description: Cart item ID (from GET /ecommerce/cart → items[].id)
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
+          description: Required if item was added with Bearer token
         - name: X-Session-Id
           in: header
           required: false
           schema:
             type: string
             format: uuid
-          description: Your session UUID — must match the session used when the item was created
+          description: Required if item was added with X-Session-Id
       requestBody:
         required: true
         content:
@@ -2078,117 +2141,121 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 99
-                  description: New absolute quantity (not a delta). Min 1; to remove item call DELETE instead.
+                  description: Absolute new quantity (not a delta). Use DELETE to remove item entirely.
                 notes:
                   type: string
                   maxLength: 300
                 modifiers:
                   type: array
                   description: |
-                    Array of modifier option IDs. Backend resolves group/option names and price_adjustment from DB.
-                    Send `[]` to clear all modifiers. Omit key to leave modifiers unchanged.
+                    Full replacement list of option IDs.
+                    Omit key → unchanged. `[]` → cleared. `[6,12]` → re-resolved snapshot.
                   items:
                     type: integer
-                  example: [5, 12]
             examples:
-              increase_quantity:
-                summary: Increase quantity to 3
+              increase_qty:
+                summary: "+1 button"
                 value:
                   quantity: 3
-              change_modifiers:
-                summary: Change modifiers only (keep current quantity)
+              decrease_qty:
+                summary: "-1 button"
                 value:
-                  modifiers: [5, 12]
-              update_all:
-                summary: Update quantity + modifiers together
+                  quantity: 1
+              change_modifiers:
+                summary: Change size (Regular → Large)
+                value:
+                  modifiers: [6, 12]
+              qty_and_modifiers:
+                summary: Change quantity + modifiers together
                 value:
                   quantity: 2
-                  modifiers: [5]
+                  modifiers: [6, 13]
                   notes: "Extra spicy"
               clear_modifiers:
                 summary: Remove all modifiers
                 value:
                   modifiers: []
+              notes_only:
+                summary: Update notes only
+                value:
+                  notes: "No onions please"
       responses:
         "200":
-          description: Cart item updated with resolved modifier snapshot
+          description: Updated cart item with resolved modifier snapshot
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id:
-                    type: integer
-                  quantity:
-                    type: integer
-                  notes:
-                    type: string
-                  modifiers:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        group_id:
-                          type: integer
-                        group_name:
-                          type: string
-                        option_id:
-                          type: integer
-                        option_name:
-                          type: string
-                        price_adjustment:
-                          type: number
-                  menu_item:
-                    type: object
-                  business:
-                    type: object
+                $ref: "#/components/schemas/CartItem"
         "403":
           description: Cart item does not belong to your session
         "404":
           description: Cart item not found
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
     delete:
       tags:
         - Cart
       security: []
       summary: Remove one item from cart
       description: |
-        Removes the cart item. Only works if the item belongs to your session (X-Session-Id or Bearer token).
-        Use this when quantity would drop to 0 (since PATCH enforces min quantity of 1).
+        Removes a single cart item. Only works if it belongs to your session.
+        Use this when quantity would drop to 0 — PATCH enforces `min: 1`.
+
+        **Returns 403** if the item belongs to a different session.
       parameters:
         - name: cartItem
           in: path
           required: true
           schema:
             type: integer
-          description: Cart item ID (from GET /ecommerce/cart response)
+          description: Cart item ID (from GET /ecommerce/cart → items[].id)
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
+          description: Required if item was added with Bearer token
         - name: X-Session-Id
           in: header
           required: false
           schema:
             type: string
             format: uuid
-          description: Your session UUID — must match the session used when the item was created
+          description: Required if item was added with X-Session-Id
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
         "403":
           description: Cart item does not belong to your session
+        "404":
+          description: Cart item not found
 
   /ecommerce/cart/clear:
     delete:
       tags:
         - Cart
       security: []
-      summary: Clear entire cart for current session
-      description: Deletes all cart rows for the session (same `X-Session-Id` or cookie). No auth required.
+      summary: Clear entire cart
+      description: |
+        Deletes **all** cart rows for the current session.
+        Uses same session resolution as other cart endpoints.
       parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+            example: 'Bearer eyJpd...'
+          description: OTP Bearer token — clears token-bound cart
         - name: X-Session-Id
           in: header
           required: false
           schema:
             type: string
             format: uuid
-          description: Your session UUID — same one used when adding items
+          description: Guest UUID — clears guest cart
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
@@ -4708,6 +4775,94 @@ components:
                 type: object
 
   schemas:
+
+    # ── CART ─────────────────────────────────────────────────────────────────
+
+    CartModifierSnapshot:
+      type: object
+      description: Resolved modifier — all values from DB, never from client
+      properties:
+        group_id:
+          type: integer
+          example: 1
+        group_name:
+          type: string
+          example: "Size"
+        option_id:
+          type: integer
+          example: 6
+        option_name:
+          type: string
+          example: "Large"
+        price_adjustment:
+          type: number
+          description: Added to base price (can be negative for discounts)
+          example: 2.50
+
+    CartItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 42
+        session_id:
+          type: string
+          description: Internal session key (otp_users_5, uuid, or session id)
+          example: "otp_users_5"
+        business_id:
+          type: integer
+          example: 3
+        menu_item_id:
+          type: integer
+          example: 1
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 99
+          example: 2
+        notes:
+          type: string
+          nullable: true
+          example: "No onions"
+        modifiers:
+          type: array
+          nullable: true
+          description: |
+            Resolved modifier snapshot. null if no modifiers selected.
+            price_adjustment values are always from DB — never from client.
+          items:
+            $ref: "#/components/schemas/CartModifierSnapshot"
+        menu_item:
+          type: object
+          description: Loaded menu item (name, base price, etc.)
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+              example: "Burger"
+            price:
+              type: number
+              example: 10.00
+            description:
+              type: string
+            image:
+              type: string
+              nullable: true
+        business:
+          type: object
+          description: Loaded business record
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     # ── OTP AUTH ERROR ───────────────────────────────────────────────────────
 
