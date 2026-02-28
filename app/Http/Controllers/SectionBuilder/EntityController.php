@@ -67,8 +67,8 @@ class EntityController extends Controller
                 }
             }
 
-            // Direction 2: section_entity exists (source=frontend) but actual DB table missing → create it
-            SectionEntity::where('source_type', 'frontend')->get()->each(function ($entity) use ($existingDbTables) {
+            // Direction 2: ANY section_entity whose actual DB table is missing → create it
+            SectionEntity::all()->each(function ($entity) use ($existingDbTables) {
                 if (!in_array($entity->table_name, $existingDbTables)) {
                     try {
                         Schema::create($entity->table_name, function (\Illuminate\Database\Schema\Blueprint $table) {
