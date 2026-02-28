@@ -635,11 +635,22 @@ class DynamicEntityService
 
             \Log::info("enrichCollection: found {$allChildren->count()} children for [{$field->column_name}]");
 
-            // Group by FK value (string cast to handle int/string mismatch)
+            // Group by FK value.
+            // Use case-insensitive property lookup because the user may have saved
+            // the FK as "recordnum" while MySQL returns the column as "recordNum".
+            $fkLower = strtolower($foreignKey);
             $childrenByKey = [];
             foreach ($allChildren as $child) {
-                $key = (string) ($child->{$foreignKey} ?? '');
-                $childrenByKey[$key][] = (array) $child;
+                $childArr = (array) $child;
+                $fkValue  = null;
+                foreach ($childArr as $col => $val) {
+                    if (strtolower($col) === $fkLower) {
+                        $fkValue = $val;
+                        break;
+                    }
+                }
+                $key = (string) ($fkValue ?? '');
+                $childrenByKey[$key][] = $childArr;
             }
 
             $records = $records->map(function ($record) use ($field, $childrenByKey) {
