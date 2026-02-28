@@ -216,6 +216,92 @@ tags:
       Configure `POST /api/delivery/doordash/webhook` in the DoorDash Developer Portal
       to receive live status updates (`enroute_to_pickup`, `picked_up`, `delivered`, etc.).
 
+  - name: Delivery Quote
+    description: |
+      **Unified delivery fee quote API** — single endpoint for all vendors.
+
+      Pass `vendor` to get a quote from DoorDash, UberEats, Instacart, or your own delivery zones.
+
+      | Vendor | Quote source |
+      |--------|-------------|
+      | `doordash` | Real DoorDash Drive API v2 quote |
+      | `ubereats` | Estimated from delivery zone config |
+      | `instacart` | Estimated from delivery zone config |
+      | `own` | Exact fee from delivery zone (checks min order) |
+
+  - name: UberEats Integration
+    description: |
+      Receive and manage orders from **UberEats Merchant API**.
+
+      UberEats sends orders via webhook → admin accepts/rejects → internal order is created.
+
+      ### Setup
+      1. Log into [UberEats Merchant Portal](https://merchant.uber.com)
+      2. Settings → Developer → Webhook Configuration
+      3. Add webhook URL: `POST /api/webhooks/delivery/ubereats`
+      4. Events: `orders.notification`, `orders.cancel`
+      5. Admin Panel → Delivery Settings → UberEats → enter `ubereats_store_id` + credentials
+
+  - name: Instacart Integration
+    description: |
+      Receive and manage orders from **Instacart Connect API**.
+
+      Instacart sends orders via webhook → admin accepts/rejects → internal order is created.
+
+      ### Setup
+      1. Log into [Instacart Connect Portal](https://connect.instacart.com)
+      2. Settings → Integrations → Webhooks
+      3. Add webhook URL: `POST /api/webhooks/delivery/instacart`
+      4. Admin Panel → Delivery Settings → Instacart → enter `instacart_retailer_id` + credentials
+
+  - name: Platform Orders
+    description: |
+      **Unified admin view** of all incoming orders from UberEats, Instacart, and other platforms.
+      Orders arrive via webhook as `received` status — admin accepts to create an internal order.
+
+  - name: Delivery Settings
+    description: |
+      Per-business configuration for all delivery platforms (own, DoorDash, UberEats, Instacart, etc.).
+      Credentials are stored securely and masked in responses.
+
+  - name: Delivery Zones
+    description: |
+      Geographic delivery areas with fees and estimated times.
+      Supports **circle** (center + radius), **polygon**, and **city/ZIP** zone types.
+
+      **Public endpoint** `GET /delivery/zones/check-point` lets the storefront show delivery fee for a customer location.
+
+  - name: Delivery Staff
+    description: |
+      Manage your own delivery drivers (for `own` delivery vendor).
+
+      Drivers authenticate via the Driver App using **phone + PIN**.
+      Admin generates a Bearer token via `POST /delivery/staff/{id}/token` to share with the driver.
+
+  - name: Delivery Assignments
+    description: |
+      Assign orders to drivers, track delivery lifecycle, and manage reassignments.
+
+      **Status flow:** `assigned → accepted → picked_up → out_for_delivery → delivered`
+
+      Auto-assign finds the nearest available driver automatically.
+
+  - name: Driver App
+    description: |
+      **Mobile Driver App API** — used by drivers on their phones.
+
+      ### Authentication
+      - Driver logs in with phone + PIN: `POST /driver-app/login` → returns Bearer token
+      - All subsequent requests: `Authorization: Bearer <token>`
+
+      ### Typical driver workflow
+      1. Login → get token
+      2. Go online: `PATCH /driver-app/status` `{ "status": "available" }`
+      3. Receive assignment notification (admin assigned order)
+      4. Accept: `PATCH /driver-app/assignments/{id}/respond` `{ "action": "accept" }`
+      5. Pick up: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "picked_up" }`
+      6. Deliver: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "delivered" }`
+
 paths:
 
   # ── AUTH ───────────────────────────────────────────────────────────────────
@@ -3067,6 +3153,1342 @@ paths:
         "200":
           description: Webhook processed
 
+  # ── DELIVERY QUOTE (UNIFIED) ───────────────────────────────────────────────
+
+  /delivery/quote:
+    post:
+      tags:
+        - Delivery Quote
+      summary: Get delivery fee quote (all vendors)
+      description: |
+        Single endpoint for all delivery vendors. Pass `vendor` to route to DoorDash, UberEats, Instacart, or own delivery zones.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - vendor
+              properties:
+                vendor:
+                  type: string
+                  enum: [doordash, ubereats, instacart, own]
+                  example: doordash
+                pickup_address:
+                  type: string
+                  description: Required for doordash
+                  example: "123 Main St, Los Angeles, CA 90012"
+                dropoff_address:
+                  type: string
+                  description: Required for doordash
+                  example: "456 Oak Ave, Los Angeles, CA 90001"
+                order_value:
+                  type: number
+                  description: Order total in dollars
+                  example: 35.50
+                business_id:
+                  type: integer
+                  description: Required for ubereats / instacart / own
+                  example: 1
+                lat:
+                  type: number
+                  description: Customer latitude (for zone matching)
+                  example: 34.0522
+                lng:
+                  type: number
+                  description: Customer longitude (for zone matching)
+                  example: -118.2437
+      responses:
+        "200":
+          description: Quote result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryQuoteResponse"
+        "422":
+          description: Missing required fields for the selected vendor
+
+  # ── DELIVERY SETTINGS ────────────────────────────────────────────────────────
+
+  /delivery/settings:
+    get:
+      tags:
+        - Delivery Settings
+      summary: Get all platform settings for a business
+      parameters:
+        - name: business_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        "200":
+          description: Settings keyed by platform name
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Object keyed by platform (own/doordash/ubereats/instacart/grubhub/skip)
+                additionalProperties:
+                  $ref: "#/components/schemas/DeliverySettingItem"
+    post:
+      tags:
+        - Delivery Settings
+      summary: Create or update platform settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliverySettingInput"
+      responses:
+        "200":
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Settings for ubereats saved.
+                  setting:
+                    $ref: "#/components/schemas/DeliverySettingItem"
+
+  /delivery/settings/test:
+    post:
+      tags:
+        - Delivery Settings
+      summary: Test connection / validate credentials for a platform
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [business_id, platform]
+              properties:
+                business_id:
+                  type: integer
+                  example: 1
+                platform:
+                  type: string
+                  enum: [own, doordash, ubereats, instacart, grubhub, skip]
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  webhook_url:
+                    type: string
+                    nullable: true
+
+  # ── DELIVERY ZONES ───────────────────────────────────────────────────────────
+
+  /delivery/zones:
+    get:
+      tags:
+        - Delivery Zones
+      summary: List delivery zones
+      security: []
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of zones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeliveryZone"
+    post:
+      tags:
+        - Delivery Zones
+      summary: Create delivery zone (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryZoneInput"
+      responses:
+        "201":
+          description: Zone created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryZone"
+
+  /delivery/zones/check-point:
+    get:
+      tags:
+        - Delivery Zones
+      summary: Check if a lat/lng is within any delivery zone (public)
+      description: Use from storefront to show delivery fee before checkout.
+      security: []
+      parameters:
+        - name: business_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+          example: 33.7294
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+          example: 73.0931
+      responses:
+        "200":
+          description: Zone check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  in_zone:
+                    type: boolean
+                    example: true
+                  zone:
+                    $ref: "#/components/schemas/DeliveryZone"
+                  delivery_fee:
+                    type: number
+                    example: 2.99
+                  estimated_minutes:
+                    type: integer
+                    example: 25
+                  message:
+                    type: string
+                    nullable: true
+                    example: No delivery zone covers your location.
+
+  /delivery/zones/reorder:
+    post:
+      tags:
+        - Delivery Zones
+      summary: Reorder zones (drag-and-drop from admin UI)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order]
+              properties:
+                order:
+                  type: array
+                  items:
+                    type: integer
+                  example: [3, 1, 2]
+      responses:
+        "200":
+          description: Order updated
+
+  /delivery/zones/{deliveryZone}:
+    get:
+      tags:
+        - Delivery Zones
+      summary: Get zone detail
+      parameters:
+        - name: deliveryZone
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Zone detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryZone"
+    patch:
+      tags:
+        - Delivery Zones
+      summary: Update zone
+      parameters:
+        - name: deliveryZone
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryZoneInput"
+      responses:
+        "200":
+          description: Zone updated
+    delete:
+      tags:
+        - Delivery Zones
+      summary: Delete zone
+      parameters:
+        - name: deliveryZone
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Zone deleted
+
+  # ── DELIVERY STAFF ───────────────────────────────────────────────────────────
+
+  /delivery/staff:
+    get:
+      tags:
+        - Delivery Staff
+      summary: List drivers
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [available, busy, offline]
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated list of drivers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedDeliveryStaff"
+    post:
+      tags:
+        - Delivery Staff
+      summary: Create driver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryStaffInput"
+      responses:
+        "201":
+          description: Driver created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryStaff"
+
+  /delivery/staff/available:
+    get:
+      tags:
+        - Delivery Staff
+      summary: Get available drivers (for assignment dropdown)
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of available drivers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeliveryStaff"
+
+  /delivery/staff/locations:
+    get:
+      tags:
+        - Delivery Staff
+      summary: Real-time GPS locations of all active drivers
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Drivers with location data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    status:
+                      type: string
+                    current_lat:
+                      type: number
+                      nullable: true
+                    current_lng:
+                      type: number
+                      nullable: true
+                    location_updated_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+
+  /delivery/staff/{deliveryStaff}:
+    get:
+      tags:
+        - Delivery Staff
+      summary: Driver detail (includes last 10 assignments)
+      parameters:
+        - name: deliveryStaff
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Driver detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryStaff"
+    patch:
+      tags:
+        - Delivery Staff
+      summary: Update driver
+      parameters:
+        - name: deliveryStaff
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryStaffInput"
+      responses:
+        "200":
+          description: Driver updated
+    delete:
+      tags:
+        - Delivery Staff
+      summary: Delete driver (soft delete)
+      parameters:
+        - name: deliveryStaff
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+
+  /delivery/staff/{deliveryStaff}/token:
+    post:
+      tags:
+        - Delivery Staff
+      summary: Generate Driver App token
+      description: |
+        Generates a new Bearer token for the driver to use in the Driver App.
+        **The token is shown only once** — share it with the driver immediately.
+      parameters:
+        - name: deliveryStaff
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "xxxxxxxxxxxxxxxx80chars"
+                  driver_id:
+                    type: integer
+                  driver_name:
+                    type: string
+                  message:
+                    type: string
+                    example: "New token generated. Share this with the driver app. It will not be shown again."
+
+  # ── DELIVERY ASSIGNMENTS ─────────────────────────────────────────────────────
+
+  /delivery/assignments:
+    get:
+      tags:
+        - Delivery Assignments
+      summary: List all assignments
+      parameters:
+        - name: driver_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [assigned, accepted, rejected, picked_up, out_for_delivery, delivered, failed, cancelled]
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: is_current
+          in: query
+          schema:
+            type: boolean
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated assignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedAssignments"
+
+  /delivery/assignments/assign:
+    post:
+      tags:
+        - Delivery Assignments
+      summary: Assign driver to order (manual)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, driver_id]
+              properties:
+                order_id:
+                  type: integer
+                  example: 42
+                driver_id:
+                  type: integer
+                  example: 5
+                zone_id:
+                  type: integer
+                  nullable: true
+                driver_earnings:
+                  type: number
+                  example: 3.50
+      responses:
+        "200":
+          description: Driver assigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  order:
+                    $ref: "#/components/schemas/Order"
+        "422":
+          description: Driver is offline or inactive
+
+  /delivery/assignments/auto-assign:
+    post:
+      tags:
+        - Delivery Assignments
+      summary: Auto-assign nearest available driver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id:
+                  type: integer
+                  example: 42
+      responses:
+        "200":
+          description: Driver auto-assigned
+        "422":
+          description: No available drivers at this time
+
+  /delivery/assignments/orders/{order}/unassign:
+    post:
+      tags:
+        - Delivery Assignments
+      summary: Unassign driver from order
+      parameters:
+        - name: order
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Assignment cancelled
+        "404":
+          description: No active assignment found
+
+  /delivery/assignments/{assignment}/status:
+    patch:
+      tags:
+        - Delivery Assignments
+      summary: Update assignment status (admin)
+      parameters:
+        - name: assignment
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [assigned, accepted, rejected, picked_up, out_for_delivery, delivered, failed, cancelled]
+                  example: picked_up
+                driver_notes:
+                  type: string
+                  nullable: true
+                rejection_reason:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryAssignment"
+
+  # ── UBEREATS ─────────────────────────────────────────────────────────────────
+
+  /delivery/ubereats/config:
+    get:
+      tags:
+        - UberEats Integration
+      summary: Get webhook URL and setup instructions
+      responses:
+        "200":
+          description: Config and setup steps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook_url:
+                    type: string
+                    example: "https://yourdomain.com/api/webhooks/delivery/ubereats"
+                  setup_steps:
+                    type: array
+                    items:
+                      type: string
+                  platform:
+                    type: string
+                    example: ubereats
+                  docs_url:
+                    type: string
+
+  /delivery/ubereats/orders:
+    get:
+      tags:
+        - UberEats Integration
+      summary: List UberEats platform orders
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [received, accepted, rejected, preparing, ready, picked_up, delivered, cancelled, failed]
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated UberEats orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedPlatformOrders"
+
+  /delivery/ubereats/orders/{platformOrder}/accept:
+    post:
+      tags:
+        - UberEats Integration
+      summary: Accept UberEats order → creates internal order
+      description: Accepts the incoming UberEats order, creates an internal `Order` record and links order items.
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prep_time_minutes:
+                  type: integer
+                  example: 20
+                  description: Override estimated prep time
+      responses:
+        "200":
+          description: Order accepted and internal order created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: UberEats order accepted.
+                  platform_order:
+                    $ref: "#/components/schemas/PlatformOrder"
+        "422":
+          description: Order already processed or wrong platform
+
+  /delivery/ubereats/orders/{platformOrder}/reject:
+    post:
+      tags:
+        - UberEats Integration
+      summary: Reject UberEats order
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: Kitchen closed
+      responses:
+        "200":
+          description: Order rejected
+
+  /delivery/ubereats/orders/{platformOrder}/status:
+    patch:
+      tags:
+        - UberEats Integration
+      summary: Update order status (sent back to UberEats)
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [preparing, ready, picked_up, delivered, cancelled]
+                  example: preparing
+      responses:
+        "200":
+          description: Status updated
+
+  /webhooks/delivery/ubereats:
+    post:
+      tags:
+        - UberEats Integration
+      summary: UberEats webhook receiver
+      description: |
+        UberEats posts order events here. Configure this URL in the UberEats Merchant Portal.
+
+        **Handled events:**
+        - `orders.notification` / `eats.order` → creates `PlatformOrder` (status=received)
+        - `orders.cancel` → marks order as cancelled
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw UberEats webhook payload
+      responses:
+        "200":
+          description: Processed
+
+  # ── INSTACART ────────────────────────────────────────────────────────────────
+
+  /delivery/instacart/config:
+    get:
+      tags:
+        - Instacart Integration
+      summary: Get webhook URL and setup instructions
+      responses:
+        "200":
+          description: Config and setup steps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook_url:
+                    type: string
+                    example: "https://yourdomain.com/api/webhooks/delivery/instacart"
+                  setup_steps:
+                    type: array
+                    items:
+                      type: string
+                  platform:
+                    type: string
+                    example: instacart
+
+  /delivery/instacart/orders:
+    get:
+      tags:
+        - Instacart Integration
+      summary: List Instacart platform orders
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated Instacart orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedPlatformOrders"
+
+  /delivery/instacart/orders/{platformOrder}/accept:
+    post:
+      tags:
+        - Instacart Integration
+      summary: Accept Instacart order → creates internal order
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Order accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  platform_order:
+                    $ref: "#/components/schemas/PlatformOrder"
+
+  /delivery/instacart/orders/{platformOrder}/reject:
+    post:
+      tags:
+        - Instacart Integration
+      summary: Reject Instacart order
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Order rejected
+
+  /webhooks/delivery/instacart:
+    post:
+      tags:
+        - Instacart Integration
+      summary: Instacart webhook receiver
+      description: |
+        Instacart posts order events here. Configure in Instacart Connect Portal.
+
+        **Handled events:**
+        - `order.created` / `order.placed` → creates `PlatformOrder`
+        - `order.cancelled` → marks cancelled
+        - `fulfillment.delivered` → marks delivered
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Processed
+
+  # ── PLATFORM ORDERS (UNIFIED) ─────────────────────────────────────────────────
+
+  /delivery/platform-orders:
+    get:
+      tags:
+        - Platform Orders
+      summary: List all platform orders (all vendors unified)
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [ubereats, instacart, grubhub, skip, doordash]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [received, accepted, rejected, preparing, ready, picked_up, delivered, cancelled, failed]
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+          example: "2026-02-01"
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+          example: "2026-02-28"
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 25
+      responses:
+        "200":
+          description: Paginated platform orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedPlatformOrders"
+
+  /delivery/platform-orders/summary:
+    get:
+      tags:
+        - Platform Orders
+      summary: Dashboard summary — counts and revenue by platform
+      parameters:
+        - name: business_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Summary data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_orders:
+                    type: integer
+                    example: 3
+                  today:
+                    type: object
+                    properties:
+                      orders_today:
+                        type: integer
+                        example: 12
+                      revenue_today:
+                        type: number
+                        example: 450.00
+                      fees_today:
+                        type: number
+                        example: 45.00
+                  by_platform:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        platform:
+                          type: string
+                        total:
+                          type: integer
+                        total_payout:
+                          type: number
+                  by_status:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        status:
+                          type: string
+                        total:
+                          type: integer
+
+  /delivery/platform-orders/{platformOrder}:
+    get:
+      tags:
+        - Platform Orders
+      summary: Platform order detail (with items + linked internal order)
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Platform order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformOrder"
+
+  /delivery/platform-orders/{platformOrder}/status:
+    patch:
+      tags:
+        - Platform Orders
+      summary: Update platform order status (admin)
+      parameters:
+        - name: platformOrder
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [received, accepted, rejected, preparing, ready, picked_up, delivered, cancelled, failed]
+                reason:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Status updated
+
+  # ── DRIVER APP ───────────────────────────────────────────────────────────────
+
+  /driver-app/login:
+    post:
+      tags:
+        - Driver App
+      summary: Driver login with phone + PIN
+      description: Returns a Bearer token for use in all subsequent Driver App requests.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, pin]
+              properties:
+                phone:
+                  type: string
+                  example: "+923001234567"
+                pin:
+                  type: string
+                  example: "1234"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "xxxxxxxx80chars"
+                  driver:
+                    $ref: "#/components/schemas/DeliveryStaff"
+        "401":
+          description: Invalid phone or PIN
+
+  /driver-app/me:
+    get:
+      tags:
+        - Driver App
+      summary: Get driver profile + current active assignment
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Profile and current assignment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver:
+                    $ref: "#/components/schemas/DeliveryStaff"
+                  current_assignment:
+                    nullable: true
+                    $ref: "#/components/schemas/DeliveryAssignment"
+
+  /driver-app/status:
+    patch:
+      tags:
+        - Driver App
+      summary: Go online / offline + update location
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [available, busy, offline]
+                  example: available
+                current_lat:
+                  type: number
+                  nullable: true
+                  example: 33.7294
+                current_lng:
+                  type: number
+                  nullable: true
+                  example: 73.0931
+      responses:
+        "200":
+          description: Status updated
+
+  /driver-app/location:
+    post:
+      tags:
+        - Driver App
+      summary: Update GPS location (call every 30s while active)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat:
+                  type: number
+                  example: 33.7294
+                lng:
+                  type: number
+                  example: 73.0931
+      responses:
+        "200":
+          description: Location updated
+
+  /driver-app/assignments:
+    get:
+      tags:
+        - Driver App
+      summary: Get active assignments for the logged-in driver
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeliveryAssignment"
+
+  /driver-app/assignments/{assignmentId}/respond:
+    patch:
+      tags:
+        - Driver App
+      summary: Accept or reject an assignment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [accept, reject]
+                  example: accept
+                rejection_reason:
+                  type: string
+                  nullable: true
+                  example: Too far away
+      responses:
+        "200":
+          description: Response recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  assignment:
+                    $ref: "#/components/schemas/DeliveryAssignment"
+
+  /driver-app/assignments/{assignmentId}/progress:
+    patch:
+      tags:
+        - Driver App
+      summary: Update delivery progress (picked_up / out_for_delivery / delivered / failed)
+      description: |
+        **Status flow:** `accepted → picked_up → out_for_delivery → delivered`
+
+        Each status update also syncs the parent `Order` status.
+        After `delivered`, driver is automatically marked `available`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [picked_up, out_for_delivery, delivered, failed]
+                  example: picked_up
+                driver_notes:
+                  type: string
+                  nullable: true
+                lat:
+                  type: number
+                  nullable: true
+                  description: Current driver GPS lat
+                lng:
+                  type: number
+                  nullable: true
+                  description: Current driver GPS lng
+      responses:
+        "200":
+          description: Progress updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  assignment:
+                    $ref: "#/components/schemas/DeliveryAssignment"
+
+  /driver-app/history:
+    get:
+      tags:
+        - Driver App
+      summary: Driver's completed delivery history
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated delivery history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedAssignments"
+
 # ── COMPONENTS ────────────────────────────────────────────────────────────────
 
 components:
@@ -3720,3 +5142,611 @@ components:
         is_default:
           type: boolean
           example: true
+
+    # ── DELIVERY QUOTE ─────────────────────────────────────────────────────────
+
+    DeliveryQuoteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        vendor:
+          type: string
+          enum: [doordash, ubereats, instacart, own]
+          example: doordash
+        fee:
+          type: number
+          nullable: true
+          example: 5.99
+        fee_cents:
+          type: integer
+          nullable: true
+          example: 599
+        currency:
+          type: string
+          example: USD
+        estimated_minutes:
+          type: integer
+          nullable: true
+          example: 35
+        min_order_amount:
+          type: number
+          example: 0
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        quote_id:
+          type: string
+          nullable: true
+        in_zone:
+          type: boolean
+          nullable: true
+          description: Only returned for vendor=own
+        zone:
+          nullable: true
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            description:
+              type: string
+              nullable: true
+        note:
+          type: string
+          nullable: true
+          description: Informational note (e.g. UberEats manages final fee)
+        message:
+          type: string
+          nullable: true
+        raw:
+          type: object
+          nullable: true
+          description: Raw vendor API response (doordash only)
+
+    # ── DELIVERY SETTINGS ──────────────────────────────────────────────────────
+
+    DeliverySettingItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        business_id:
+          type: integer
+        platform:
+          type: string
+          enum: [own, doordash, ubereats, instacart, grubhub, skip]
+        is_enabled:
+          type: boolean
+        store_id:
+          type: string
+          nullable: true
+        ubereats_store_id:
+          type: string
+          nullable: true
+        ubereats_menu_id:
+          type: string
+          nullable: true
+        instacart_retailer_id:
+          type: string
+          nullable: true
+        instacart_location_id:
+          type: string
+          nullable: true
+        auto_assign_driver:
+          type: boolean
+        max_delivery_radius_km:
+          type: integer
+        driver_accept_timeout_minutes:
+          type: integer
+        settings:
+          type: object
+          nullable: true
+        api_key_masked:
+          type: string
+          nullable: true
+          description: Last 4 chars only (****xxxx)
+        configured:
+          type: boolean
+          description: false if not yet set up
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeliverySettingInput:
+      type: object
+      required: [business_id, platform]
+      properties:
+        business_id:
+          type: integer
+          example: 1
+        platform:
+          type: string
+          enum: [own, doordash, ubereats, instacart, grubhub, skip]
+          example: ubereats
+        is_enabled:
+          type: boolean
+          example: true
+        api_key:
+          type: string
+          nullable: true
+          description: UberEats client_id / Instacart API key
+        api_secret:
+          type: string
+          nullable: true
+          description: UberEats client_secret
+        webhook_secret:
+          type: string
+          nullable: true
+          description: Used for webhook signature verification
+        store_id:
+          type: string
+          nullable: true
+        ubereats_store_id:
+          type: string
+          nullable: true
+          example: "store-id-from-merchant-portal"
+        ubereats_menu_id:
+          type: string
+          nullable: true
+        instacart_retailer_id:
+          type: string
+          nullable: true
+        instacart_location_id:
+          type: string
+          nullable: true
+        auto_assign_driver:
+          type: boolean
+        max_delivery_radius_km:
+          type: integer
+          example: 10
+        driver_accept_timeout_minutes:
+          type: integer
+          example: 5
+        settings:
+          type: object
+          nullable: true
+          description: Platform-specific extra settings (e.g. default_delivery_fee)
+
+    # ── DELIVERY ZONE ──────────────────────────────────────────────────────────
+
+    DeliveryZone:
+      type: object
+      properties:
+        id:
+          type: integer
+        business_id:
+          type: integer
+        name:
+          type: string
+          example: Downtown Zone
+        description:
+          type: string
+          nullable: true
+        zone_type:
+          type: string
+          enum: [circle, polygon, city]
+          example: circle
+        center_lat:
+          type: number
+          nullable: true
+          example: 33.7294
+        center_lng:
+          type: number
+          nullable: true
+          example: 73.0931
+        radius_km:
+          type: number
+          nullable: true
+          example: 5.0
+        polygon_coordinates:
+          type: array
+          nullable: true
+          items:
+            type: array
+            items:
+              type: number
+        city_name:
+          type: string
+          nullable: true
+        zip_codes:
+          type: string
+          nullable: true
+        delivery_fee:
+          type: number
+          example: 2.99
+        min_order_amount:
+          type: number
+          example: 15.00
+        estimated_minutes:
+          type: integer
+          example: 25
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeliveryZoneInput:
+      type: object
+      required: [business_id, name, zone_type, delivery_fee]
+      properties:
+        business_id:
+          type: integer
+        name:
+          type: string
+          example: Downtown Zone
+        description:
+          type: string
+          nullable: true
+        zone_type:
+          type: string
+          enum: [circle, polygon, city]
+        center_lat:
+          type: number
+          description: Required if zone_type=circle
+        center_lng:
+          type: number
+          description: Required if zone_type=circle
+        radius_km:
+          type: number
+          description: Required if zone_type=circle
+          example: 5.0
+        polygon_coordinates:
+          type: array
+          description: Required if zone_type=polygon
+          items:
+            type: array
+            items:
+              type: number
+        city_name:
+          type: string
+          description: Required if zone_type=city
+        zip_codes:
+          type: string
+          nullable: true
+        delivery_fee:
+          type: number
+          example: 2.99
+        min_order_amount:
+          type: number
+          example: 15.00
+        estimated_minutes:
+          type: integer
+          example: 25
+        is_active:
+          type: boolean
+          example: true
+        sort_order:
+          type: integer
+          example: 0
+
+    # ── DELIVERY STAFF ─────────────────────────────────────────────────────────
+
+    DeliveryStaff:
+      type: object
+      properties:
+        id:
+          type: integer
+        business_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          example: Ahmed Khan
+        phone:
+          type: string
+          example: "+923001234567"
+        email:
+          type: string
+          nullable: true
+        vehicle_type:
+          type: string
+          enum: [bike, motorcycle, car, van, walk]
+          example: motorcycle
+        vehicle_model:
+          type: string
+          nullable: true
+          example: Honda CB150
+        vehicle_plate:
+          type: string
+          nullable: true
+          example: LEH-1234
+        photo:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [available, busy, offline]
+          example: available
+        is_active:
+          type: boolean
+        current_lat:
+          type: number
+          nullable: true
+        current_lng:
+          type: number
+          nullable: true
+        location_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        total_deliveries:
+          type: integer
+          example: 142
+        rating:
+          type: number
+          nullable: true
+          example: 4.8
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeliveryStaffInput:
+      type: object
+      required: [name, phone]
+      properties:
+        business_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          example: Ahmed Khan
+        phone:
+          type: string
+          example: "+923001234567"
+        email:
+          type: string
+          nullable: true
+        pin:
+          type: string
+          description: 4-6 digit PIN for driver app login
+          example: "1234"
+        vehicle_type:
+          type: string
+          enum: [bike, motorcycle, car, van, walk]
+        vehicle_model:
+          type: string
+          nullable: true
+        vehicle_plate:
+          type: string
+          nullable: true
+        photo:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [available, busy, offline]
+        is_active:
+          type: boolean
+        notes:
+          type: string
+          nullable: true
+
+    PaginatedDeliveryStaff:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryStaff"
+        current_page:
+          type: integer
+        total:
+          type: integer
+        per_page:
+          type: integer
+
+    # ── DELIVERY ASSIGNMENT ────────────────────────────────────────────────────
+
+    DeliveryAssignment:
+      type: object
+      properties:
+        id:
+          type: integer
+        order_id:
+          type: integer
+        driver_id:
+          type: integer
+        zone_id:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [assigned, accepted, rejected, picked_up, out_for_delivery, delivered, failed, cancelled]
+          example: accepted
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        picked_up_at:
+          type: string
+          format: date-time
+          nullable: true
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+        driver_notes:
+          type: string
+          nullable: true
+        driver_rating:
+          type: integer
+          nullable: true
+          description: 1-5 rating
+        rejection_reason:
+          type: string
+          nullable: true
+        driver_earnings:
+          type: number
+          example: 3.50
+        is_current:
+          type: boolean
+        driver:
+          nullable: true
+          $ref: "#/components/schemas/DeliveryStaff"
+        order:
+          nullable: true
+          $ref: "#/components/schemas/Order"
+        created_at:
+          type: string
+          format: date-time
+
+    PaginatedAssignments:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAssignment"
+        current_page:
+          type: integer
+        total:
+          type: integer
+        per_page:
+          type: integer
+
+    # ── PLATFORM ORDER ─────────────────────────────────────────────────────────
+
+    PlatformOrder:
+      type: object
+      properties:
+        id:
+          type: integer
+        business_id:
+          type: integer
+        order_id:
+          type: integer
+          nullable: true
+          description: Linked internal order (after acceptance)
+        platform:
+          type: string
+          enum: [ubereats, instacart, grubhub, skip, doordash]
+          example: ubereats
+        platform_order_id:
+          type: string
+          example: ue-order-abc123
+        platform_order_number:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [received, accepted, rejected, preparing, ready, picked_up, delivered, cancelled, failed]
+          example: received
+        subtotal:
+          type: number
+          example: 25.00
+        tax:
+          type: number
+          example: 2.10
+        delivery_fee:
+          type: number
+          example: 0.00
+        platform_fee:
+          type: number
+          example: 6.25
+          description: Commission charged by the platform
+        total:
+          type: number
+          example: 27.10
+        payout:
+          type: number
+          example: 20.85
+          description: What the merchant receives after fees
+        customer_name:
+          type: string
+          nullable: true
+        customer_phone:
+          type: string
+          nullable: true
+        customer_display_name:
+          type: string
+          nullable: true
+        delivery_address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        order_placed_at:
+          type: string
+          format: date-time
+          nullable: true
+        prep_time_minutes:
+          type: integer
+          nullable: true
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejection_reason:
+          type: string
+          nullable: true
+        items_payload:
+          type: array
+          nullable: true
+          description: Parsed items from the platform order
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              quantity:
+                type: integer
+              price:
+                type: number
+              notes:
+                type: string
+                nullable: true
+        business:
+          nullable: true
+          $ref: "#/components/schemas/Business"
+        order:
+          nullable: true
+          $ref: "#/components/schemas/Order"
+        created_at:
+          type: string
+          format: date-time
+
+    PaginatedPlatformOrders:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformOrder"
+        current_page:
+          type: integer
+        total:
+          type: integer
+        per_page:
+          type: integer

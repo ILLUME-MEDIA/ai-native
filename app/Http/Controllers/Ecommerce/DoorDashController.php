@@ -8,6 +8,7 @@ use App\Services\DoorDashService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 
 class DoorDashController extends Controller
 {
@@ -191,14 +192,18 @@ class DoorDashController extends Controller
             'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
             'doordash_status'       => $delivery['delivery_status'] ?? 'created',
             'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
+            'tracking_url'          => $delivery['tracking_url'] ?? null,
+            'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
+                ? \Illuminate\Support\Carbon::parse($delivery['estimated_delivery_time']) : null,
         ]);
 
         return response()->json([
-            'success'      => true,
-            'delivery_id'  => $order->doordash_delivery_id,
-            'status'       => $order->doordash_status,
-            'label'        => DoorDashService::statusLabel($order->doordash_status ?? ''),
-            'tracking_url' => $order->doordash_tracking_url,
+            'success'               => true,
+            'delivery_id'           => $order->doordash_delivery_id,
+            'status'                => $order->doordash_status,
+            'label'                 => DoorDashService::statusLabel($order->doordash_status ?? ''),
+            'tracking_url'          => $order->doordash_tracking_url,
+            'estimated_delivery_at' => $order->estimated_delivery_at,
         ], 201);
     }
 
@@ -219,6 +224,10 @@ class DoorDashController extends Controller
 
             if (! empty($data['tracking_url'])) {
                 $updateFields['doordash_tracking_url'] = $data['tracking_url'];
+                $updateFields['tracking_url']           = $data['tracking_url'];
+            }
+            if (! empty($data['estimated_delivery_time'])) {
+                $updateFields['estimated_delivery_at'] = Carbon::parse($data['estimated_delivery_time']);
             }
 
             $orderStatus = match ($ddStatus) {

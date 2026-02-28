@@ -16,14 +16,22 @@ class Order extends Model
         'customer_name','customer_phone','customer_email',
         'delivery_address','notes','order_type',
         'item_delivery_type','delivery_vendor',
+        // Delivery assignment
+        'assigned_driver_id','driver_status','platform_order_id',
+        'tracking_url','estimated_delivery_at',
+        'driver_accepted_at','driver_picked_up_at','delivered_at',
     ];
 
     protected $casts = [
-        'subtotal'  => 'float',
-        'tax'       => 'float',
-        'delivery_fee' => 'float',
-        'total'     => 'float',
-        'paid_at'   => 'datetime',
+        'subtotal'              => 'float',
+        'tax'                   => 'float',
+        'delivery_fee'          => 'float',
+        'total'                 => 'float',
+        'paid_at'               => 'datetime',
+        'estimated_delivery_at' => 'datetime',
+        'driver_accepted_at'    => 'datetime',
+        'driver_picked_up_at'   => 'datetime',
+        'delivered_at'          => 'datetime',
     ];
 
     public function business(): BelongsTo
@@ -34,5 +42,25 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    public function assignedDriver(): BelongsTo
+    {
+        return $this->belongsTo(DeliveryStaff::class, 'assigned_driver_id');
+    }
+
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(DeliveryAssignment::class);
+    }
+
+    public function currentAssignment(): HasMany
+    {
+        return $this->hasMany(DeliveryAssignment::class)->where('is_current', true);
+    }
+
+    public function platformOrder(): BelongsTo
+    {
+        return $this->belongsTo(PlatformOrder::class, 'platform_order_id');
     }
 }

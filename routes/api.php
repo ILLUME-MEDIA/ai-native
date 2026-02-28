@@ -27,6 +27,15 @@ use App\Http\Controllers\Ecommerce\PosController;
 use App\Http\Controllers\Ecommerce\PosCatalogController;
 use App\Http\Controllers\Ecommerce\PosPaymentController;
 use App\Http\Controllers\Ecommerce\PosWebhookController;
+use App\Http\Controllers\Delivery\DeliveryStaffController;
+use App\Http\Controllers\Delivery\DeliveryZoneController;
+use App\Http\Controllers\Delivery\DeliveryAssignmentController;
+use App\Http\Controllers\Delivery\DeliverySettingsController;
+use App\Http\Controllers\Delivery\DriverAppController;
+use App\Http\Controllers\Delivery\UberEatsController;
+use App\Http\Controllers\Delivery\InstacartController;
+use App\Http\Controllers\Delivery\PlatformOrderController;
+use App\Http\Controllers\Delivery\DeliveryQuoteController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -432,6 +441,98 @@ Route::middleware('auth:sanctum')->get('ecommerce/orders/{order}/pos-orders', [P
 // ── POS Webhooks (no auth — verified by signature) ────────────────────────────
 Route::post('webhooks/pos/square', [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
 Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->withoutMiddleware(['auth:sanctum']);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── DELIVERY SYSTEM ───────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Admin: Delivery Staff Management ─────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/staff')->group(function () {
+    Route::get('/',                         [DeliveryStaffController::class, 'index']);
+    Route::post('/',                        [DeliveryStaffController::class, 'store']);
+    Route::get('/available',               [DeliveryStaffController::class, 'available']);
+    Route::get('/locations',               [DeliveryStaffController::class, 'locations']);
+    Route::get('/{deliveryStaff}',          [DeliveryStaffController::class, 'show']);
+    Route::patch('/{deliveryStaff}',        [DeliveryStaffController::class, 'update']);
+    Route::delete('/{deliveryStaff}',       [DeliveryStaffController::class, 'destroy']);
+    Route::post('/{deliveryStaff}/token',   [DeliveryStaffController::class, 'generateToken']);
+});
+
+// ── Admin: Delivery Zones Management ──────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/zones')->group(function () {
+    Route::get('/',                       [DeliveryZoneController::class, 'index']);
+    Route::post('/',                      [DeliveryZoneController::class, 'store']);
+    Route::post('/reorder',              [DeliveryZoneController::class, 'reorder']);
+    Route::get('/{deliveryZone}',         [DeliveryZoneController::class, 'show']);
+    Route::patch('/{deliveryZone}',       [DeliveryZoneController::class, 'update']);
+    Route::delete('/{deliveryZone}',      [DeliveryZoneController::class, 'destroy']);
+});
+
+// ── Public: Check delivery zone for a coordinate ──────────────────────────────
+Route::get('/delivery/zones/check-point', [DeliveryZoneController::class, 'checkPoint']);
+
+// ── Public/Storefront: Unified Delivery Quote API ─────────────────────────────
+// Single endpoint — pass `vendor` to route to DoorDash / UberEats / Instacart / own
+Route::post('/delivery/quote', [DeliveryQuoteController::class, 'quote']);
+
+// ── Admin: Order Assignment / Dispatch ────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/assignments')->group(function () {
+    Route::get('/',                                [DeliveryAssignmentController::class, 'index']);
+    Route::post('/assign',                         [DeliveryAssignmentController::class, 'assign']);
+    Route::post('/auto-assign',                    [DeliveryAssignmentController::class, 'autoAssign']);
+    Route::post('/orders/{order}/unassign',        [DeliveryAssignmentController::class, 'unassign']);
+    Route::patch('/{assignment}/status',           [DeliveryAssignmentController::class, 'updateStatus']);
+});
+
+// ── Admin: Delivery Platform Settings ─────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/settings')->group(function () {
+    Route::get('/',               [DeliverySettingsController::class, 'index']);
+    Route::post('/',              [DeliverySettingsController::class, 'upsert']);
+    Route::post('/test',          [DeliverySettingsController::class, 'testConnection']);
+});
+
+// ── Admin: All Platform Orders (UberEats + Instacart unified) ─────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/platform-orders')->group(function () {
+    Route::get('/',                                [PlatformOrderController::class, 'index']);
+    Route::get('/summary',                         [PlatformOrderController::class, 'summary']);
+    Route::get('/{platformOrder}',                 [PlatformOrderController::class, 'show']);
+    Route::patch('/{platformOrder}/status',        [PlatformOrderController::class, 'updateStatus']);
+});
+
+// ── Admin: UberEats Order Management ──────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/ubereats')->group(function () {
+    Route::get('/config',                          [UberEatsController::class, 'config']);
+    Route::get('/orders',                          [UberEatsController::class, 'orders']);
+    Route::post('/orders/{platformOrder}/accept',  [UberEatsController::class, 'accept']);
+    Route::post('/orders/{platformOrder}/reject',  [UberEatsController::class, 'reject']);
+    Route::patch('/orders/{platformOrder}/status', [UberEatsController::class, 'updateOrderStatus']);
+});
+
+// ── Admin: Instacart Order Management ─────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('delivery/instacart')->group(function () {
+    Route::get('/config',                          [InstacartController::class, 'config']);
+    Route::get('/orders',                          [InstacartController::class, 'orders']);
+    Route::post('/orders/{platformOrder}/accept',  [InstacartController::class, 'accept']);
+    Route::post('/orders/{platformOrder}/reject',  [InstacartController::class, 'reject']);
+});
+
+// ── Platform Webhooks (no auth — signature verified internally) ───────────────
+Route::post('webhooks/delivery/ubereats',  [UberEatsController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/instacart', [InstacartController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
+
+// ── Driver App API ─────────────────────────────────────────────────────────────
+// Authentication: POST /api/driver-app/login → returns Bearer token
+// All other routes: Authorization: Bearer <token>
+Route::prefix('driver-app')->group(function () {
+    Route::post('/login',                                          [DriverAppController::class, 'login']);
+    Route::get('/me',                                              [DriverAppController::class, 'me']);
+    Route::patch('/status',                                        [DriverAppController::class, 'updateStatus']);
+    Route::post('/location',                                       [DriverAppController::class, 'updateLocation']);
+    Route::get('/assignments',                                     [DriverAppController::class, 'assignments']);
+    Route::patch('/assignments/{assignmentId}/respond',            [DriverAppController::class, 'respondToAssignment']);
+    Route::patch('/assignments/{assignmentId}/progress',           [DriverAppController::class, 'updateProgress']);
+    Route::get('/history',                                         [DriverAppController::class, 'history']);
+});
 
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
