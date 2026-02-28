@@ -239,6 +239,25 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
                                 </Col>
                                 <Col md={6}>
                                     <Form.Group className="mb-3">
+                                        <Form.Label>Relation Type</Form.Label>
+                                        <Form.Select
+                                            value={currentField.relation_type ?? 'belongsTo'}
+                                            onChange={(e) => setCurrentField({
+                                                ...currentField,
+                                                relation_type: e.target.value,
+                                            })}
+                                        >
+                                            <option value="belongsTo">belongsTo — FK is on this table</option>
+                                            <option value="hasMany">hasMany — FK is on related table</option>
+                                            <option value="hasOne">hasOne — FK is on related table (single)</option>
+                                        </Form.Select>
+                                        <Form.Text className="text-muted">
+                                            belongsTo: this table stores the FK (e.g. category_id). hasMany/hasOne: related table stores the FK pointing back.
+                                        </Form.Text>
+                                    </Form.Group>
+                                </Col>
+                                <Col md={6}>
+                                    <Form.Group className="mb-3">
                                         <Form.Label>Related table (entity)</Form.Label>
                                         <Form.Select
                                             value={currentField.related_entity_id ?? ''}
@@ -255,24 +274,43 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
                                             ))}
                                         </Form.Select>
                                         <Form.Text className="text-muted">
-                                            The table this field links to (e.g. members, orders).
+                                            The table this field links to.
                                         </Form.Text>
                                     </Form.Group>
                                 </Col>
                                 <Col md={6}>
                                     <Form.Group className="mb-3">
-                                        <Form.Label>Display column</Form.Label>
-                                        <Form.Control
-                                            value={currentField.relation_display_column ?? ''}
-                                            onChange={(e) => setCurrentField({
-                                                ...currentField,
-                                                relation_display_column: e.target.value,
-                                            })}
-                                            placeholder="e.g. name, title"
-                                        />
-                                        <Form.Text className="text-muted">
-                                            Column from related table to show in dropdown (e.g. name, title).
-                                        </Form.Text>
+                                        {['hasMany', 'hasOne'].includes(currentField.relation_type) ? (
+                                            <>
+                                                <Form.Label>Foreign Key Column <span className="text-danger">*</span></Form.Label>
+                                                <Form.Control
+                                                    value={currentField.relation_display_column ?? ''}
+                                                    onChange={(e) => setCurrentField({
+                                                        ...currentField,
+                                                        relation_display_column: e.target.value,
+                                                    })}
+                                                    placeholder="e.g. recordNum, user_id"
+                                                />
+                                                <Form.Text className="text-muted">
+                                                    Column in the related table that stores this record's ID.
+                                                </Form.Text>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Form.Label>Display Column</Form.Label>
+                                                <Form.Control
+                                                    value={currentField.relation_display_column ?? ''}
+                                                    onChange={(e) => setCurrentField({
+                                                        ...currentField,
+                                                        relation_display_column: e.target.value,
+                                                    })}
+                                                    placeholder="e.g. name, title"
+                                                />
+                                                <Form.Text className="text-muted">
+                                                    Column from related table to show in dropdown.
+                                                </Form.Text>
+                                            </>
+                                        )}
                                     </Form.Group>
                                 </Col>
                             </>

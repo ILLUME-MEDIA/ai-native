@@ -678,8 +678,9 @@ class DynamicEntityService
                 continue;
             }
 
-            $foreignKey = Str::singular($entity->table_name) . '_id';
-            $localValue = $record->id ?? null;
+            // Use relation_display_column as custom FK if set, otherwise fall back to convention
+            $foreignKey = $field->relation_display_column ?: (Str::singular($entity->table_name) . '_id');
+            $localValue = $record->getKey() ?? null;
             if ($localValue === null) {
                 continue;
             }
