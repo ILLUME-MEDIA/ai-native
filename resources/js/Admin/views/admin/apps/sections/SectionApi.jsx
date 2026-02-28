@@ -285,7 +285,7 @@ const SectionApi = () => {
                         <CardHeader>
                             <h5 className="mb-0">Available Fields</h5>
                         </CardHeader>
-                        <CardBody>
+                        <CardBody style={{ maxHeight: '280px', overflowY: 'auto' }}>
                             {fields.length === 0 ? (
                                 <p className="text-muted mb-0">No fields defined yet. Add fields in the Section Editor.</p>
                             ) : (
@@ -316,7 +316,7 @@ const SectionApi = () => {
                     </Card>
 
                     <Tab.Container defaultActiveKey="list">
-                        <Card className="mb-4">
+                        <Card className="mb-4" style={{ maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
                             <CardHeader>
                                 <Nav variant="tabs" className="card-header-tabs">
                                     <Nav.Item>
@@ -336,7 +336,7 @@ const SectionApi = () => {
                                     </Nav.Item>
                                 </Nav>
                             </CardHeader>
-                            <CardBody>
+                            <CardBody style={{ overflowY: 'auto', flex: 1 }}>
                                 <Tab.Content>
                                     <Tab.Pane eventKey="list">
                                         <h6 className="mb-3">List All Records</h6>
@@ -482,7 +482,7 @@ const SectionApi = () => {
                                         </Form>
 
                                         <h6 className="mt-4">Sample / Live Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(listResponse ?? listResponseExample, null, 2)}
                                         </pre>
                                         <Button
@@ -592,7 +592,7 @@ const SectionApi = () => {
                                         </Form>
 
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(singleResponse ?? responseExample, null, 2)}
                                         </pre>
                                         <Button
@@ -611,7 +611,7 @@ const SectionApi = () => {
                                             <code>{baseUrl}</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
                                         <Button
@@ -623,7 +623,7 @@ const SectionApi = () => {
                                             <Icon icon="copy" className="me-1" /> Copy Request Body
                                         </Button>
                                         <h6 className="mt-4">Response (201 Created)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>
@@ -635,7 +635,7 @@ const SectionApi = () => {
                                             <code>{baseUrl}/1</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
                                         <Button
@@ -647,7 +647,7 @@ const SectionApi = () => {
                                             <Icon icon="copy" className="me-1" /> Copy Request Body
                                         </Button>
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>
@@ -705,7 +705,7 @@ const SectionApi = () => {
                             <p className="text-muted small mb-2">
                                 The response contains <code>first</code> and <code>second</code> keys, each with entity metadata and paginated data:
                             </p>
-                            <pre className="bg-light p-3 rounded small">
+                            <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
 {JSON.stringify({
     first: {
         entity: { id: 1, name: 'First Entity', table_name: 'first_table', slug: 'first-entity' },

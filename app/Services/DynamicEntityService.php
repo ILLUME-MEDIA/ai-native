@@ -322,19 +322,37 @@ class DynamicEntityService
             throw new \RuntimeException("Field '{$field}' does not exist on this entity.");
         }
 
-        $record = $this->makeBaseQuery($entity, $context)
-            ->where($field, $value)
-            ->first();
+        // Numeric value → exact match, return single record
+        if (is_numeric($value)) {
+            $record = $this->makeBaseQuery($entity, $context)
+                ->where($field, $value)
+                ->first();
 
-        if (! $record) {
+            if (! $record) {
+                throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                    "No record found where {$field} = {$value}"
+                );
+            }
+
+            $this->enrichRecord($record, $entity, includeChildren: true);
+
+            return $record;
+        }
+
+        // String value → LIKE keyword search on the specified field, return all matches
+        $records = $this->makeBaseQuery($entity, $context)
+            ->where($field, 'like', '%' . $value . '%')
+            ->get();
+
+        if ($records->isEmpty()) {
             throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
-                "No record found where {$field} = {$value}"
+                "No records found where {$field} matches '{$value}'"
             );
         }
 
-        $this->enrichRecord($record, $entity, includeChildren: true);
+        $records = $this->enrichCollection($records, $entity);
 
-        return $record;
+        return $records;
     }
 
     public function store(SectionEntity $entity, array $payload, array $context = [])
@@ -473,16 +491,45 @@ class DynamicEntityService
 
     /**
      * Resolve the underlying Eloquent model for an entity.
-     * For now, we use the query builder directly on the table; this can later be
-     * evolved to custom model classes per entity if needed.
+     * Detects the real primary key so tables that use e.g. 'num' instead of 'id' work correctly.
      */
     protected function resolveModelClass(SectionEntity $entity)
     {
-        // Use an anonymous model bound to the entity's table.
-        $instance = new class extends \Illuminate\Database\Eloquent\Model {};
+        $pk = $this->detectPrimaryKey($entity->table_name);
+
+        $instance = new class($pk) extends \Illuminate\Database\Eloquent\Model {
+            protected $guarded = [];
+            protected $primaryKey;
+
+            public function __construct(string $pk = 'id', array $attributes = [])
+            {
+                $this->primaryKey = $pk;
+                parent::__construct($attributes);
+            }
+        };
         $instance->setTable($entity->table_name);
 
         return $instance;
+    }
+
+    /**
+     * Detect the actual primary key column of a table.
+     * Falls back to 'id' if the table has no PRIMARY constraint or on any error.
+     */
+    protected function detectPrimaryKey(string $tableName): string
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $pk = DB::selectOne(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+                 ORDER BY ORDINAL_POSITION LIMIT 1",
+                [$database, $tableName]
+            );
+            return $pk ? $pk->COLUMN_NAME : 'id';
+        } catch (\Exception $e) {
+            return 'id';
+        }
     }
 
     // ─── Relation Enrichment ─────────────────────────────────────────────────

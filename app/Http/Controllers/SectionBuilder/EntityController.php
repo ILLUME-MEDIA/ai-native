@@ -212,6 +212,7 @@ class EntityController extends Controller
             'fields.*.default_value' => ['nullable', 'string'],
             'fields.*.is_listing_visible' => ['sometimes', 'boolean'],
             'fields.*.is_detail_visible' => ['sometimes', 'boolean'],
+            'fields.*.id' => ['nullable', 'integer'],
             'fields.*.related_entity_id' => ['nullable', 'integer', 'exists:section_entities,id'],
             'fields.*.relation_type' => ['nullable', 'string', 'max:32'],
             'fields.*.relation_display_column' => ['nullable', 'string', 'max:64'],
@@ -222,25 +223,76 @@ class EntityController extends Controller
 
         // Sync fields if provided
         if (isset($data['fields'])) {
+            // Capture old fields keyed by ID for rename detection
+            $oldFields = $resolved->fields()->get()->keyBy('id');
+
+            // Detect and apply DB column renames BEFORE deleting section_fields
+            foreach ($data['fields'] as $fieldData) {
+                $fieldId       = $fieldData['id'] ?? null;
+                $newColumnName = $fieldData['slug'];
+
+                if (
+                    $fieldId &&
+                    isset($oldFields[$fieldId]) &&
+                    $oldFields[$fieldId]->column_name !== $newColumnName &&
+                    Schema::hasTable($resolved->table_name) &&
+                    Schema::hasColumn($resolved->table_name, $oldFields[$fieldId]->column_name) &&
+                    !Schema::hasColumn($resolved->table_name, $newColumnName)
+                ) {
+                    $oldColumnName = $oldFields[$fieldId]->column_name;
+                    Schema::table($resolved->table_name, function (\Illuminate\Database\Schema\Blueprint $table) use ($oldColumnName, $newColumnName) {
+                        $table->renameColumn($oldColumnName, $newColumnName);
+                    });
+                }
+            }
+
             // Delete existing fields
             $resolved->fields()->delete();
 
             // Create new fields with sort order
             foreach ($data['fields'] as $index => $fieldData) {
+                $columnName = $fieldData['slug'];
+                $fieldType  = $fieldData['type'];
+                $isNullable = $fieldData['nullable'] ?? true;
+
                 $resolved->fields()->create([
-                    'column_name' => $fieldData['slug'],
+                    'column_name' => $columnName,
                     'label' => $fieldData['name'],
-                    'type' => $fieldData['type'],
+                    'type' => $fieldType,
                     'related_entity_id' => $fieldData['related_entity_id'] ?? null,
                     'relation_type' => $fieldData['relation_type'] ?? null,
                     'relation_display_column' => $fieldData['relation_display_column'] ?? null,
                     'required' => $fieldData['required'] ?? false,
-                    'nullable' => $fieldData['nullable'] ?? true,
+                    'nullable' => $isNullable,
                     'default_value' => $fieldData['default_value'] ?? null,
                     'list_visible' => $fieldData['is_listing_visible'] ?? true,
                     'detail_visible' => $fieldData['is_detail_visible'] ?? true,
                     'sort_order' => $index,
                 ]);
+
+                // Add column to actual DB table if it doesn't exist (new field, not a rename)
+                if (
+                    !in_array($columnName, ['id', 'created_at', 'updated_at']) &&
+                    Schema::hasTable($resolved->table_name) &&
+                    !Schema::hasColumn($resolved->table_name, $columnName)
+                ) {
+                    Schema::table($resolved->table_name, function (\Illuminate\Database\Schema\Blueprint $table) use ($columnName, $fieldType, $isNullable) {
+                        $col = match ($fieldType) {
+                            'number'            => $table->integer($columnName),
+                            'decimal'           => $table->decimal($columnName, 10, 2),
+                            'boolean'           => $table->boolean($columnName)->default(false),
+                            'date'              => $table->date($columnName),
+                            'datetime'          => $table->dateTime($columnName),
+                            'text', 'textarea'  => $table->text($columnName),
+                            'longtext'          => $table->longText($columnName),
+                            'json'              => $table->json($columnName),
+                            default             => $table->string($columnName, 255),
+                        };
+                        if ($isNullable) {
+                            $col->nullable();
+                        }
+                    });
+                }
             }
         }
 

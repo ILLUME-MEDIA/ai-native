@@ -44,6 +44,8 @@ class DynamicEntityController extends Controller
         try {
             $record = $this->service->show($resolved, $id, ['actor' => 'user']);
             return response()->json($record);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Record not found.'], 404);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Throwable $e) {
@@ -60,8 +62,14 @@ class DynamicEntityController extends Controller
     {
         $resolved = $this->resolveEntityOrFail($entity);
         try {
-            $record = $this->service->showByField($resolved, $field, $value, ['actor' => 'user']);
-            return response()->json($record);
+            $result = $this->service->showByField($resolved, $field, $value, ['actor' => 'user']);
+
+            // Numeric → single record; string keyword → collection of matches
+            if ($result instanceof \Illuminate\Support\Collection) {
+                return response()->json(['data' => $result->values(), 'total' => $result->count()]);
+            }
+
+            return response()->json($result);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => $e->getMessage()], 404);
         } catch (\RuntimeException $e) {
@@ -92,6 +100,8 @@ class DynamicEntityController extends Controller
         try {
             $record = $this->service->update($resolved, $id, $request->all(), ['actor' => 'user']);
             return response()->json($record);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Record not found.'], 404);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Throwable $e) {
@@ -106,6 +116,8 @@ class DynamicEntityController extends Controller
         try {
             $this->service->destroy($resolved, $id, ['actor' => 'user']);
             return response()->noContent();
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Record not found.'], 404);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Throwable $e) {

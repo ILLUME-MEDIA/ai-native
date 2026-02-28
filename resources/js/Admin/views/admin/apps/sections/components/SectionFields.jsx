@@ -20,6 +20,7 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState(null);
     const [currentField, setCurrentField] = useState({
+        id: null,
         name: '',
         slug: '',
         type: 'string',
@@ -36,6 +37,7 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
     const handleAddField = () => {
         setEditingIndex(null);
         setCurrentField({
+            id: null,
             name: '',
             slug: '',
             type: 'string',
@@ -95,7 +97,7 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
                 </Button>
             </div>
 
-            <div className="table-responsive">
+            <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
                 <Table className="table-centered table-nowrap mb-0" hover>
                     <thead className="table-light">
                         <tr>

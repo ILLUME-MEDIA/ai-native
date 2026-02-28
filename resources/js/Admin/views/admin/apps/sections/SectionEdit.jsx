@@ -54,6 +54,7 @@ const SectionEdit = () => {
 
           // Transform database field structure to frontend format
           fields = fields.map(field => ({
+            id: field.id || null,
             name: field.label || field.name || '',
             slug: field.column_name || field.slug || '',
             type: field.type || 'string',
