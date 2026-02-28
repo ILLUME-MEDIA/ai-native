@@ -1976,21 +1976,29 @@ paths:
         }
         ```
 
-        **Step 2:** User selects "Large" (id:6) + "Extra Cheese" (id:12) → send only IDs:
+        **Step 2:** User selects "Large" (id:6) + "Extra Cheese ×2" (id:12, qty:2):
         ```json
         POST /api/ecommerce/cart
-        { "menu_item_id": 1, "quantity": 2, "modifiers": [6, 12] }
+        {
+          "menu_item_id": 1,
+          "quantity": 2,
+          "modifiers": [
+            { "option_id": 6,  "quantity": 1 },
+            { "option_id": 12, "quantity": 2 }
+          ]
+        }
         ```
+        > `quantity` defaults to 1 if omitted.
 
         **Step 3:** Backend resolves and stores a snapshot:
         ```json
         "modifiers": [
-          { "group_id": 1, "group_name": "Size",    "option_id": 6,  "option_name": "Large",        "price_adjustment": 2.50 },
-          { "group_id": 2, "group_name": "Toppings", "option_id": 12, "option_name": "Extra Cheese", "price_adjustment": 1.00 }
+          { "group_id": 1, "group_name": "Size",    "option_id": 6,  "option_name": "Large",        "price_adjustment": 2.50, "quantity": 1, "line_total": 2.50 },
+          { "group_id": 2, "group_name": "Toppings", "option_id": 12, "option_name": "Extra Cheese", "price_adjustment": 1.00, "quantity": 2, "line_total": 2.00 }
         ]
         ```
 
-        **Line total:** `(10.00 + 2.50 + 1.00) × 2 = **27.00**`
+        **Line total:** `(10.00 + 2.50×1 + 1.00×2) × 2 = (10.00 + 2.50 + 2.00) × 2 = **29.00**`
 
         > **Client never sends prices.** All amounts come from DB.
       parameters:
@@ -2035,13 +2043,13 @@ paths:
                 modifiers:
                   type: array
                   description: |
-                    Array of **modifier option IDs** selected by the user.
-                    Get IDs from: `GET /ecommerce/menu-items/{id}` → `modifier_groups[].options[].id`
-                    Backend resolves names, group info, price_adjustment from DB.
-                    Only `is_active: true` options accepted; inactive/invalid IDs silently ignored.
+                    Array of modifier selections. Each item has `option_id` (required) and optional `quantity`.
+                    - Get `option_id` from: `GET /ecommerce/menu-items/{id}` → `modifier_groups[].options[].id`
+                    - `quantity` defaults to 1 if omitted (e.g. "Extra Cheese ×1")
+                    - Backend resolves names, group info, `price_adjustment` from DB — client never sends prices
+                    - Only `is_active: true` options are accepted; inactive IDs silently excluded
                   items:
-                    type: integer
-                  example: [6, 12]
+                    $ref: "#/components/schemas/CartModifierInput"
             examples:
               no_modifiers:
                 summary: Simple item — no modifiers
@@ -2049,18 +2057,33 @@ paths:
                   menu_item_id: 1
                   quantity: 1
               with_modifiers:
-                summary: Large Burger + Extra Cheese
+                summary: Large Burger + Extra Cheese ×1
                 value:
                   menu_item_id: 1
                   quantity: 2
                   notes: "No onions"
-                  modifiers: [6, 12]
-              single_modifier:
-                summary: Size upgrade only
+                  modifiers:
+                    - option_id: 6
+                      quantity: 1
+                    - option_id: 12
+                      quantity: 1
+              modifier_with_qty:
+                summary: Extra Cheese ×2 (double portion)
                 value:
                   menu_item_id: 1
                   quantity: 1
-                  modifiers: [6]
+                  modifiers:
+                    - option_id: 6
+                      quantity: 1
+                    - option_id: 12
+                      quantity: 2
+              single_modifier:
+                summary: Size upgrade only (quantity omitted = defaults to 1)
+                value:
+                  menu_item_id: 1
+                  quantity: 1
+                  modifiers:
+                    - option_id: 6
       responses:
         "201":
           description: Cart row created or updated
@@ -2148,28 +2171,44 @@ paths:
                 modifiers:
                   type: array
                   description: |
-                    Full replacement list of option IDs.
-                    Omit key → unchanged. `[]` → cleared. `[6,12]` → re-resolved snapshot.
+                    Full replacement list of modifier selections.
+                    - Omit key → modifiers unchanged
+                    - `[]` → all modifiers cleared
+                    - Array of objects → re-resolved from DB with new quantities
                   items:
-                    type: integer
+                    $ref: "#/components/schemas/CartModifierInput"
             examples:
               increase_qty:
-                summary: "+1 button"
+                summary: "+1 button (quantity only)"
                 value:
                   quantity: 3
               decrease_qty:
-                summary: "-1 button"
+                summary: "-1 button (quantity only)"
                 value:
                   quantity: 1
-              change_modifiers:
-                summary: Change size (Regular → Large)
+              change_modifier_qty:
+                summary: "Increase Extra Cheese to ×2"
                 value:
-                  modifiers: [6, 12]
+                  modifiers:
+                    - option_id: 6
+                      quantity: 1
+                    - option_id: 12
+                      quantity: 2
+              change_modifier_selection:
+                summary: "Change size: Regular → Large"
+                value:
+                  modifiers:
+                    - option_id: 6
+                      quantity: 1
               qty_and_modifiers:
-                summary: Change quantity + modifiers together
+                summary: Change item quantity + modifiers together
                 value:
                   quantity: 2
-                  modifiers: [6, 13]
+                  modifiers:
+                    - option_id: 6
+                      quantity: 1
+                    - option_id: 13
+                      quantity: 1
                   notes: "Extra spicy"
               clear_modifiers:
                 summary: Remove all modifiers
@@ -4778,26 +4817,55 @@ components:
 
     # ── CART ─────────────────────────────────────────────────────────────────
 
+    CartModifierInput:
+      type: object
+      description: |
+        Modifier selection sent by client. Only `option_id` and optional `quantity` — never prices.
+      required:
+        - option_id
+      properties:
+        option_id:
+          type: integer
+          description: ID from modifier_groups[].options[].id
+          example: 12
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 99
+          default: 1
+          description: How many of this modifier option (e.g. Extra Cheese × 2)
+          example: 2
+
     CartModifierSnapshot:
       type: object
-      description: Resolved modifier — all values from DB, never from client
+      description: |
+        Resolved modifier stored in cart — all names and prices from DB, never from client.
+        `line_total` = price_adjustment × quantity (convenience field).
       properties:
         group_id:
           type: integer
-          example: 1
+          example: 2
         group_name:
           type: string
-          example: "Size"
+          example: "Toppings"
         option_id:
           type: integer
-          example: 6
+          example: 12
         option_name:
           type: string
-          example: "Large"
+          example: "Extra Cheese"
         price_adjustment:
           type: number
-          description: Added to base price (can be negative for discounts)
-          example: 2.50
+          description: Per-unit price delta from DB (can be negative for discounts)
+          example: 1.00
+        quantity:
+          type: integer
+          description: How many of this modifier were selected
+          example: 2
+        line_total:
+          type: number
+          description: "price_adjustment × quantity (backend computed)"
+          example: 2.00
 
     CartItem:
       type: object

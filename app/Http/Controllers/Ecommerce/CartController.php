@@ -68,7 +68,10 @@ class CartController extends Controller
 
         $subtotal = $items->sum(function ($i) {
             $base   = $i->menuItem->price ?? 0;
-            $modAdj = collect($i->modifiers ?? [])->sum('price_adjustment');
+            // Each modifier has its own quantity: price_adjustment × modifier.quantity
+            $modAdj = collect($i->modifiers ?? [])->sum(
+                fn ($m) => ($m['price_adjustment'] ?? 0) * ($m['quantity'] ?? 1)
+            );
             return ($base + $modAdj) * $i->quantity;
         });
 
@@ -78,11 +81,12 @@ class CartController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'menu_item_id' => 'required|exists:menu_items,id',
-            'quantity'     => 'integer|min:1|max:99',
-            'notes'        => 'nullable|string|max:300',
-            'modifiers'    => 'nullable|array',
-            'modifiers.*'  => 'integer|exists:menu_item_modifier_options,id',
+            'menu_item_id'               => 'required|exists:menu_items,id',
+            'quantity'                   => 'integer|min:1|max:99',
+            'notes'                      => 'nullable|string|max:300',
+            'modifiers'                  => 'nullable|array',
+            'modifiers.*.option_id'      => 'required|integer|exists:menu_item_modifier_options,id',
+            'modifiers.*.quantity'       => 'integer|min:1|max:99',
         ]);
 
         $menuItem = MenuItem::findOrFail($data['menu_item_id']);
@@ -106,10 +110,11 @@ class CartController extends Controller
         abort_if($cartItem->session_id !== $this->sessionId($request), 403, 'Not your cart item.');
 
         $data = $request->validate([
-            'quantity'    => 'sometimes|integer|min:1|max:99',
-            'notes'       => 'nullable|string|max:300',
-            'modifiers'   => 'nullable|array',
-            'modifiers.*' => 'integer|exists:menu_item_modifier_options,id',
+            'quantity'               => 'sometimes|integer|min:1|max:99',
+            'notes'                  => 'nullable|string|max:300',
+            'modifiers'              => 'nullable|array',
+            'modifiers.*.option_id'  => 'required|integer|exists:menu_item_modifier_options,id',
+            'modifiers.*.quantity'   => 'integer|min:1|max:99',
         ]);
 
         if (array_key_exists('modifiers', $data)) {
@@ -121,26 +126,44 @@ class CartController extends Controller
     }
 
     /**
-     * Resolve selected modifier option IDs into a snapshot array.
-     * [{group_id, group_name, option_id, option_name, price_adjustment}]
+     * Resolve modifier input into a stored snapshot.
+     *
+     * Input:  [{ option_id: int, quantity?: int }, ...]
+     * Output: [{ group_id, group_name, option_id, option_name,
+     *            price_adjustment, quantity, line_total }, ...]
+     *
+     * - Only is_active options are included (inactive silently excluded).
+     * - quantity defaults to 1 if omitted.
+     * - line_total = price_adjustment × quantity (convenience field for frontend).
+     * - Prices are ALWAYS from DB — client input is never trusted for prices.
      */
-    private function buildModifierSnapshot(array $optionIds): ?array
+    private function buildModifierSnapshot(array $modifiers): ?array
     {
-        if (empty($optionIds)) {
+        if (empty($modifiers)) {
             return null;
         }
 
+        // Build a qty map: option_id => quantity
+        $qtyMap = collect($modifiers)->keyBy('option_id')->map(
+            fn ($m) => (int) ($m['quantity'] ?? 1)
+        );
+
         return MenuItemModifierOption::with('modifierGroup')
-            ->whereIn('id', $optionIds)
+            ->whereIn('id', $qtyMap->keys())
             ->where('is_active', true)
             ->get()
-            ->map(fn ($o) => [
-                'group_id'         => $o->modifierGroup->id,
-                'group_name'       => $o->modifierGroup->name,
-                'option_id'        => $o->id,
-                'option_name'      => $o->name,
-                'price_adjustment' => $o->price_adjustment,
-            ])
+            ->map(function ($o) use ($qtyMap) {
+                $qty = $qtyMap->get($o->id, 1);
+                return [
+                    'group_id'         => $o->modifierGroup->id,
+                    'group_name'       => $o->modifierGroup->name,
+                    'option_id'        => $o->id,
+                    'option_name'      => $o->name,
+                    'price_adjustment' => $o->price_adjustment,
+                    'quantity'         => $qty,
+                    'line_total'       => round($o->price_adjustment * $qty, 2),
+                ];
+            })
             ->values()
             ->all();
     }
