@@ -535,8 +535,9 @@ class DynamicEntityService
     // ─── Relation Enrichment ─────────────────────────────────────────────────
 
     /**
-     * Bulk-enrich a collection of records with belongsTo relation data.
-     * One query per relation field (not N+1).
+     * Bulk-enrich a collection of records with relation data.
+     * One query per relation field (never N+1).
+     * Handles belongsTo, hasMany, and hasOne.
      */
     protected function enrichCollection(Collection $records, SectionEntity $entity): Collection
     {
@@ -546,15 +547,17 @@ class DynamicEntityService
 
         $entity->loadMissing('fields.relatedEntity');
 
-        $belongsToFields = $entity->fields->filter(
-            fn($f) => $f->related_entity_id && $f->relatedEntity && $f->relation_type === 'belongsTo'
+        $relatedFields = $entity->fields->filter(
+            fn($f) => $f->related_entity_id && $f->relatedEntity
         );
 
-        if ($belongsToFields->isEmpty()) {
+        if ($relatedFields->isEmpty()) {
             return $records;
         }
 
-        // Build a lookup map per FK field: [fkValue => relatedRecord]
+        // ── belongsTo: FK is on this table ───────────────────────────────
+        $belongsToFields = $relatedFields->filter(fn($f) => $f->relation_type === 'belongsTo');
+
         $lookup = [];
         foreach ($belongsToFields as $field) {
             $fkValues = $records->pluck($field->column_name)->filter()->unique()->values()->all();
@@ -573,17 +576,64 @@ class DynamicEntityService
                 ->keyBy('id');
         }
 
-        // Attach relation data to each record
-        return $records->map(function ($record) use ($belongsToFields, $lookup) {
+        $records = $records->map(function ($record) use ($belongsToFields, $lookup) {
             foreach ($belongsToFields as $field) {
                 $fkValue = $record->{$field->column_name} ?? null;
                 if ($fkValue !== null && isset($lookup[$field->column_name][$fkValue])) {
-                    $related = (array) $lookup[$field->column_name][$fkValue];
-                    $record->setAttribute($field->column_name . '_relation', $related);
+                    $record->setAttribute(
+                        $field->column_name . '_relation',
+                        (array) $lookup[$field->column_name][$fkValue]
+                    );
                 }
             }
             return $record;
         });
+
+        // ── hasMany / hasOne: FK is on related table ─────────────────────
+        $hasManyFields = $relatedFields->filter(
+            fn($f) => in_array($f->relation_type, ['hasMany', 'hasOne'], true)
+        );
+
+        if ($hasManyFields->isEmpty()) {
+            return $records;
+        }
+
+        // Collect all local keys from the collection (one batch per field)
+        $localKeys = $records->map(fn($r) => $r->getKey())->filter()->unique()->values()->all();
+
+        foreach ($hasManyFields as $field) {
+            $relatedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($relatedTable)) {
+                continue;
+            }
+
+            $foreignKey = $field->relation_display_column ?: (Str::singular($entity->table_name) . '_id');
+
+            // Single batch query for all records
+            $allChildren = DB::table($relatedTable)->whereIn($foreignKey, $localKeys)->get();
+
+            // Group by FK value (string cast to handle int/string mismatch)
+            $childrenByKey = [];
+            foreach ($allChildren as $child) {
+                $key = (string) ($child->{$foreignKey} ?? '');
+                $childrenByKey[$key][] = (array) $child;
+            }
+
+            $records = $records->map(function ($record) use ($field, $childrenByKey) {
+                $key      = (string) $record->getKey();
+                $children = $childrenByKey[$key] ?? [];
+
+                if ($field->relation_type === 'hasMany') {
+                    $record->setAttribute($field->column_name, array_values($children));
+                } else {
+                    $record->setAttribute($field->column_name, $children[0] ?? null);
+                }
+
+                return $record;
+            });
+        }
+
+        return $records;
     }
 
     /**
