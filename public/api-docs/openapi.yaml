@@ -1977,10 +1977,19 @@ paths:
                 notes:
                   type: string
                   maxLength: 300
+                modifiers:
+                  type: array
+                  description: |
+                    Array of selected modifier option IDs. Backend resolves names and prices automatically.
+                    Get option IDs from `GET /ecommerce/menu-items/{id}` → `modifier_groups[].options[].id`
+                  items:
+                    type: integer
+                  example: [5, 12]
             example:
               menu_item_id: 1
               quantity: 2
               notes: "No onions"
+              modifiers: [5, 12]
       responses:
         "201":
           description: Cart row created/updated with menu_item and business
@@ -2001,6 +2010,22 @@ paths:
                     type: integer
                   notes:
                     type: string
+                  modifiers:
+                    type: array
+                    description: Resolved modifier snapshot (names + prices from DB, not client)
+                    items:
+                      type: object
+                      properties:
+                        group_id:
+                          type: integer
+                        group_name:
+                          type: string
+                        option_id:
+                          type: integer
+                        option_name:
+                          type: string
+                        price_adjustment:
+                          type: number
                   menu_item:
                     type: object
                   business:
@@ -2013,7 +2038,21 @@ paths:
       tags:
         - Cart
       security: []
-      summary: Update cart item quantity or notes
+      summary: Update cart item quantity, notes, or modifiers
+      description: |
+        All fields are optional — send only what you want to change.
+
+        **Quantity increase/decrease pattern (for +/- buttons):**
+        - Get current quantity from `GET /ecommerce/cart`
+        - Click `+` → send `quantity: current + 1`
+        - Click `-` → send `quantity: current - 1` (if result = 0, call `DELETE` instead)
+
+        **Modifier rule:** Backend always re-resolves names and prices from DB — client never sets prices.
+        - Omit `modifiers` key → modifiers stay unchanged
+        - Send `modifiers: []` → all modifiers cleared
+        - Send `modifiers: [5, 12]` → replaced with new resolved snapshot
+
+        **403**: Returned if the cart item does not belong to your session (X-Session-Id / Bearer token).
       parameters:
         - name: cartItem
           in: path
@@ -2021,40 +2060,119 @@ paths:
           schema:
             type: integer
           description: Cart item ID (from GET /ecommerce/cart response)
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Your session UUID — must match the session used when the item was created
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - quantity
               properties:
                 quantity:
                   type: integer
                   minimum: 1
                   maximum: 99
+                  description: New absolute quantity (not a delta). Min 1; to remove item call DELETE instead.
                 notes:
                   type: string
                   maxLength: 300
+                modifiers:
+                  type: array
+                  description: |
+                    Array of modifier option IDs. Backend resolves group/option names and price_adjustment from DB.
+                    Send `[]` to clear all modifiers. Omit key to leave modifiers unchanged.
+                  items:
+                    type: integer
+                  example: [5, 12]
+            examples:
+              increase_quantity:
+                summary: Increase quantity to 3
+                value:
+                  quantity: 3
+              change_modifiers:
+                summary: Change modifiers only (keep current quantity)
+                value:
+                  modifiers: [5, 12]
+              update_all:
+                summary: Update quantity + modifiers together
+                value:
+                  quantity: 2
+                  modifiers: [5]
+                  notes: "Extra spicy"
+              clear_modifiers:
+                summary: Remove all modifiers
+                value:
+                  modifiers: []
       responses:
         "200":
-          description: Cart item updated
+          description: Cart item updated with resolved modifier snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  quantity:
+                    type: integer
+                  notes:
+                    type: string
+                  modifiers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group_id:
+                          type: integer
+                        group_name:
+                          type: string
+                        option_id:
+                          type: integer
+                        option_name:
+                          type: string
+                        price_adjustment:
+                          type: number
+                  menu_item:
+                    type: object
+                  business:
+                    type: object
+        "403":
+          description: Cart item does not belong to your session
+        "404":
+          description: Cart item not found
     delete:
       tags:
         - Cart
       security: []
       summary: Remove one item from cart
+      description: |
+        Removes the cart item. Only works if the item belongs to your session (X-Session-Id or Bearer token).
+        Use this when quantity would drop to 0 (since PATCH enforces min quantity of 1).
       parameters:
         - name: cartItem
           in: path
           required: true
           schema:
             type: integer
-            description: Cart item ID
+          description: Cart item ID (from GET /ecommerce/cart response)
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Your session UUID — must match the session used when the item was created
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
+        "403":
+          description: Cart item does not belong to your session
 
   /ecommerce/cart/clear:
     delete:
@@ -2235,6 +2353,19 @@ paths:
           description: Status updated
 
   # ── DISCOVERY USERS (Self-Service — OTP Bearer token) ─────────────────────
+  #
+  # How to get the token:
+  #   POST /api/otp-auth/verify  { email, otp, table: "discovery_users" }
+  #   → use the "token" field from the response as Bearer token
+  #
+  # 401 error codes returned by all self-service endpoints:
+  #   no_token          — Authorization header missing
+  #   invalid_token     — Token is malformed / missing fields
+  #   invalid_token_type — Used an otp_session token instead of otp_auth token
+  #   wrong_table       — Token was issued for a different table (e.g. "users")
+  #   token_expired     — Token has expired (30-day TTL); re-verify OTP
+  #   user_not_found    — User record deleted after token was issued
+  #   decrypt_failed    — APP_KEY mismatch or tampered token
 
   /ecommerce/discovery-users/me:
     get:
@@ -2244,7 +2375,14 @@ paths:
       description: |
         Returns the authenticated discovery user's profile including location.
 
-        **Auth:** `Authorization: Bearer <otp-token>` (from `POST /otp-auth/verify` with `table: discovery_users`)
+        **How to get token:**
+        ```
+        POST /api/otp-auth/verify
+        { "email": "user@example.com", "otp": "123456", "table": "discovery_users" }
+        ```
+        Use the **`token`** field from the response (not `otp_token` — that is a different flow).
+
+        **Auth:** `Authorization: Bearer <token>`
       security:
         - otpBearerAuth: []
       responses:
@@ -2261,7 +2399,11 @@ paths:
                   user:
                     $ref: "#/components/schemas/DiscoveryUser"
         "401":
-          description: OTP token missing, invalid, or not from discovery_users table
+          description: Token missing, invalid, wrong table, expired, or user not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
     patch:
       tags:
         - Discovery Users
@@ -2269,7 +2411,7 @@ paths:
       description: |
         Updates the authenticated user's basic profile fields.
 
-        **Auth:** `Authorization: Bearer <otp-token>`
+        **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
       security:
         - otpBearerAuth: []
       requestBody:
@@ -2308,7 +2450,11 @@ paths:
                   user:
                     $ref: "#/components/schemas/DiscoveryUser"
         "401":
-          description: OTP token required
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
 
   /ecommerce/discovery-users/me/location:
     get:
@@ -2319,7 +2465,7 @@ paths:
         Returns the authenticated user's saved location record.
         Returns `null` if no location has been set yet.
 
-        **Auth:** `Authorization: Bearer <otp-token>`
+        **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
       security:
         - otpBearerAuth: []
       responses:
@@ -2337,7 +2483,11 @@ paths:
                     nullable: true
                     $ref: "#/components/schemas/DiscoveryUserLocation"
         "401":
-          description: OTP token required
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
     put:
       tags:
         - Discovery Users
@@ -2346,7 +2496,7 @@ paths:
         Creates or updates the authenticated user's location record (upsert).
         All fields are optional — send only what you have.
 
-        **Auth:** `Authorization: Bearer <otp-token>`
+        **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
 
         ### Typical GPS save flow
         1. User grants location permission in browser/app
@@ -2405,7 +2555,11 @@ paths:
                   location:
                     $ref: "#/components/schemas/DiscoveryUserLocation"
         "401":
-          description: OTP token required
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
@@ -2415,7 +2569,7 @@ paths:
       description: |
         Removes the authenticated user's location record entirely.
 
-        **Auth:** `Authorization: Bearer <otp-token>`
+        **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
       security:
         - otpBearerAuth: []
       responses:
@@ -2433,9 +2587,15 @@ paths:
                     type: string
                     example: Location removed.
         "401":
-          description: OTP token required
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
 
   # ── DISCOVERY USERS (Admin — Sanctum) ─────────────────────────────────────
+  # Note: {id} must be a numeric integer. String slugs like "me" are rejected
+  # at the route level (->where('[0-9]+')) and will return 404.
 
   /ecommerce/discovery-users:
     get:
@@ -2491,6 +2651,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DiscoveryUser"
+        "404":
+          description: User not found (ID must be numeric)
     patch:
       tags:
         - Discovery Users
@@ -2519,6 +2681,8 @@ paths:
       responses:
         "200":
           description: Updated
+        "404":
+          description: User not found (ID must be numeric)
     delete:
       tags:
         - Discovery Users
@@ -2528,6 +2692,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/MessageOk"
+        "404":
+          description: User not found (ID must be numeric)
 
   # ── MEDIA UPLOAD ──────────────────────────────────────────────────────────
 
@@ -4542,6 +4708,34 @@ components:
                 type: object
 
   schemas:
+
+    # ── OTP AUTH ERROR ───────────────────────────────────────────────────────
+
+    OtpAuthError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          description: Human-readable error reason
+          example: "Token was issued for a different table. Re-verify with table=discovery_users."
+        hint:
+          type: string
+          example: 'POST /otp-auth/verify with { email, otp, table: "discovery_users" } → use the returned "token" field.'
+        code:
+          type: string
+          description: Machine-readable error code
+          enum:
+            - no_token
+            - invalid_token
+            - invalid_token_type
+            - wrong_table
+            - token_expired
+            - user_not_found
+            - decrypt_failed
+          example: wrong_table
 
     # ── OTP AUTH ────────────────────────────────────────────────────────────
 

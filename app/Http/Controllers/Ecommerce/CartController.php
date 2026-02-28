@@ -103,8 +103,10 @@ class CartController extends Controller
 
     public function update(Request $request, CartItem $cartItem): JsonResponse
     {
+        abort_if($cartItem->session_id !== $this->sessionId($request), 403, 'Not your cart item.');
+
         $data = $request->validate([
-            'quantity'    => 'required|integer|min:1|max:99',
+            'quantity'    => 'sometimes|integer|min:1|max:99',
             'notes'       => 'nullable|string|max:300',
             'modifiers'   => 'nullable|array',
             'modifiers.*' => 'integer|exists:menu_item_modifier_options,id',
@@ -115,7 +117,7 @@ class CartController extends Controller
         }
 
         $cartItem->update($data);
-        return response()->json($cartItem->load('menuItem'));
+        return response()->json($cartItem->load(['menuItem', 'business']));
     }
 
     /**
@@ -143,8 +145,10 @@ class CartController extends Controller
             ->all();
     }
 
-    public function destroy(CartItem $cartItem): JsonResponse
+    public function destroy(Request $request, CartItem $cartItem): JsonResponse
     {
+        abort_if($cartItem->session_id !== $this->sessionId($request), 403, 'Not your cart item.');
+
         $cartItem->delete();
         return response()->json(['message' => 'Removed from cart.']);
     }

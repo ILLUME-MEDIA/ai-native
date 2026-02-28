@@ -150,10 +150,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('orders/{order}/status',       [OrderController::class, 'updateStatus']);
 
         // Discovery Users (admin)
+        // Note: ->where([0-9]+) prevents 'me' from matching these routes
         Route::get('discovery-users',                    [DiscoveryUserController::class, 'index']);
-        Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show']);
-        Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']);
-        Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy']);
+        Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show'])   ->where('discoveryUser', '[0-9]+');
+        Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']) ->where('discoveryUser', '[0-9]+');
+        Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy'])->where('discoveryUser', '[0-9]+');
 
         // Media Upload (admin)
         Route::post('upload', [MediaUploadController::class, 'upload']);
