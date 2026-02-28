@@ -68,7 +68,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/section-builder/entities/{entity}', [EntityController::class, 'update'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.update');
-    // Combined endpoint: ek hi API se 2 entities ka data
+    Route::delete('/section-builder/entities/{entity}', [EntityController::class, 'destroy'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
+        ->name('api.section-builder.entities.destroy');
+    // Combined endpoint: fetch data from 2 entities in a single request
     Route::get('/section-builder/entities-combined/{first}/{second}', [CombinedEntityController::class, 'index'])
         ->where(['first' => '[0-9]+|[a-zA-Z0-9_-]+', 'second' => '[0-9]+|[a-zA-Z0-9_-]+'])
         ->name('api.section-builder.entities.combined.index');
@@ -464,6 +467,7 @@ Route::get('/entities/case-studies/{slug}', [CaseStudyController::class, 'show']
 
 Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
     Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
+    Route::get('/entities/{entity}/by/{field}/{value}', [DynamicEntityController::class, 'showByField']);
     Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
     Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
     Route::put('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);

@@ -303,6 +303,40 @@ class DynamicEntityService
         return $record;
     }
 
+    /**
+     * Fetch a single record by any field value.
+     * e.g. showByField($entity, 'email', 'john@example.com')
+     */
+    public function showByField(SectionEntity $entity, string $field, string $value, array $context = [])
+    {
+        if (! Schema::hasTable($entity->table_name)) {
+            throw new \RuntimeException("Table [{$entity->table_name}] does not exist.");
+        }
+
+        // Validate the field exists (either in section_fields or as an actual DB column)
+        $knownColumns = $entity->fields->pluck('column_name')->all();
+        $fieldAllowed = in_array($field, $knownColumns, true)
+            || Schema::hasColumn($entity->table_name, $field);
+
+        if (! $fieldAllowed) {
+            throw new \RuntimeException("Field '{$field}' does not exist on this entity.");
+        }
+
+        $record = $this->makeBaseQuery($entity, $context)
+            ->where($field, $value)
+            ->first();
+
+        if (! $record) {
+            throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                "No record found where {$field} = {$value}"
+            );
+        }
+
+        $this->enrichRecord($record, $entity, includeChildren: true);
+
+        return $record;
+    }
+
     public function store(SectionEntity $entity, array $payload, array $context = [])
     {
         if (! Schema::hasTable($entity->table_name)) {

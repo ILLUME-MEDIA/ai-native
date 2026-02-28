@@ -50,9 +50,10 @@ class EntityController extends Controller
                 'personal_access_tokens', 'sessions',
             ];
 
-            foreach ($tables as $table) {
-                $tableName = $table->TABLE_NAME;
+            $existingDbTables = collect($tables)->pluck('TABLE_NAME')->all();
 
+            // Direction 1: DB table exists but no section_entity → auto-create entity
+            foreach ($existingDbTables as $tableName) {
                 if (in_array($tableName, $systemTables)) {
                     continue;
                 }
@@ -60,13 +61,53 @@ class EntityController extends Controller
                 $entity = SectionEntity::where('table_name', $tableName)->first();
 
                 if (!$entity) {
-                    // New table → auto-create entity + fields
                     $this->entityService->resolveEntity($tableName);
                 } else {
-                    // Existing entity → sync fields with real schema
                     $this->entityService->syncFieldsWithSchema($entity);
                 }
             }
+
+            // Direction 2: section_entity exists (source=frontend) but actual DB table missing → create it
+            SectionEntity::where('source_type', 'frontend')->get()->each(function ($entity) use ($existingDbTables) {
+                if (!in_array($entity->table_name, $existingDbTables)) {
+                    try {
+                        Schema::create($entity->table_name, function (\Illuminate\Database\Schema\Blueprint $table) {
+                            $table->id();
+                            $table->timestamps();
+                        });
+
+                        // Also add any columns already defined in section_fields
+                        $entity->load('fields');
+                        foreach ($entity->fields as $field) {
+                            if (in_array($field->column_name, ['id', 'created_at', 'updated_at'])) {
+                                continue;
+                            }
+                            if (!Schema::hasColumn($entity->table_name, $field->column_name)) {
+                                Schema::table($entity->table_name, function (\Illuminate\Database\Schema\Blueprint $table) use ($field) {
+                                    $col = match ($field->type) {
+                                        'number'            => $table->integer($field->column_name),
+                                        'decimal'           => $table->decimal($field->column_name, 10, 2),
+                                        'boolean'           => $table->boolean($field->column_name)->default(false),
+                                        'date'              => $table->date($field->column_name),
+                                        'datetime'          => $table->dateTime($field->column_name),
+                                        'text', 'textarea'  => $table->text($field->column_name),
+                                        'longtext'          => $table->longText($field->column_name),
+                                        'json'              => $table->json($field->column_name),
+                                        default             => $table->string($field->column_name, 255),
+                                    };
+                                    if ($field->nullable) {
+                                        $col->nullable();
+                                    }
+                                });
+                            }
+                        }
+
+                        \Log::info("Auto-created missing DB table: {$entity->table_name}");
+                    } catch (\Exception $e) {
+                        \Log::warning("Failed to auto-create table {$entity->table_name}: " . $e->getMessage());
+                    }
+                }
+            });
         } catch (\Exception $e) {
             \Log::warning("Auto-sync failed: " . $e->getMessage());
         }
@@ -83,6 +124,14 @@ class EntityController extends Controller
         $data['slug'] = $data['slug'] ?? Str::slug($data['table_name']);
         $data['source_type'] = 'frontend';
         $data['is_system'] = false;
+
+        // Create the actual database table if it doesn't already exist
+        if (!Schema::hasTable($data['table_name'])) {
+            Schema::create($data['table_name'], function (\Illuminate\Database\Schema\Blueprint $table) {
+                $table->id();
+                $table->timestamps();
+            });
+        }
 
         $entity = SectionEntity::create($data);
 
@@ -201,10 +250,31 @@ class EntityController extends Controller
         return response()->json($resolved);
     }
 
+    public function destroy($entity)
+    {
+        $resolved = $this->resolveEntity($entity);
+
+        // Prevent deleting system tables
+        if ($resolved->is_system) {
+            return response()->json(['error' => 'System tables cannot be deleted.'], 403);
+        }
+
+        // Drop the actual database table if it exists
+        if (Schema::hasTable($resolved->table_name)) {
+            Schema::dropIfExists($resolved->table_name);
+        }
+
+        // Delete section_fields and then the entity record
+        $resolved->fields()->delete();
+        $resolved->delete();
+
+        return response()->json(['message' => "Table '{$resolved->table_name}' deleted successfully."]);
+    }
+
     public function getMcpConfig($entity)
     {
         $resolved = $this->resolveEntity($entity);
-        
+
         return response()->json([
             'enabled' => $resolved->mcp_enabled,
             'read' => $resolved->mcp_can_read,

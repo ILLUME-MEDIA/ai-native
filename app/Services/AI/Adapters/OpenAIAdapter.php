@@ -125,7 +125,10 @@ class OpenAIAdapter implements AIProviderAdapterInterface
             ->get("{$this->baseUrl}/models");
 
         if ($response->failed()) {
-            throw new \Exception("OpenAI API Error: " . ($response->json()['error']['message'] ?? $response->body()));
+            $json = $response->json();
+            // Handle both OpenAI format { error: { message } } and others like Moonshot { message }
+            $errorMsg = $json['error']['message'] ?? $json['message'] ?? $response->body();
+            throw new \Exception("API Error: " . $errorMsg);
         }
 
         return collect($response->json()['data'])

@@ -52,6 +52,26 @@ class DynamicEntityController extends Controller
         }
     }
 
+    /**
+     * GET /api/entities/{entity}/by/{field}/{value}
+     * Fetch a single record by any field — e.g. /api/entities/users/by/email/john@example.com
+     */
+    public function showByField(Request $request, string $entity, string $field, string $value)
+    {
+        $resolved = $this->resolveEntityOrFail($entity);
+        try {
+            $record = $this->service->showByField($resolved, $field, $value, ['actor' => 'user']);
+            return response()->json($record);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => $e->getMessage()], 404);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['message' => config('app.debug') ? $e->getMessage() : 'Failed to load record.'], 500);
+        }
+    }
+
     public function store(Request $request, string $entity)
     {
         $resolved = $this->resolveEntityOrFail($entity);

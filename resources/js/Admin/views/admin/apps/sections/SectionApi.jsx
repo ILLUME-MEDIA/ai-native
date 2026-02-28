@@ -11,7 +11,7 @@ const SectionApi = () => {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    // Live \"Try it\" state for GET list endpoint
+    // Live "Try it" state for GET list endpoint
     const [listQuery, setListQuery] = useState({
         search: '',
         page: 1,
@@ -23,6 +23,15 @@ const SectionApi = () => {
     const [listResponse, setListResponse] = useState(null);
     const [listLoading, setListLoading] = useState(false);
     const [listError, setListError] = useState('');
+
+    // Live "Try it" state for GET single endpoint
+    const [singleMode, setSingleMode] = useState('id'); // 'id' | 'field'
+    const [singleId, setSingleId] = useState('1');
+    const [singleField, setSingleField] = useState('');
+    const [singleValue, setSingleValue] = useState('');
+    const [singleResponse, setSingleResponse] = useState(null);
+    const [singleLoading, setSingleLoading] = useState(false);
+    const [singleError, setSingleError] = useState('');
 
     useEffect(() => {
         const load = async () => {
@@ -153,6 +162,39 @@ const SectionApi = () => {
 
         const qs = params.toString();
         return qs ? `${baseUrl}?${qs}` : baseUrl;
+    };
+
+    const buildSingleUrl = () => {
+        if (singleMode === 'field' && singleField && singleValue) {
+            return `${baseUrl}/by/${encodeURIComponent(singleField)}/${encodeURIComponent(singleValue)}`;
+        }
+        return `${baseUrl}/${singleId || 1}`;
+    };
+
+    const handleTrySingle = async (e) => {
+        e.preventDefault();
+        setSingleLoading(true);
+        setSingleError('');
+        setSingleResponse(null);
+        try {
+            let url;
+            if (singleMode === 'field') {
+                if (!singleField || !singleValue) {
+                    setSingleError('Please select a field and enter a value.');
+                    setSingleLoading(false);
+                    return;
+                }
+                url = `/api/entities/${slugOrTable}/by/${encodeURIComponent(singleField)}/${encodeURIComponent(singleValue)}`;
+            } else {
+                url = `/api/entities/${slugOrTable}/${singleId || 1}`;
+            }
+            const res = await axios.get(url);
+            setSingleResponse(res.data);
+        } catch (err) {
+            setSingleError(err.response?.data?.message || err.message || 'Request failed');
+        } finally {
+            setSingleLoading(false);
+        }
     };
 
     const handleTryList = async (e) => {
@@ -458,14 +500,108 @@ const SectionApi = () => {
 
                                     <Tab.Pane eventKey="show">
                                         <h6 className="mb-3">Get Single Record</h6>
+
+                                        {/* Mode toggle */}
+                                        <div className="d-flex gap-2 mb-3">
+                                            <Button
+                                                size="sm"
+                                                variant={singleMode === 'id' ? 'primary' : 'outline-secondary'}
+                                                onClick={() => setSingleMode('id')}
+                                            >
+                                                By ID
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant={singleMode === 'field' ? 'primary' : 'outline-secondary'}
+                                                onClick={() => { setSingleMode('field'); if (!singleField && fields.length > 0) setSingleField(fields[0].slug); }}
+                                            >
+                                                By Any Field
+                                            </Button>
+                                        </div>
+
+                                        {/* URL preview */}
                                         <div className="mb-3">
                                             <Badge bg="success" className="me-2">GET</Badge>
-                                            <code>{baseUrl}/1</code>
+                                            <code className="text-break">{buildSingleUrl()}</code>
+                                            <div className="mt-2">
+                                                <Button size="sm" variant="outline-secondary" onClick={() => handleCopy(buildSingleUrl())}>
+                                                    <Icon icon="copy" className="me-1" /> Copy URL
+                                                </Button>
+                                            </div>
                                         </div>
+
+                                        {singleMode === 'field' && (
+                                            <div className="mb-3 p-2 bg-light-subtle rounded border small text-muted">
+                                                <strong>By Any Field:</strong> Fetch the first record where a specific column matches a value.<br />
+                                                Route: <code>{baseUrl}/by/&#123;field&#125;/&#123;value&#125;</code>
+                                            </div>
+                                        )}
+
+                                        {/* Try it form */}
+                                        <Form onSubmit={handleTrySingle} className="border rounded p-3 mb-3 bg-light-subtle">
+                                            <Row className="g-2 align-items-end">
+                                                {singleMode === 'id' ? (
+                                                    <Col md={4}>
+                                                        <Form.Label className="small mb-1">Record ID</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            min={1}
+                                                            value={singleId}
+                                                            onChange={(e) => setSingleId(e.target.value)}
+                                                            placeholder="e.g. 1"
+                                                        />
+                                                    </Col>
+                                                ) : (
+                                                    <>
+                                                        <Col md={4}>
+                                                            <Form.Label className="small mb-1">Field</Form.Label>
+                                                            <Form.Select
+                                                                size="sm"
+                                                                value={singleField}
+                                                                onChange={(e) => setSingleField(e.target.value)}
+                                                            >
+                                                                <option value="">-- select field --</option>
+                                                                {fields.map((f) => (
+                                                                    <option key={f.slug} value={f.slug}>{f.slug} ({f.type})</option>
+                                                                ))}
+                                                            </Form.Select>
+                                                        </Col>
+                                                        <Col md={4}>
+                                                            <Form.Label className="small mb-1">Value</Form.Label>
+                                                            <FormControl
+                                                                size="sm"
+                                                                value={singleValue}
+                                                                onChange={(e) => setSingleValue(e.target.value)}
+                                                                placeholder="search value"
+                                                            />
+                                                        </Col>
+                                                    </>
+                                                )}
+                                                <Col md={4}>
+                                                    <Button type="submit" size="sm" variant="primary" disabled={singleLoading}>
+                                                        {singleLoading ? 'Sending...' : 'Try request'}
+                                                    </Button>
+                                                </Col>
+                                            </Row>
+                                            {singleError && (
+                                                <div className="mt-2 text-danger small">
+                                                    <Icon icon="alert-triangle" className="me-1" />{singleError}
+                                                </div>
+                                            )}
+                                        </Form>
+
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded">
-                                            {JSON.stringify(responseExample, null, 2)}
+                                        <pre className="bg-light p-3 rounded small">
+                                            {JSON.stringify(singleResponse ?? responseExample, null, 2)}
                                         </pre>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            onClick={() => handleCopy(JSON.stringify(singleResponse ?? responseExample, null, 2))}
+                                        >
+                                            <Icon icon="copy" className="me-1" /> Copy Response JSON
+                                        </Button>
                                     </Tab.Pane>
 
                                     <Tab.Pane eventKey="create">
@@ -538,9 +674,8 @@ const SectionApi = () => {
                         </CardHeader>
                         <CardBody>
                             <p className="text-muted small">
-                                Kabhi kabhi aapko ek hi request se <strong>do alag tables</strong> ka data chahiye hota hai.
-                                Is project me us ke liye ek generic endpoint hai jo <code>Section Editor</code> ki kisi bhi
-                                2 entities ka data ek JSON response me la sakta hai.
+                                Use this endpoint when you need data from <strong>two different tables</strong> in a single request.
+                                This generic endpoint returns paginated data from any 2 entities registered in the Section Editor.
                             </p>
 
                             <div className="mb-3">
@@ -552,25 +687,23 @@ const SectionApi = () => {
 
                             <ul className="text-muted small mb-3">
                                 <li>
-                                    <code>{'{first}'}</code> aur <code>{'{second}'}</code> dono me aap <strong>entity ka slug</strong> ya
-                                    <strong> table ka naam</strong> de sakte hain (jo Section Editor se auto-sync hota hai).
+                                    Both <code>{'{first}'}</code> and <code>{'{second}'}</code> accept either an <strong>entity slug</strong> or
+                                    a <strong>table name</strong> (auto-synced from the Section Editor).
                                 </li>
                                 <li>
-                                    Example: agar yeh section ka slug <code>{slugOrTable}</code> hai aur doosra section
-                                    <code>categories</code> hai, to URL hoga:&nbsp;
+                                    Example: if this section's slug is <code>{slugOrTable}</code> and the second section is
+                                    <code>categories</code>, the URL would be:&nbsp;
                                     <code>{window.location.origin}/api/section-builder/entities-combined/{slugOrTable}/categories</code>
                                 </li>
                                 <li>
-                                    Query params (e.g. <code>search</code>, <code>page</code>, <code>per_page</code>,{' '}
-                                    <code>sort</code>, <code>direction</code>, <code>filters[column]</code>) dono entities par
-                                    same tarah apply honge.
+                                    Query params (<code>search</code>, <code>page</code>, <code>per_page</code>,{' '}
+                                    <code>sort</code>, <code>direction</code>, <code>filters[column]</code>) are applied to both entities equally.
                                 </li>
                             </ul>
 
                             <h6 className="mt-3">Response Structure</h6>
                             <p className="text-muted small mb-2">
-                                Response me <code>first</code> aur <code>second</code> keys hoti hain, har ek ke andar
-                                entity meta + paginated data hota hai:
+                                The response contains <code>first</code> and <code>second</code> keys, each with entity metadata and paginated data:
                             </p>
                             <pre className="bg-light p-3 rounded small">
 {JSON.stringify({
