@@ -604,13 +604,28 @@ class DynamicEntityService
         foreach ($hasManyFields as $field) {
             $relatedTable = $field->relatedEntity->table_name;
             if (! Schema::hasTable($relatedTable)) {
+                \Log::warning("enrichCollection: related table [{$relatedTable}] does not exist for field [{$field->column_name}]");
                 continue;
             }
 
             $foreignKey = $field->relation_display_column ?: (Str::singular($entity->table_name) . '_id');
 
+            // Guard: skip if FK column doesn't exist in related table
+            if (! Schema::hasColumn($relatedTable, $foreignKey)) {
+                \Log::warning("enrichCollection: FK column [{$foreignKey}] does not exist in [{$relatedTable}] for field [{$field->column_name}]. Set 'Foreign Key Column' in Section Builder.");
+                $records = $records->map(function ($record) use ($field) {
+                    $record->setAttribute($field->column_name, $field->relation_type === 'hasMany' ? [] : null);
+                    return $record;
+                });
+                continue;
+            }
+
+            \Log::info("enrichCollection: loading [{$field->column_name}] via [{$relatedTable}].{$foreignKey} IN (" . implode(',', $localKeys) . ")");
+
             // Single batch query for all records
             $allChildren = DB::table($relatedTable)->whereIn($foreignKey, $localKeys)->get();
+
+            \Log::info("enrichCollection: found {$allChildren->count()} children for [{$field->column_name}]");
 
             // Group by FK value (string cast to handle int/string mismatch)
             $childrenByKey = [];
