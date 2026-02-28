@@ -513,6 +513,14 @@ class DynamicEntityService
     }
 
     /**
+     * Public alias for detectPrimaryKey — used by controllers.
+     */
+    public function detectPk(string $tableName): string
+    {
+        return $this->detectPrimaryKey($tableName);
+    }
+
+    /**
      * Detect the actual primary key column of a table.
      * Falls back to 'id' if the table has no PRIMARY constraint or on any error.
      */

@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\SectionEntity;
 use App\Services\DynamicEntityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class DynamicEntityController extends Controller
 {
@@ -108,6 +111,65 @@ class DynamicEntityController extends Controller
             report($e);
             return response()->json(['message' => config('app.debug') ? $e->getMessage() : 'Failed to update record.'], 500);
         }
+    }
+
+    /**
+     * GET /api/entities/{entity}/relation-debug
+     * Shows exact relationship field config and whether FK columns exist.
+     */
+    public function relationDebug(Request $request, string $entity)
+    {
+        $resolved = $this->resolveEntityOrFail($entity);
+        $resolved->load(['fields' => fn($q) => $q->with('relatedEntity:id,name,table_name')]);
+
+        $relationFields = $resolved->fields->filter(fn($f) => $f->related_entity_id);
+
+        $result = $relationFields->map(function ($f) use ($resolved) {
+            $relatedTable = $f->relatedEntity?->table_name;
+            $effectiveFk  = $f->relation_display_column
+                ?: (Str::singular($resolved->table_name) . '_id');
+
+            $fkExistsInRelated  = $relatedTable ? Schema::hasColumn($relatedTable, $effectiveFk) : false;
+
+            // Sample 3 rows from related table to show available columns
+            $sampleRow = $relatedTable && Schema::hasTable($relatedTable)
+                ? (array) DB::table($relatedTable)->first()
+                : null;
+
+            // Count matching records for a quick sanity check (use first 5 local ids)
+            $sampleLocalKeys = DB::table($resolved->table_name)->limit(5)->pluck(
+                $this->service->detectPk($resolved->table_name)
+            )->all();
+
+            $matchCount = ($relatedTable && $fkExistsInRelated)
+                ? DB::table($relatedTable)->whereIn($effectiveFk, $sampleLocalKeys)->count()
+                : null;
+
+            return [
+                'field_id'                      => $f->id,
+                'column_name'                   => $f->column_name,
+                'type'                          => $f->type,
+                'relation_type'                 => $f->relation_type,
+                'related_entity_id'             => $f->related_entity_id,
+                'related_entity_name'           => $f->relatedEntity?->name,
+                'related_table'                 => $relatedTable,
+                'relation_display_column_saved' => $f->relation_display_column,
+                'effective_fk_used'             => $effectiveFk,
+                'fk_column_exists'              => $fkExistsInRelated,
+                'sample_related_columns'        => $sampleRow ? array_keys($sampleRow) : null,
+                'matches_in_first_5_records'    => $matchCount,
+                'diagnosis'                     => ! $fkExistsInRelated
+                    ? "❌ FK column [{$effectiveFk}] NOT FOUND in [{$relatedTable}]. Fix: set 'Foreign Key Column' in Section Builder."
+                    : ($matchCount === 0
+                        ? "⚠️  FK column exists but 0 matches found for sample records."
+                        : "✅ OK — {$matchCount} matches found in first 5 records."),
+            ];
+        })->values();
+
+        return response()->json([
+            'entity'          => $resolved->table_name,
+            'relation_fields' => $result,
+        ]);
     }
 
     public function destroy(Request $request, string $entity, int $id)

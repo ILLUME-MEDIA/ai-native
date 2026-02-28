@@ -568,6 +568,7 @@ Route::get('/entities/case-studies/{slug}', [CaseStudyController::class, 'show']
 
 Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
     Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
+    Route::get('/entities/{entity}/relation-debug', [DynamicEntityController::class, 'relationDebug']);
     Route::get('/entities/{entity}/by/{field}/{value}', [DynamicEntityController::class, 'showByField']);
     Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
     Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
