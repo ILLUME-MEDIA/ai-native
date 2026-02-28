@@ -97,7 +97,8 @@ class DeliveryQuoteController extends Controller
             ], 502);
         }
 
-        $feeCents = $raw['fee'] ?? $raw['delivery_fee'] ?? null;
+        $feeCents   = $raw['fee'] ?? $raw['delivery_fee'] ?? null;
+        $isEstimate = ($raw['_source'] ?? '') === 'v1_estimate';
 
         return response()->json([
             'success'           => true,
@@ -109,6 +110,10 @@ class DeliveryQuoteController extends Controller
             'min_order_amount'  => 0,
             'expires_at'        => $raw['expires_at'] ?? null,
             'quote_id'          => $raw['external_delivery_id'] ?? null,
+            'is_estimate'       => $isEstimate,
+            'note'              => $isEstimate
+                ? 'Fee estimated via Classic Drive API (v1). Your DoorDash account does not support Drive v2 quotes. Actual fee confirmed at dispatch.'
+                : null,
             'zone'              => null,
             'raw'               => $raw,
         ]);

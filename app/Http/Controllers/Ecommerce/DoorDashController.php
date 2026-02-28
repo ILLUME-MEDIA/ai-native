@@ -42,16 +42,30 @@ class DoorDashController extends Controller
         }
 
         // Normalize the fee to dollars for the response
-        $feeCents = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
+        $feeCents  = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
+        $isEstimate = ($quote['_source'] ?? '') === 'v1_estimate';
+
+        // Parse ETA from v2 estimated_delivery_time if available
+        $etaMinutes = null;
+        if (!empty($quote['estimated_delivery_time'])) {
+            try {
+                $etaMinutes = max(1, (int) now()->diffInMinutes(Carbon::parse($quote['estimated_delivery_time'])));
+            } catch (\Throwable) {}
+        }
 
         return response()->json([
-            'success'          => true,
-            'fee'              => $feeCents !== null ? round($feeCents / 100, 2) : null,
-            'fee_cents'        => $feeCents,
-            'currency'         => $quote['currency'] ?? 'USD',
-            'expires_at'       => $quote['expires_at'] ?? null,
-            'quote_id'         => $quote['external_delivery_id'] ?? null,
-            'raw'              => $quote,
+            'success'           => true,
+            'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
+            'fee_cents'         => $feeCents,
+            'currency'          => $quote['currency'] ?? 'USD',
+            'estimated_minutes' => $etaMinutes,
+            'expires_at'        => $quote['expires_at'] ?? null,
+            'quote_id'          => $quote['external_delivery_id'] ?? null,
+            'is_estimate'       => $isEstimate,
+            'note'              => $isEstimate
+                ? 'Fee estimated via Classic Drive API (v1). Actual fee confirmed at dispatch.'
+                : null,
+            'raw'               => $quote,
         ]);
     }
 
