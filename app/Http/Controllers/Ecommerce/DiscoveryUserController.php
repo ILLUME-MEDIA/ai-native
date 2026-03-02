@@ -124,7 +124,7 @@ class DiscoveryUserController extends Controller
         );
 
         $status = $location->wasRecentlyCreated ? 201 : 200;
-        return response()->json(['success' => true, 'location' => $location], $status);
+        return response()->json(['success' => true, 'location' => $location->fresh()], $status);
     }
 
     public function locationDestroy(Request $request): JsonResponse

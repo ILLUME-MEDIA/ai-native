@@ -131,18 +131,30 @@ class DoorDashService
      *  1. POST /drive/v1/estimates — the dedicated Classic Drive estimates endpoint.
      *     Returns fee, tax, pickup_time, delivery_time without creating a delivery.
      *  2. Fallback: POST /drive/v2/deliveries/quotes — for accounts on Drive API v2.
+     *  3. Fallback: POST /drive/v2/deliveries + immediate cancel — last resort.
      *
-     * @param  string  $pickupAddress   Full pickup address string
-     * @param  string  $dropoffAddress  Full dropoff address string
-     * @param  int     $orderValue      Order value in cents
+     * @param  string       $pickupAddress   Full pickup address string
+     * @param  string       $dropoffAddress  Full dropoff address string
+     * @param  int          $orderValue      Order value in cents
+     * @param  string|null  $pickupPhone     Raw phone for pickup contact (normalized internally)
+     * @param  string|null  $dropoffPhone    Raw phone for dropoff contact (normalized internally)
      */
-    public function getQuote(string $pickupAddress, string $dropoffAddress, int $orderValue = 0): array
-    {
+    public function getQuote(
+        string $pickupAddress,
+        string $dropoffAddress,
+        int $orderValue = 0,
+        ?string $pickupPhone = null,
+        ?string $dropoffPhone = null
+    ): array {
         $parsed  = parse_url($this->baseUrl);
         $host    = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? 'openapi.doordash.com');
 
         $jwt     = $this->generateJwt();
         $headers = ['Authorization' => "Bearer {$jwt}", 'Content-Type' => 'application/json'];
+
+        // Resolve phone numbers — use caller-supplied phones, fall back to valid placeholder
+        $phPickup  = $this->normalizePhone($pickupPhone ?? '');
+        $phDropoff = $this->normalizePhone($dropoffPhone ?? '');
 
         // DoorDash accepts full_address string inside an address object
         $pickupObj  = ['full_address' => $pickupAddress];
@@ -197,10 +209,10 @@ class DoorDashService
             'external_delivery_id'  => 'quote-' . uniqid(),
             'pickup_address'        => $pickupAddress,
             'pickup_business_name'  => 'Pickup Location',
-            'pickup_phone_number'   => '+12025550179',   // valid placeholder (E.164)
+            'pickup_phone_number'   => $phPickup,
             'dropoff_address'       => $dropoffAddress,
             'dropoff_business_name' => 'Dropoff Location',
-            'dropoff_phone_number'  => '+12025550179',
+            'dropoff_phone_number'  => $phDropoff,
             'order_value'           => $orderValue,
             'currency'              => 'USD',
         ];
@@ -238,10 +250,10 @@ class DoorDashService
             'external_delivery_id'  => $tempId,
             'pickup_address'        => $pickupAddress,
             'pickup_business_name'  => 'Pickup Location',
-            'pickup_phone_number'   => '+12025550179',
+            'pickup_phone_number'   => $phPickup,
             'dropoff_address'       => $dropoffAddress,
             'dropoff_business_name' => 'Dropoff Location',
-            'dropoff_phone_number'  => '+12025550179',
+            'dropoff_phone_number'  => $phDropoff,
             'order_value'           => $orderValue,
             'currency'              => 'USD',
         ];
@@ -294,7 +306,7 @@ class DoorDashService
      */
     private function normalizePhone(?string $phone): string
     {
-        if (! $phone) return '+10000000000';
+        if (! $phone) return '+12025550179'; // valid E.164 placeholder
         $digits = preg_replace('/\D/', '', $phone);
         if (strlen($digits) === 10) $digits = '1' . $digits;
         return '+' . $digits;

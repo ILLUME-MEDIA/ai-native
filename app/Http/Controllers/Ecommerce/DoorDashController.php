@@ -26,6 +26,8 @@ class DoorDashController extends Controller
             'pickup_address'  => 'required|string',
             'dropoff_address' => 'required|string',
             'order_value'     => 'nullable|numeric|min:0',
+            'pickup_phone'    => 'nullable|string|max:30',
+            'dropoff_phone'   => 'nullable|string|max:30',
         ]);
 
         try {
@@ -33,6 +35,8 @@ class DoorDashController extends Controller
                 $data['pickup_address'],
                 $data['dropoff_address'],
                 (int) round(($data['order_value'] ?? 0) * 100), // convert dollars → cents
+                $data['pickup_phone'] ?? null,
+                $data['dropoff_phone'] ?? null,
             );
         } catch (\Throwable $e) {
             return response()->json([

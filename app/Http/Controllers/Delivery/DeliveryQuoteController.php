@@ -60,6 +60,7 @@ class DeliveryQuoteController extends Controller
             'business_id'     => 'nullable|integer|exists:businesses,id',
             'lat'             => 'nullable|numeric',
             'lng'             => 'nullable|numeric',
+            'customer_phone'  => 'nullable|string|max:30',
         ]);
 
         return match ($data['vendor']) {
@@ -84,10 +85,18 @@ class DeliveryQuoteController extends Controller
 
         try {
             $doorDash = app(DoorDashService::class);
+
+            // Use business phone for pickup; customer_phone (if provided) for dropoff
+            $business    = !empty($data['business_id']) ? Business::find($data['business_id']) : null;
+            $pickupPhone = $business?->phone ?? null;
+            $dropoffPhone = $data['customer_phone'] ?? null;
+
             $raw = $doorDash->getQuote(
                 $data['pickup_address'],
                 $data['dropoff_address'],
-                (int) round(($data['order_value'] ?? 0) * 100)
+                (int) round(($data['order_value'] ?? 0) * 100),
+                $pickupPhone,
+                $dropoffPhone
             );
         } catch (\Throwable $e) {
             return response()->json([
