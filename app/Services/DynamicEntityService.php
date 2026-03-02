@@ -427,10 +427,20 @@ class DynamicEntityService
     }
 
     /**
-     * Apply per-column filters (Datatables-style).
+     * Apply per-column filters.
      *
-     * Expected query format:
-     *   GET /api/entities/{slug}?filters[name]=John&filters[status]=active
+     * Supports three modes per column:
+     *
+     *  1. Array syntax   → whereIn
+     *     ?filters[featured][]=1&filters[featured][]=0
+     *
+     *  2. Comma-separated → whereIn
+     *     ?filters[featured]=1,0
+     *     ?filters[status]=active,pending
+     *
+     *  3. Single value
+     *     Numeric → exact WHERE equal
+     *     String  → WHERE LIKE %value%
      */
     protected function applyFilters(Builder $query, SectionEntity $entity, array $filters): void
     {
@@ -450,8 +460,33 @@ class DynamicEntityService
                 continue;
             }
 
-            // Simple "LIKE" filter (works for most datatable use-cases)
-            $query->where($column, 'like', '%'.$value.'%');
+            // ── Array of values → whereIn ─────────────────────────────────
+            if (is_array($value)) {
+                $vals = array_values(array_filter($value, fn($v) => $v !== '' && $v !== null));
+                if (! empty($vals)) {
+                    $query->whereIn($column, $vals);
+                }
+                continue;
+            }
+
+            // ── Comma-separated string → whereIn ─────────────────────────
+            if (str_contains((string) $value, ',')) {
+                $vals = array_values(array_filter(
+                    array_map('trim', explode(',', (string) $value)),
+                    fn($v) => $v !== ''
+                ));
+                if (! empty($vals)) {
+                    $query->whereIn($column, $vals);
+                }
+                continue;
+            }
+
+            // ── Single value ──────────────────────────────────────────────
+            if (is_numeric($value)) {
+                $query->where($column, $value);
+            } else {
+                $query->where($column, 'like', '%' . $value . '%');
+            }
         }
     }
 
