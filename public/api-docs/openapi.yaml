@@ -3295,6 +3295,9 @@ paths:
 
         **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
 
+        Returns the **complete** saved location object (all fields, including nulls).
+        `201` on first save, `200` on subsequent updates.
+
         ### Typical GPS save flow
         1. User grants location permission in browser/app
         2. Get coords via `navigator.geolocation.getCurrentPosition()`
@@ -3979,6 +3982,156 @@ paths:
 
   # ── DOORDASH ────────────────────────────────────────────────────────────────
 
+  /delivery/doordash/env:
+    get:
+      tags:
+        - DoorDash Delivery
+      summary: Get current DoorDash environment
+      description: Returns whether the service is running in `sandbox` or `production` mode.
+      security: []
+      responses:
+        "200":
+          description: Environment info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  env:
+                    type: string
+                    enum: [sandbox, production]
+                    example: sandbox
+                  is_sandbox:
+                    type: boolean
+                    example: true
+
+  /delivery/doordash/quote:
+    post:
+      tags:
+        - DoorDash Delivery
+      summary: Get DoorDash delivery fee quote
+      description: |
+        Returns a delivery fee estimate directly from DoorDash (no order created).
+
+        **3-attempt fallback chain:**
+        1. `POST /drive/v1/estimates` — Classic Drive API (fee + tax + ETA, non-binding).
+        2. `POST /drive/v2/deliveries/quotes` — Drive API v2 for newer accounts.
+        3. `POST /drive/v2/deliveries` + immediate cancel — last resort for v2 accounts where `/quotes` is disabled.
+
+        Pass real phone numbers to improve DoorDash validation and avoid placeholder rejections.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pickup_address
+                - dropoff_address
+              properties:
+                pickup_address:
+                  type: string
+                  example: "123 Main St, Los Angeles, CA 90012"
+                dropoff_address:
+                  type: string
+                  example: "456 Oak Ave, Los Angeles, CA 90001"
+                order_value:
+                  type: number
+                  description: Order subtotal in dollars
+                  example: 35.50
+                pickup_phone:
+                  type: string
+                  description: Pickup contact phone (any format — normalized to E.164 internally)
+                  example: "+13235551234"
+                dropoff_phone:
+                  type: string
+                  description: Dropoff contact phone (any format — normalized to E.164 internally)
+                  example: "+13105551234"
+            examples:
+              minimal:
+                summary: Addresses only
+                value:
+                  pickup_address: "2309 San Pablo Avenue, Berkeley, CA 94702"
+                  dropoff_address: "2301 San Pablo Avenue, Berkeley, CA 94702"
+                  order_value: 35.50
+              with_phones:
+                summary: With real phone numbers
+                value:
+                  pickup_address: "2309 San Pablo Avenue, Berkeley, CA 94702"
+                  dropoff_address: "2301 San Pablo Avenue, Berkeley, CA 94702"
+                  order_value: 35.50
+                  pickup_phone: "+15105551234"
+                  dropoff_phone: "+13105551234"
+      responses:
+        "200":
+          description: Quote result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  fee:
+                    type: number
+                    nullable: true
+                    description: Delivery fee in dollars
+                    example: 5.99
+                  fee_cents:
+                    type: integer
+                    nullable: true
+                    example: 599
+                  tax:
+                    type: number
+                    nullable: true
+                    description: Tax in dollars (Classic Drive API only)
+                    example: 0.52
+                  tax_cents:
+                    type: integer
+                    nullable: true
+                    example: 52
+                  currency:
+                    type: string
+                    example: USD
+                  estimated_minutes:
+                    type: integer
+                    nullable: true
+                    example: 42
+                  pickup_time:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  delivery_time:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  expires_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  quote_id:
+                    type: string
+                    nullable: true
+                    example: "48173944"
+                  raw:
+                    type: object
+                    description: Raw DoorDash API response
+        "502":
+          description: DoorDash API error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Validation Failed"
+
   /delivery/doordash/status/{order}:
     get:
       tags:
@@ -4163,10 +4316,13 @@ paths:
         | `instacart` | Zone-based estimate | Instacart manages actual fee |
         | `own` | Exact fee from delivery zone config | Returns `in_zone: false` if no zone covers the location |
 
-        ### DoorDash Classic API (v1/estimates)
-        Uses `POST /drive/v1/estimates` — DoorDash's dedicated quote endpoint.
-        Returns `fee`, `tax`, `pickup_time`, and `delivery_time` without creating a delivery.
-        Requires either `pickup_time` or `delivery_time` — the API uses 30 min from now as default.
+        ### DoorDash Quote Strategy (3-attempt fallback chain)
+        1. `POST /drive/v1/estimates` — Classic Drive API. Returns `fee`, `tax`, `pickup_time`, `delivery_time` without creating a delivery.
+        2. `POST /drive/v2/deliveries/quotes` — Drive API v2. Used for newer accounts that don't have Classic Drive.
+        3. `POST /drive/v2/deliveries` + immediate cancel — Last resort for v2 accounts where the quotes endpoint is disabled.
+
+        Pass `business_id` to automatically use the business's phone for the pickup contact.
+        Pass `customer_phone` to use the real customer phone for the dropoff contact (improves DoorDash validation).
       security: []
       requestBody:
         required: true
@@ -4205,6 +4361,10 @@ paths:
                   type: number
                   description: Customer longitude (for zone matching)
                   example: -118.2437
+                customer_phone:
+                  type: string
+                  description: Customer phone number (doordash only — used as dropoff contact, any format accepted)
+                  example: "+13105551234"
       responses:
         "200":
           description: Quote result
