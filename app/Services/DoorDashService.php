@@ -125,132 +125,87 @@ class DoorDashService
     }
 
     /**
-     * Get a delivery fee quote without creating a delivery.
-     * Returns the DoorDash quote object including fee, currency, expiry.
+     * Get a delivery fee estimate using the DoorDash Drive Classic API.
+     *
+     * Strategy:
+     *  1. POST /drive/v1/estimates — the dedicated Classic Drive estimates endpoint.
+     *     Returns fee, tax, pickup_time, delivery_time without creating a delivery.
+     *  2. Fallback: POST /drive/v2/deliveries/quotes — for accounts on Drive API v2.
      *
      * @param  string  $pickupAddress   Full pickup address string
      * @param  string  $dropoffAddress  Full dropoff address string
      * @param  int     $orderValue      Order value in cents
-     */
-    /**
-     * Get a delivery fee quote.
-     *
-     * Strategy:
-     *  1. Try DoorDash Drive v2 quotes endpoint (non-binding, preferred).
-     *  2. If v2 is unavailable (Classic/v1 credentials) fall back to the v1
-     *     "get delivery" estimate endpoint which returns pricing without
-     *     actually dispatching a Dasher.
-     *
-     * Returns a normalised array with at minimum: fee (cents), currency.
      */
     public function getQuote(string $pickupAddress, string $dropoffAddress, int $orderValue = 0): array
     {
         $parsed  = parse_url($this->baseUrl);
         $host    = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? 'openapi.doordash.com');
 
-        // ── Attempt 1: Drive v2 quotes (non-binding) ─────────────────────────
-        $v2Url   = $host . '/drive/v2/deliveries/quotes';
-        $quoteId = 'quote-' . uniqid();
-        $payload = [
-            'external_delivery_id' => $quoteId,
+        $jwt     = $this->generateJwt();
+        $headers = ['Authorization' => "Bearer {$jwt}", 'Content-Type' => 'application/json'];
+
+        // DoorDash accepts full_address string inside an address object
+        $pickupObj  = ['full_address' => $pickupAddress];
+        $dropoffObj = ['full_address' => $dropoffAddress];
+
+        // Pickup time is required — use 30 min from now as default
+        $pickupTime = now()->addMinutes(30)->utc()->toIso8601String();
+
+        // ── Attempt 1: Drive v1/estimates (Classic Drive API — proper endpoint) ──
+        $v1Payload = [
+            'pickup_address'  => $pickupObj,
+            'dropoff_address' => $dropoffObj,
+            'order_value'     => $orderValue,
+            'pickup_time'     => $pickupTime,
+        ];
+
+        $response = Http::withHeaders($headers)
+            ->post("{$host}/drive/v1/estimates", $v1Payload);
+
+        if ($response->successful()) {
+            $result            = $response->json() ?? [];
+            $result['_source'] = 'v1_estimates';
+            return $result;
+        }
+
+        // Check if v1/estimates endpoint is unavailable for this account
+        $body = $response->body();
+        $json = json_decode($body, true) ?? [];
+        $code = $json['code'] ?? '';
+        $msg  = $json['message'] ?? $body;
+
+        $isEndpointMissing = in_array($code, ['unknown_path', 'not_found'], true)
+            || str_contains(strtolower($msg), 'unknown path')
+            || $response->status() === 404;
+
+        if (! $isEndpointMissing) {
+            Log::error("DoorDash v1/estimates error [{$response->status()}]: {$body}");
+            throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
+        }
+
+        Log::info('DoorDash v1/estimates not available for this account. Trying Drive v2 quotes.');
+
+        // ── Attempt 2: Drive v2 quotes (newer accounts) ───────────────────────
+        $v2Payload = [
+            'external_delivery_id' => 'quote-' . uniqid(),
             'pickup_address'       => $pickupAddress,
             'dropoff_address'      => $dropoffAddress,
             'order_value'          => $orderValue,
             'currency'             => 'USD',
         ];
 
-        $jwt      = $this->generateJwt();
-        $response = Http::withHeaders([
-            'Authorization' => "Bearer {$jwt}",
-            'Content-Type'  => 'application/json',
-        ])->post($v2Url, $payload);
+        $response = Http::withHeaders($headers)
+            ->post("{$host}/drive/v2/deliveries/quotes", $v2Payload);
 
         if ($response->successful()) {
             return $response->json() ?? [];
         }
 
-        // ── v2 failed — inspect the error ────────────────────────────────────
         $body = $response->body();
         $json = json_decode($body, true) ?? [];
-        $code = $json['code'] ?? '';
         $msg  = $json['message'] ?? $body;
-
-        $isV2Unavailable = in_array($code, ['authorization_error', 'unknown_path', 'not_found'], true)
-            || str_contains(strtolower($msg), 'unknown path')
-            || str_contains(strtolower($msg), 'not found')
-            || $response->status() === 404;
-
-        if (! $isV2Unavailable) {
-            // Real API error (bad addresses, rate-limit, etc.) — surface it
-            Log::error("DoorDash v2 quote error [{$response->status()}]: {$body}");
-            throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
-        }
-
-        Log::info("DoorDash v2 quote not available (Classic credentials). Falling back to v1 estimate.");
-
-        // ── Attempt 2: Drive v1 estimate ─────────────────────────────────────
-        // v1 does not have a dedicated quote endpoint, but we can call the
-        // delivery creation endpoint with `simulate=true` (sandbox) or use the
-        // accept_if_optimal pattern.  The simplest portable approach is to call
-        // GET /drive/v1/deliveries/fee_estimate if available, otherwise we
-        // create and immediately cancel to read back the fee.
-        return $this->getQuoteV1($host, $pickupAddress, $dropoffAddress, $orderValue);
-    }
-
-    /**
-     * Classic Drive v1 fee estimate.
-     * Tries the undocumented fee-estimate endpoint first, then falls back to
-     * creating a delivery (reading the fee) and immediately cancelling it.
-     */
-    private function getQuoteV1(string $host, string $pickupAddress, string $dropoffAddress, int $orderValue): array
-    {
-        $jwt     = $this->generateJwt();
-        $headers = ['Authorization' => "Bearer {$jwt}", 'Content-Type' => 'application/json'];
-        $quoteId = 'qv1-' . uniqid();
-
-        $payload = [
-            'external_delivery_id'  => $quoteId,
-            'pickup_address'        => $pickupAddress,
-            'dropoff_address'       => $dropoffAddress,
-            'order_value'           => $orderValue,
-            'currency'              => 'USD',
-            'pickup_phone_number'   => '+10000000000',
-            'dropoff_phone_number'  => '+10000000000',
-            'dropoff_business_name' => 'Quote Request',
-        ];
-
-        // Try creating a delivery to read pricing then cancel immediately
-        $createResp = Http::withHeaders($headers)
-            ->post("{$host}/drive/v1/deliveries", $payload);
-
-        if ($createResp->failed()) {
-            $errJson = $createResp->json() ?? [];
-            $errMsg  = $errJson['message'] ?? $createResp->body();
-            Log::error("DoorDash v1 quote (create) failed: {$errMsg}");
-            throw new \RuntimeException(
-                'DoorDash delivery quotes require Drive API v2 credentials. ' .
-                "Your account uses Classic API (v1). Error: {$errMsg}"
-            );
-        }
-
-        $created  = $createResp->json() ?? [];
-        $fee      = $created['fee'] ?? null;
-
-        // Immediately cancel so no real Dasher is dispatched
-        try {
-            Http::withHeaders($headers)
-                ->put("{$host}/drive/v1/deliveries/{$quoteId}/cancel");
-        } catch (\Throwable $e) {
-            Log::warning("DoorDash v1 quote cleanup cancel failed: " . $e->getMessage());
-        }
-
-        return [
-            'external_delivery_id' => $quoteId,
-            'fee'                  => $fee,
-            'currency'             => $created['currency'] ?? 'USD',
-            'delivery_status'      => 'quote_only',
-            '_source'              => 'v1_estimate',
-        ];
+        Log::error("DoorDash v2/quotes error [{$response->status()}]: {$body}");
+        throw new \RuntimeException($msg ?: 'DoorDash quote failed. Ensure credentials support Classic v1 or Drive v2.');
     }
 
     /**

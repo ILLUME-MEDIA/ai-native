@@ -97,23 +97,23 @@ class DeliveryQuoteController extends Controller
             ], 502);
         }
 
-        $feeCents   = $raw['fee'] ?? $raw['delivery_fee'] ?? null;
-        $isEstimate = ($raw['_source'] ?? '') === 'v1_estimate';
+        $feeCents = $raw['fee'] ?? $raw['delivery_fee'] ?? null;
+        $taxCents = $raw['tax'] ?? null;
 
         return response()->json([
             'success'           => true,
             'vendor'            => 'doordash',
             'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
             'fee_cents'         => $feeCents,
+            'tax'               => $taxCents !== null ? round($taxCents / 100, 2) : null,
+            'tax_cents'         => $taxCents,
             'currency'          => $raw['currency'] ?? 'USD',
             'estimated_minutes' => $this->parseDoorDashEta($raw),
+            'pickup_time'       => $raw['pickup_time'] ?? null,
+            'delivery_time'     => $raw['delivery_time'] ?? $raw['estimated_delivery_time'] ?? null,
             'min_order_amount'  => 0,
             'expires_at'        => $raw['expires_at'] ?? null,
-            'quote_id'          => $raw['external_delivery_id'] ?? null,
-            'is_estimate'       => $isEstimate,
-            'note'              => $isEstimate
-                ? 'Fee estimated via Classic Drive API (v1). Your DoorDash account does not support Drive v2 quotes. Actual fee confirmed at dispatch.'
-                : null,
+            'quote_id'          => isset($raw['id']) ? (string)$raw['id'] : ($raw['external_delivery_id'] ?? null),
             'zone'              => null,
             'raw'               => $raw,
         ]);
@@ -121,12 +121,14 @@ class DeliveryQuoteController extends Controller
 
     private function parseDoorDashEta(array $raw): ?int
     {
-        // DoorDash may return estimated_delivery_time as ISO string
-        if (!empty($raw['estimated_delivery_time'])) {
-            try {
-                $eta = \Carbon\Carbon::parse($raw['estimated_delivery_time']);
-                return max(1, (int) now()->diffInMinutes($eta));
-            } catch (\Throwable) {}
+        // v1/estimates returns delivery_time (ISO string)
+        foreach (['delivery_time', 'estimated_delivery_time'] as $field) {
+            if (!empty($raw[$field])) {
+                try {
+                    $eta = \Carbon\Carbon::parse($raw[$field]);
+                    return max(1, (int) now()->diffInMinutes($eta));
+                } catch (\Throwable) {}
+            }
         }
         return null;
     }

@@ -41,30 +41,33 @@ class DoorDashController extends Controller
             ], 502);
         }
 
-        // Normalize the fee to dollars for the response
-        $feeCents  = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
-        $isEstimate = ($quote['_source'] ?? '') === 'v1_estimate';
+        // Normalize fee and tax (both in cents from DoorDash)
+        $feeCents = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
+        $taxCents = $quote['tax'] ?? null;
 
-        // Parse ETA from v2 estimated_delivery_time if available
+        // ETA: v1/estimates returns delivery_time; v2 returns estimated_delivery_time
         $etaMinutes = null;
-        if (!empty($quote['estimated_delivery_time'])) {
-            try {
-                $etaMinutes = max(1, (int) now()->diffInMinutes(Carbon::parse($quote['estimated_delivery_time'])));
-            } catch (\Throwable) {}
+        foreach (['delivery_time', 'estimated_delivery_time'] as $field) {
+            if (!empty($quote[$field])) {
+                try {
+                    $etaMinutes = max(1, (int) now()->diffInMinutes(Carbon::parse($quote[$field])));
+                    break;
+                } catch (\Throwable) {}
+            }
         }
 
         return response()->json([
             'success'           => true,
             'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
             'fee_cents'         => $feeCents,
+            'tax'               => $taxCents !== null ? round($taxCents / 100, 2) : null,
+            'tax_cents'         => $taxCents,
             'currency'          => $quote['currency'] ?? 'USD',
             'estimated_minutes' => $etaMinutes,
+            'pickup_time'       => $quote['pickup_time'] ?? null,
+            'delivery_time'     => $quote['delivery_time'] ?? $quote['estimated_delivery_time'] ?? null,
             'expires_at'        => $quote['expires_at'] ?? null,
-            'quote_id'          => $quote['external_delivery_id'] ?? null,
-            'is_estimate'       => $isEstimate,
-            'note'              => $isEstimate
-                ? 'Fee estimated via Classic Drive API (v1). Actual fee confirmed at dispatch.'
-                : null,
+            'quote_id'          => isset($quote['id']) ? (string)$quote['id'] : ($quote['external_delivery_id'] ?? null),
             'raw'               => $quote,
         ]);
     }

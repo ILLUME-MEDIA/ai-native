@@ -155,6 +155,20 @@ tags:
     description: Shopping cart
   - name: Orders
     description: Order management
+  - name: POS Checkout
+    description: |
+      Point-of-Sale terminal checkout via **Square** and **Clover** integrations.
+
+      ### Flow
+      1. Customer places order → `POST /api/ecommerce/orders` → get `order_id`
+      2. Admin creates POS checkout → `POST /api/ecommerce/pos/{connection}/checkout` with `order_id`
+      3. Terminal prompts customer for payment
+      4. Poll status → `GET /api/ecommerce/pos/{connection}/checkout/{checkoutId}/status`
+      5. On `COMPLETED`, order is automatically marked as paid
+
+      ### Setup
+      Configure POS connections in **Admin → POS Connections** (Square or Clover).
+      Use `GET /api/ecommerce/pos/{connection}/devices` to list available terminals.
   - name: Discovery Users
     description: |
       Customer/user management.
@@ -2458,6 +2472,264 @@ paths:
         "200":
           description: Status updated
 
+  # ── POS CHECKOUT ──────────────────────────────────────────────────────────
+
+  /ecommerce/pos/{connection}/devices:
+    get:
+      tags:
+        - POS Checkout
+      summary: List POS terminal devices
+      description: Returns available Square terminal devices for a POS connection.
+      parameters:
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: POS connection ID
+      responses:
+        "200":
+          description: List of terminal devices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        status:
+                          type: string
+        "422":
+          description: Device list only available for Square
+
+  /ecommerce/pos/{connection}/checkout:
+    post:
+      tags:
+        - POS Checkout
+      summary: Create terminal checkout
+      description: |
+        Creates an order in the POS system (Square/Clover) and initiates a terminal checkout.
+        The terminal prompts the customer to pay.
+
+        Poll `GET /ecommerce/pos/{connection}/checkout/{checkoutId}/status` to watch for `COMPLETED`.
+
+        For **Square**: a terminal checkout is created and sent to the specified device.
+        For **Clover**: a Clover order is created.
+      parameters:
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: POS connection ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - order_id
+              properties:
+                order_id:
+                  type: integer
+                  description: Local order ID from POST /ecommerce/orders
+                  example: 42
+                device_id:
+                  type: string
+                  nullable: true
+                  description: Square terminal device ID (from GET /devices). Uses default device if omitted.
+                  example: "device_9V3BQVQ3ZBN7E"
+      responses:
+        "200":
+          description: Checkout created — use checkout_id to poll status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  checkout_id:
+                    type: string
+                    description: Square terminal checkout ID or Clover order ID
+                    example: "LtQCGz9K9MXMSP3J"
+                  status:
+                    type: string
+                    example: PENDING
+                  provider:
+                    type: string
+                    enum: [square, clover]
+                    example: square
+        "422":
+          description: POS connection inactive or unsupported provider
+
+  /ecommerce/pos/{connection}/checkout/{checkoutId}/status:
+    get:
+      tags:
+        - POS Checkout
+      summary: Poll checkout status
+      description: |
+        Returns the current status of a Square terminal checkout.
+
+        | Status | Meaning |
+        |--------|---------|
+        | `PENDING` | Waiting for customer |
+        | `IN_PROGRESS` | Customer is interacting with terminal |
+        | `COMPLETED` | Payment successful — order marked paid |
+        | `CANCELED` | Checkout was cancelled |
+        | `CANCEL_REQUESTED` | Cancellation in progress |
+
+        **Note:** Only available for Square. Clover uses webhooks.
+      parameters:
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: checkoutId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Square terminal checkout ID from POST /checkout
+      responses:
+        "200":
+          description: Checkout status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [PENDING, IN_PROGRESS, COMPLETED, CANCELED, CANCEL_REQUESTED]
+                    example: COMPLETED
+                  payment_id:
+                    type: string
+                    nullable: true
+                    description: Square payment ID once completed
+                    example: "TWnU7MCRxRKzZuRQz9vhZbwV"
+        "422":
+          description: Status polling only available for Square
+
+  /ecommerce/pos/{connection}/checkout/{checkoutId}/cancel:
+    post:
+      tags:
+        - POS Checkout
+      summary: Cancel terminal checkout
+      description: Cancels an active Square terminal checkout. Only available for Square.
+      parameters:
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: checkoutId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: CANCEL_REQUESTED
+
+  /ecommerce/pos/{connection}/pay:
+    post:
+      tags:
+        - POS Checkout
+      summary: Direct Square payment (card on file / nonce)
+      description: |
+        Charge a Square payment nonce or card-on-file for a local order.
+        Use this for API-based payments (not terminal). For terminal payments, use `POST /checkout`.
+      parameters:
+        - name: connection
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - order_id
+                - source_id
+              properties:
+                order_id:
+                  type: integer
+                  example: 42
+                source_id:
+                  type: string
+                  description: Square payment nonce or card-on-file token
+                  example: "cnon:card-nonce-ok"
+      responses:
+        "200":
+          description: Payment successful — order marked paid
+
+  /ecommerce/orders/{order}/pos-orders:
+    get:
+      tags:
+        - POS Checkout
+      summary: Get POS orders for a local order
+      description: |
+        Returns all POS system orders (Square/Clover) linked to a local order.
+        Useful for reconciliation and receipt lookup.
+      parameters:
+        - name: order
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Local order ID
+      responses:
+        "200":
+          description: List of POS orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    order_id:
+                      type: integer
+                    provider:
+                      type: string
+                      enum: [square, clover]
+                    pos_order_id:
+                      type: string
+                    pos_payment_id:
+                      type: string
+                      nullable: true
+                    amount:
+                      type: number
+                    status:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+
   # ── DISCOVERY USERS (Self-Service — OTP Bearer token) ─────────────────────
   #
   # How to get the token:
@@ -3433,7 +3705,19 @@ paths:
         - Delivery Quote
       summary: Get delivery fee quote (all vendors)
       description: |
-        Single endpoint for all delivery vendors. Pass `vendor` to route to DoorDash, UberEats, Instacart, or own delivery zones.
+        Single endpoint for all delivery vendors. Pass `vendor` to route to the correct provider.
+
+        | Vendor | Endpoint Used | Notes |
+        |--------|--------------|-------|
+        | `doordash` | `POST /drive/v1/estimates` (Classic Drive API) | Returns real fee + tax + ETA. Falls back to Drive v2 quotes for newer accounts. |
+        | `ubereats` | Zone-based estimate | UberEats manages actual fee at checkout |
+        | `instacart` | Zone-based estimate | Instacart manages actual fee |
+        | `own` | Exact fee from delivery zone config | Returns `in_zone: false` if no zone covers the location |
+
+        ### DoorDash Classic API (v1/estimates)
+        Uses `POST /drive/v1/estimates` — DoorDash's dedicated quote endpoint.
+        Returns `fee`, `tax`, `pickup_time`, and `delivery_time` without creating a delivery.
+        Requires either `pickup_time` or `delivery_time` — the API uses 30 min from now as default.
       security: []
       requestBody:
         required: true
@@ -3450,15 +3734,15 @@ paths:
                   example: doordash
                 pickup_address:
                   type: string
-                  description: Required for doordash
+                  description: Required for doordash — full address string
                   example: "123 Main St, Los Angeles, CA 90012"
                 dropoff_address:
                   type: string
-                  description: Required for doordash
+                  description: Required for doordash — full address string
                   example: "456 Oak Ave, Los Angeles, CA 90001"
                 order_value:
                   type: number
-                  description: Order total in dollars
+                  description: Order subtotal in dollars (used for DoorDash fee calculation)
                   example: 35.50
                 business_id:
                   type: integer
@@ -3466,7 +3750,7 @@ paths:
                   example: 1
                 lat:
                   type: number
-                  description: Customer latitude (for zone matching)
+                  description: Customer latitude (for zone matching with own/ubereats/instacart)
                   example: 34.0522
                 lng:
                   type: number
@@ -3479,6 +3763,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeliveryQuoteResponse"
+              examples:
+                doordash:
+                  summary: DoorDash Classic v1/estimates response
+                  value:
+                    success: true
+                    vendor: doordash
+                    fee: 5.99
+                    fee_cents: 599
+                    tax: 0.52
+                    tax_cents: 52
+                    currency: USD
+                    estimated_minutes: 42
+                    pickup_time: "2026-03-02T17:30:00Z"
+                    delivery_time: "2026-03-02T18:12:00Z"
+                    quote_id: "48173944"
+                    min_order_amount: 0
+                    expires_at: null
+                    zone: null
+                own_delivery:
+                  summary: Own delivery zone response
+                  value:
+                    success: true
+                    vendor: own
+                    fee: 3.99
+                    fee_cents: 399
+                    currency: USD
+                    estimated_minutes: 30
+                    min_order_amount: 15.00
+                    in_zone: true
+                    zone:
+                      id: 1
+                      name: Downtown LA
+                      description: "5 mile radius"
         "422":
           description: Missing required fields for the selected vendor
 
@@ -5575,18 +5892,43 @@ components:
         fee:
           type: number
           nullable: true
+          description: Delivery fee in dollars
           example: 5.99
         fee_cents:
           type: integer
           nullable: true
+          description: Delivery fee in cents (DoorDash native unit)
           example: 599
+        tax:
+          type: number
+          nullable: true
+          description: Delivery tax in dollars (DoorDash only)
+          example: 0.52
+        tax_cents:
+          type: integer
+          nullable: true
+          description: Delivery tax in cents (DoorDash only)
+          example: 52
         currency:
           type: string
           example: USD
         estimated_minutes:
           type: integer
           nullable: true
-          example: 35
+          description: Estimated delivery time in minutes
+          example: 42
+        pickup_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Estimated pickup time ISO-8601 UTC (DoorDash v1/estimates)
+          example: "2026-03-02T17:30:00Z"
+        delivery_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Estimated delivery time ISO-8601 UTC (DoorDash v1/estimates)
+          example: "2026-03-02T18:12:00Z"
         min_order_amount:
           type: number
           example: 0
@@ -5597,6 +5939,7 @@ components:
         quote_id:
           type: string
           nullable: true
+          description: DoorDash estimate ID or external_delivery_id
         in_zone:
           type: boolean
           nullable: true
