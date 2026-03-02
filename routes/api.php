@@ -16,6 +16,7 @@ use App\Http\Controllers\Ecommerce\MenuController;
 use App\Http\Controllers\Ecommerce\MenuItemModifierController;
 use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
 use App\Http\Controllers\Ecommerce\CartController;
+use App\Http\Controllers\Ecommerce\CheckoutController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
@@ -36,6 +37,7 @@ use App\Http\Controllers\Delivery\UberEatsController;
 use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
+use App\Http\Controllers\Admin\AppSecretsController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -48,6 +50,15 @@ use Illuminate\Support\Facades\Route;
 | be assigned to the "api" middleware group. Make something great!
 |
 */
+
+// ── App Secrets (system credentials stored in DB instead of .env) ────────────
+Route::middleware('auth:sanctum')->prefix('admin/app-secrets')->group(function () {
+    Route::get('/',                         [AppSecretsController::class, 'index']);
+    Route::post('/',                        [AppSecretsController::class, 'store']);
+    Route::put('/{appSecret}',              [AppSecretsController::class, 'update']);
+    Route::delete('/{appSecret}',           [AppSecretsController::class, 'destroy']);
+    Route::post('/{appSecret}/reveal',      [AppSecretsController::class, 'reveal']);
+});
 
 Route::middleware('auth:sanctum')->group(function () {
     // ── Case Studies Admin CRUD ─────────────────────────────────────────────
@@ -386,6 +397,9 @@ Route::prefix('ecommerce')->group(function () {
 
     // Order placement — convert cart to order (session-based, no auth required)
     Route::post('orders',           [OrderController::class, 'store']);
+
+    // Unified checkout — single call: items + customer + payment → order (external sites)
+    Route::post('checkout',         [CheckoutController::class, 'checkout']);
 });
 
 // ── DoorDash Drive Delivery Routes ───────────────────────────────────────────

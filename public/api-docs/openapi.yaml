@@ -155,6 +155,43 @@ tags:
     description: Shopping cart
   - name: Orders
     description: Order management
+  - name: Checkout
+    description: |
+      Unified single-call checkout endpoint for **external sites** and **mobile apps**.
+
+      `POST /api/ecommerce/checkout` handles everything in one request:
+      - Items inline **or** from session cart
+      - Subtotal → tax → delivery fee → total calculated server-side
+      - COD or Stripe card payment
+      - DoorDash auto-dispatch if `delivery_vendor: doordash`
+      - Returns complete order object
+
+      ### External site — pass items directly
+      ```
+      POST /api/ecommerce/checkout
+      X-Session-Id: any-uuid
+
+      {
+        "business_id": 1,
+        "customer_name": "Jane Doe",
+        "customer_email": "jane@example.com",
+        "customer_phone": "+1 310 555 0100",
+        "order_type": "delivery",
+        "delivery_address": "456 Oak Ave, LA, CA 90001",
+        "delivery_fee": 5.99,
+        "tax_rate": 10,
+        "items": [
+          { "menu_item_id": 5, "quantity": 2 },
+          { "menu_item_id": 8, "quantity": 1, "modifiers": [{"option_id": 3}] }
+        ],
+        "payment_method": "stripe",
+        "stripe_payment_method_id": "pm_1ABC..."
+      }
+      ```
+
+      ### Session-based (same as checkout page)
+      Omit `items[]` — uses session cart identified by `X-Session-Id` or OTP Bearer token.
+
   - name: POS Checkout
     description: |
       Point-of-Sale terminal checkout via **Square** and **Clover** integrations.
@@ -2595,6 +2632,264 @@ paths:
       responses:
         "200":
           description: Status updated
+
+  # ── UNIFIED CHECKOUT ──────────────────────────────────────────────────────
+
+  /ecommerce/checkout:
+    post:
+      tags:
+        - Checkout
+      summary: Unified checkout (single API call)
+      description: |
+        Complete checkout in **one request** — replaces the multi-step flow of:
+        cart → orders → stripe/charge.
+
+        **Session identification (pick one):**
+
+        | Header | When to use |
+        |--------|-------------|
+        | `X-Session-Id: <uuid>` | Guest checkout — any UUID |
+        | `Authorization: Bearer <otp-token>` | Logged-in user (OTP) — uses same cart + saved card |
+
+        **Payment options:**
+
+        | `payment_method` | Required fields | Behaviour |
+        |------------------|-----------------|-----------|
+        | `cod` (default) | none | Order created, payment collected on delivery |
+        | `stripe` + `stripe_payment_method_id` | `pm_...` id from Stripe.js | One-time charge — no account needed |
+        | `stripe` + OTP Bearer token | saved card in account | Charges default saved card |
+
+        **Item source:**
+        - `items[]` in body → external site / app (no session cart needed)
+        - Omit `items[]` → uses session cart (same X-Session-Id used for cart)
+      security: []
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Guest session UUID — any UUID works for external sites
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+          description: OTP Bearer token — for saved card payment or linked cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - business_id
+                - customer_name
+                - customer_email
+                - customer_phone
+              properties:
+                business_id:
+                  type: integer
+                  example: 1
+                customer_name:
+                  type: string
+                  example: "Jane Doe"
+                customer_email:
+                  type: string
+                  format: email
+                  example: "jane@example.com"
+                customer_phone:
+                  type: string
+                  example: "+1 310 555 0100"
+                order_type:
+                  type: string
+                  enum: [delivery, pickup, dine_in]
+                  default: delivery
+                delivery_address:
+                  type: string
+                  nullable: true
+                  example: "456 Oak Ave, Los Angeles, CA 90001"
+                delivery_vendor:
+                  type: string
+                  nullable: true
+                  description: doordash | ubereats | instacart | own | blank for in-house
+                  example: "doordash"
+                delivery_fee:
+                  type: number
+                  description: Delivery fee in dollars. Use GET /delivery/quote to get the real fee first.
+                  example: 5.99
+                tax_rate:
+                  type: number
+                  description: Tax percentage (e.g. 10 = 10%)
+                  example: 10
+                notes:
+                  type: string
+                  nullable: true
+                  example: "Ring doorbell"
+                items:
+                  type: array
+                  nullable: true
+                  description: |
+                    Pass items directly — no session cart needed (for external sites).
+                    Omit to use the session cart instead.
+                  items:
+                    type: object
+                    required:
+                      - menu_item_id
+                    properties:
+                      menu_item_id:
+                        type: integer
+                        example: 5
+                      quantity:
+                        type: integer
+                        default: 1
+                        example: 2
+                      notes:
+                        type: string
+                        nullable: true
+                        example: "no onions"
+                      modifiers:
+                        type: array
+                        nullable: true
+                        items:
+                          type: object
+                          required:
+                            - option_id
+                          properties:
+                            option_id:
+                              type: integer
+                              example: 3
+                            quantity:
+                              type: integer
+                              default: 1
+                payment_method:
+                  type: string
+                  enum: [cod, stripe]
+                  default: cod
+                  description: "`cod` = Cash on Delivery. `stripe` = card payment (requires `stripe_payment_method_id` or OTP Bearer token)."
+                stripe_payment_method_id:
+                  type: string
+                  nullable: true
+                  description: |
+                    Stripe `pm_...` id from `stripe.createPaymentMethod()` or `stripe.confirmCardSetup()` on the frontend.
+                    Required when `payment_method: stripe` and user has no saved card.
+                  example: "pm_1ABC..."
+            examples:
+              external_cod:
+                summary: External site — COD with inline items
+                value:
+                  business_id: 1
+                  customer_name: "Jane Doe"
+                  customer_email: "jane@example.com"
+                  customer_phone: "+1 310 555 0100"
+                  order_type: delivery
+                  delivery_address: "456 Oak Ave, LA, CA 90001"
+                  delivery_fee: 3.99
+                  tax_rate: 10
+                  items:
+                    - menu_item_id: 5
+                      quantity: 2
+                    - menu_item_id: 8
+                      quantity: 1
+                      modifiers:
+                        - option_id: 3
+              external_stripe:
+                summary: External site — Stripe card payment
+                value:
+                  business_id: 1
+                  customer_name: "Jane Doe"
+                  customer_email: "jane@example.com"
+                  customer_phone: "+1 310 555 0100"
+                  order_type: delivery
+                  delivery_address: "456 Oak Ave, LA, CA 90001"
+                  delivery_vendor: doordash
+                  delivery_fee: 5.99
+                  tax_rate: 10
+                  items:
+                    - menu_item_id: 5
+                      quantity: 1
+                  payment_method: stripe
+                  stripe_payment_method_id: "pm_1ABC..."
+              session_cart:
+                summary: Session cart — COD (same as checkout page)
+                value:
+                  business_id: 1
+                  customer_name: "John Doe"
+                  customer_email: "john@example.com"
+                  customer_phone: "+1 310 555 0101"
+                  order_type: delivery
+                  delivery_address: "123 Main St, LA, CA 90012"
+                  tax_rate: 10
+                  delivery_fee: 3.99
+                  payment_method: cod
+      responses:
+        "201":
+          description: Order placed (and paid if Stripe)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  order:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        example: 42
+                      order_number:
+                        type: string
+                        example: ORD-A1B2C3D4
+                      status:
+                        type: string
+                        example: pending
+                      payment_status:
+                        type: string
+                        enum: [unpaid, paid, failed]
+                        example: paid
+                      subtotal:
+                        type: number
+                        example: 24.99
+                      tax:
+                        type: number
+                        example: 2.50
+                      delivery_fee:
+                        type: number
+                        example: 5.99
+                      total:
+                        type: number
+                        example: 33.48
+                      tracking_url:
+                        type: string
+                        nullable: true
+                        description: DoorDash tracking URL (if auto-dispatched)
+                      items:
+                        type: array
+                        items:
+                          type: object
+        "402":
+          description: Payment failed — order was created but payment_status is `failed`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Payment failed: Your card was declined."
+                  order:
+                    type: object
+                    description: The order that was created (use order.id to retry payment)
+        "401":
+          description: Stripe payment requires stripe_payment_method_id or OTP Bearer token
+        "422":
+          description: Cart empty / no valid items / validation error
 
   # ── POS CHECKOUT ──────────────────────────────────────────────────────────
 
