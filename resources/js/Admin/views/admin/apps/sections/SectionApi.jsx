@@ -68,6 +68,17 @@ const SectionApi = () => {
 
                 json.fields = fields;
                 setSection(json);
+
+                // Auto-fetch live list data on mount (5 records preview)
+                const slugOrTable = json.slug || json.table_name;
+                try {
+                    const liveRes = await axios.get(`/api/entities/${slugOrTable}`, {
+                        params: { page: 1, per_page: 5, direction: 'desc' }
+                    });
+                    setListResponse(liveRes.data);
+                } catch (_) {
+                    // silently ignore — mock example will show instead
+                }
             } catch (e) {
                 console.error("Failed to load section", e);
             } finally {
@@ -358,8 +369,17 @@ const SectionApi = () => {
                                         <ul className="text-muted small mb-3">
                                             <li><code>search</code>: Global search across searchable columns.</li>
                                             <li><code>page</code>, <code>per_page</code>: Pagination.</li>
-                                            <li><code>sort</code>, <code>direction</code>: Column sort (e.g. <code>sort=created_at&direction=desc</code>).</li>
-                                            <li><code>filters[column]</code>: Per-column filter (e.g. <code>filters[name]=John</code>).</li>
+                                            <li><code>sort</code>, <code>direction</code>: Column sort (e.g. <code>sort=created_at&amp;direction=desc</code>).</li>
+                                            <li>
+                                                <code>filters[column]</code>: Per-column filter — supports 3 modes:
+                                                <ul className="mt-1">
+                                                    <li><strong>Single text</strong>: <code>filters[name]=John</code> → LIKE %John%</li>
+                                                    <li><strong>Single number</strong>: <code>filters[featured]=1</code> → exact match</li>
+                                                    <li><strong>Comma-separated numbers</strong>: <code>filters[featured]=1,0</code> → IN (1,0)</li>
+                                                    <li><strong>Comma-separated text</strong>: <code>filters[title]=Nikki,Obama</code> → LIKE %Nikki% OR LIKE %Obama%</li>
+                                                    <li><strong>Array</strong>: <code>filters[featured][]=1&amp;filters[featured][]=0</code> → IN (1,0)</li>
+                                                </ul>
+                                            </li>
                                         </ul>
 
                                         <Form onSubmit={handleTryList} className="border rounded p-3 mb-3 bg-light-subtle">
@@ -481,7 +501,9 @@ const SectionApi = () => {
                                             </div>
                                         </Form>
 
-                                        <h6 className="mt-4">Sample / Live Response (200 OK)</h6>
+                                        <h6 className="mt-4">
+                                            {listResponse ? '✅ Live Response (200 OK)' : 'Sample Response (press "Try request" for live data)'}
+                                        </h6>
                                         <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(listResponse ?? listResponseExample, null, 2)}
                                         </pre>

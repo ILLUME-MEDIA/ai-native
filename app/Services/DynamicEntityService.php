@@ -460,23 +460,23 @@ class DynamicEntityService
                 continue;
             }
 
-            // ── Array of values → whereIn ─────────────────────────────────
+            // ── Array of values ───────────────────────────────────────────
             if (is_array($value)) {
                 $vals = array_values(array_filter($value, fn($v) => $v !== '' && $v !== null));
                 if (! empty($vals)) {
-                    $query->whereIn($column, $vals);
+                    $this->applyMultiValue($query, $column, $vals);
                 }
                 continue;
             }
 
-            // ── Comma-separated string → whereIn ─────────────────────────
+            // ── Comma-separated string ────────────────────────────────────
             if (str_contains((string) $value, ',')) {
                 $vals = array_values(array_filter(
                     array_map('trim', explode(',', (string) $value)),
                     fn($v) => $v !== ''
                 ));
                 if (! empty($vals)) {
-                    $query->whereIn($column, $vals);
+                    $this->applyMultiValue($query, $column, $vals);
                 }
                 continue;
             }
@@ -487,6 +487,32 @@ class DynamicEntityService
             } else {
                 $query->where($column, 'like', '%' . $value . '%');
             }
+        }
+    }
+
+    /**
+     * Apply a multi-value filter to a single column.
+     *
+     * All-numeric values → whereIn (exact match, fast index scan).
+     * Any non-numeric value → grouped OR LIKE (partial text match).
+     *
+     * Examples:
+     *   [1, 0]                      → WHERE col IN (1, 0)
+     *   ['active', 'pending']       → WHERE (col LIKE '%active%' OR col LIKE '%pending%')
+     *   ["Ex-Muslim's", "Nikki"]    → WHERE (col LIKE "%Ex-Muslim's%" OR col LIKE '%Nikki%')
+     */
+    protected function applyMultiValue(Builder $query, string $column, array $vals): void
+    {
+        $allNumeric = count(array_filter($vals, 'is_numeric')) === count($vals);
+
+        if ($allNumeric) {
+            $query->whereIn($column, $vals);
+        } else {
+            $query->where(function (Builder $q) use ($column, $vals) {
+                foreach ($vals as $v) {
+                    $q->orWhere($column, 'like', '%' . $v . '%');
+                }
+            });
         }
     }
 
