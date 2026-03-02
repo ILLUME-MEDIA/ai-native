@@ -20,6 +20,7 @@ const SectionApi = () => {
         direction: 'asc',
     });
     const [listFilters, setListFilters] = useState({});
+    const [listContains, setListContains] = useState({});
     const [listResponse, setListResponse] = useState(null);
     const [listLoading, setListLoading] = useState(false);
     const [listError, setListError] = useState('');
@@ -171,6 +172,13 @@ const SectionApi = () => {
             }
         });
 
+        // contains[column]=value
+        Object.entries(listContains).forEach(([column, value]) => {
+            if (value != null && value !== '') {
+                params.append(`contains[${column}]`, value);
+            }
+        });
+
         const qs = params.toString();
         return qs ? `${baseUrl}?${qs}` : baseUrl;
     };
@@ -224,6 +232,11 @@ const SectionApi = () => {
             Object.entries(listFilters).forEach(([column, value]) => {
                 if (value != null && value !== '') {
                     params[`filters[${column}]`] = value;
+                }
+            });
+            Object.entries(listContains).forEach(([column, value]) => {
+                if (value != null && value !== '') {
+                    params[`contains[${column}]`] = value;
                 }
             });
             const res = await axios.get(`/api/entities/${slugOrTable}`, { params });
@@ -375,9 +388,15 @@ const SectionApi = () => {
                                                 <ul className="mt-1">
                                                     <li><strong>Single text</strong>: <code>filters[name]=John</code> → LIKE %John%</li>
                                                     <li><strong>Single number</strong>: <code>filters[featured]=1</code> → exact match</li>
-                                                    <li><strong>Comma-separated numbers</strong>: <code>filters[featured]=1,0</code> → IN (1,0)</li>
-                                                    <li><strong>Comma-separated text</strong>: <code>filters[title]=Nikki,Obama</code> → LIKE %Nikki% OR LIKE %Obama%</li>
-                                                    <li><strong>Array</strong>: <code>filters[featured][]=1&amp;filters[featured][]=0</code> → IN (1,0)</li>
+                                                    <li><strong>Comma numbers</strong>: <code>filters[featured]=1,0</code> → IN (1,0)</li>
+                                                    <li><strong>Comma text</strong>: <code>filters[title]=Nikki,Obama</code> → LIKE %Nikki% OR LIKE %Obama%</li>
+                                                </ul>
+                                            </li>
+                                            <li>
+                                                <code>contains[column]</code>: <strong>Always OR LIKE</strong> — for columns that store delimited values (e.g. tab/comma-separated IDs):
+                                                <ul className="mt-1">
+                                                    <li><code>contains[category]=208,107</code> → LIKE %208% OR LIKE %107%</li>
+                                                    <li>Works even when category stores <code>&#9;208&#9;288&#9;322&#9;</code> (tab-separated)</li>
                                                 </ul>
                                             </li>
                                         </ul>
@@ -462,7 +481,8 @@ const SectionApi = () => {
                                                 <>
                                                     <hr className="my-3" />
                                                     <Form.Label className="small mb-2">
-                                                        Column Filters (<code>filters[column]</code>)
+                                                        Exact/LIKE Filters <code className="text-muted">filters[column]</code>
+                                                        <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>numbers→exact, text→LIKE, comma→IN or OR LIKE</span>
                                                     </Form.Label>
                                                     <Row className="g-2">
                                                         {fields.map((f) => (
@@ -476,6 +496,33 @@ const SectionApi = () => {
                                                                         value={listFilters[f.slug] ?? ''}
                                                                         onChange={(e) =>
                                                                             setListFilters((prev) => ({
+                                                                                ...prev,
+                                                                                [f.slug]: e.target.value,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                </InputGroup>
+                                                            </Col>
+                                                        ))}
+                                                    </Row>
+
+                                                    <hr className="my-3" />
+                                                    <Form.Label className="small mb-2">
+                                                        Contains / Partial Match <code className="text-muted">contains[column]</code>
+                                                        <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>always OR LIKE — use for tab/comma-delimited columns like category</span>
+                                                    </Form.Label>
+                                                    <Row className="g-2">
+                                                        {fields.map((f) => (
+                                                            <Col md={4} key={f.slug}>
+                                                                <InputGroup size="sm">
+                                                                    <InputGroup.Text className="text-truncate" style={{ maxWidth: 120, background: '#fff3cd' }}>
+                                                                        {f.slug}
+                                                                    </InputGroup.Text>
+                                                                    <FormControl
+                                                                        placeholder="208,107"
+                                                                        value={listContains[f.slug] ?? ''}
+                                                                        onChange={(e) =>
+                                                                            setListContains((prev) => ({
                                                                                 ...prev,
                                                                                 [f.slug]: e.target.value,
                                                                             }))

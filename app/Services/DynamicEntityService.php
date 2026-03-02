@@ -274,6 +274,11 @@ class DynamicEntityService
         // Sorting
         $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
 
+        // Contains filters: always OR LIKE regardless of numeric/string
+        // ?contains[category]=208,107 → WHERE (category LIKE '%208%' OR category LIKE '%107%')
+        $contains = (array) $request->input('contains', []);
+        $this->applyContains($model, $entity, $contains);
+
         $perPage = (int) $request->input('per_page', 15);
 
         $paginator = $model->paginate($perPage);
@@ -320,6 +325,28 @@ class DynamicEntityService
 
         if (! $fieldAllowed) {
             throw new \RuntimeException("Field '{$field}' does not exist on this entity.");
+        }
+
+        // Comma-separated values → OR LIKE on each value (works for both numeric IDs in
+        // delimited columns like "\t208\t322\t" and regular string searches)
+        if (str_contains($value, ',')) {
+            $vals = array_values(array_filter(array_map('trim', explode(',', $value)), fn($v) => $v !== ''));
+
+            $records = $this->makeBaseQuery($entity, $context)
+                ->where(function ($q) use ($field, $vals) {
+                    foreach ($vals as $v) {
+                        $q->orWhere($field, 'like', '%' . $v . '%');
+                    }
+                })
+                ->get();
+
+            if ($records->isEmpty()) {
+                throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                    "No records found where {$field} contains any of: " . implode(', ', $vals)
+                );
+            }
+
+            return $this->enrichCollection($records, $entity);
         }
 
         // Numeric value → exact match, return single record
@@ -508,6 +535,58 @@ class DynamicEntityService
         if ($allNumeric) {
             $query->whereIn($column, $vals);
         } else {
+            $query->where(function (Builder $q) use ($column, $vals) {
+                foreach ($vals as $v) {
+                    $q->orWhere($column, 'like', '%' . $v . '%');
+                }
+            });
+        }
+    }
+
+    /**
+     * Apply "contains" filters — always OR LIKE, never exact/whereIn.
+     * Use this when a column stores delimited values (tab/comma-separated IDs etc.).
+     *
+     * ?contains[category]=208,107
+     *   → WHERE (category LIKE '%208%' OR category LIKE '%107%')
+     *
+     * ?contains[category][]=208&contains[category][]=107
+     *   → same
+     */
+    protected function applyContains(Builder $query, SectionEntity $entity, array $contains): void
+    {
+        if (empty($contains)) {
+            return;
+        }
+
+        $fieldColumns = $entity->fields->pluck('column_name')->all();
+
+        foreach ($contains as $column => $value) {
+            if ($value === '' || $value === null) {
+                continue;
+            }
+
+            if (! in_array($column, $fieldColumns, true) && ! Schema::hasColumn($entity->table_name, $column)) {
+                continue;
+            }
+
+            // Normalize to array of values
+            if (is_array($value)) {
+                $vals = array_values(array_filter($value, fn($v) => $v !== '' && $v !== null));
+            } elseif (str_contains((string) $value, ',')) {
+                $vals = array_values(array_filter(
+                    array_map('trim', explode(',', (string) $value)),
+                    fn($v) => $v !== ''
+                ));
+            } else {
+                $vals = [(string) $value];
+            }
+
+            if (empty($vals)) {
+                continue;
+            }
+
+            // Always OR LIKE — even for numeric values
             $query->where(function (Builder $q) use ($column, $vals) {
                 foreach ($vals as $v) {
                     $q->orWhere($column, 'like', '%' . $v . '%');
