@@ -174,8 +174,13 @@ class DoorDashService
         $code = $json['code'] ?? '';
         $msg  = $json['message'] ?? $body;
 
+        $msgLower = strtolower($msg);
+
         $isEndpointMissing = in_array($code, ['unknown_path', 'not_found'], true)
-            || str_contains(strtolower($msg), 'unknown path')
+            || str_contains($msgLower, 'unknown path')
+            || str_contains($msgLower, 'drive/v2')          // "Make sure your request url prefix is .../drive/v2"
+            || str_contains($msgLower, 'drive api')         // "permissions to access the following apis: Drive API"
+            || str_contains($msgLower, 'request url prefix')
             || $response->status() === 404;
 
         if (! $isEndpointMissing) {
@@ -183,7 +188,7 @@ class DoorDashService
             throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
         }
 
-        Log::info('DoorDash v1/estimates not available for this account. Trying Drive v2 quotes.');
+        Log::info('DoorDash v1/estimates not available (account uses Drive v2). Falling back to v2 quotes.');
 
         // ── Attempt 2: Drive v2 quotes (newer accounts) ───────────────────────
         $v2Payload = [
