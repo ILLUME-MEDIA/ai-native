@@ -191,26 +191,84 @@ class DoorDashService
         Log::info('DoorDash v1/estimates not available (account uses Drive v2). Falling back to v2 quotes.');
 
         // ── Attempt 2: Drive v2 quotes (newer accounts) ───────────────────────
+        // v2/deliveries/quotes requires phone numbers and contact names in addition
+        // to addresses — omitting them causes "Validation Failed".
         $v2Payload = [
-            'external_delivery_id' => 'quote-' . uniqid(),
-            'pickup_address'       => $pickupAddress,
-            'dropoff_address'      => $dropoffAddress,
-            'order_value'          => $orderValue,
-            'currency'             => 'USD',
+            'external_delivery_id'  => 'quote-' . uniqid(),
+            'pickup_address'        => $pickupAddress,
+            'pickup_business_name'  => 'Pickup Location',
+            'pickup_phone_number'   => '+12025550179',   // valid placeholder (E.164)
+            'dropoff_address'       => $dropoffAddress,
+            'dropoff_business_name' => 'Dropoff Location',
+            'dropoff_phone_number'  => '+12025550179',
+            'order_value'           => $orderValue,
+            'currency'              => 'USD',
         ];
 
         $response = Http::withHeaders($headers)
             ->post("{$host}/drive/v2/deliveries/quotes", $v2Payload);
 
         if ($response->successful()) {
-            return $response->json() ?? [];
+            $result            = $response->json() ?? [];
+            $result['_source'] = 'v2_quotes';
+            return $result;
         }
 
         $body = $response->body();
         $json = json_decode($body, true) ?? [];
+        $code = $json['code'] ?? '';
         $msg  = $json['message'] ?? $body;
-        Log::error("DoorDash v2/quotes error [{$response->status()}]: {$body}");
-        throw new \RuntimeException($msg ?: 'DoorDash quote failed. Ensure credentials support Classic v1 or Drive v2.');
+
+        $isV2QuotesMissing = in_array($code, ['unknown_path', 'not_found'], true)
+            || str_contains(strtolower($msg), 'unknown path')
+            || $response->status() === 404;
+
+        if (! $isV2QuotesMissing) {
+            Log::error("DoorDash v2/quotes error [{$response->status()}]: {$body}");
+            throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
+        }
+
+        Log::info('DoorDash v2/deliveries/quotes not available. Falling back to v2 create+cancel to get fee.');
+
+        // ── Attempt 3: Create a temporary v2 delivery, read its fee, cancel immediately ──
+        // Last resort for Drive v2 accounts that don't expose /quotes at all.
+        $tempId = 'fee-check-' . uniqid();
+
+        $v2CreatePayload = [
+            'external_delivery_id'  => $tempId,
+            'pickup_address'        => $pickupAddress,
+            'pickup_business_name'  => 'Pickup Location',
+            'pickup_phone_number'   => '+12025550179',
+            'dropoff_address'       => $dropoffAddress,
+            'dropoff_business_name' => 'Dropoff Location',
+            'dropoff_phone_number'  => '+12025550179',
+            'order_value'           => $orderValue,
+            'currency'              => 'USD',
+        ];
+
+        $createResp = Http::withHeaders($headers)
+            ->post("{$host}/drive/v2/deliveries", $v2CreatePayload);
+
+        if ($createResp->successful()) {
+            $delivery = $createResp->json() ?? [];
+
+            // Cancel immediately — fire and forget (ignore errors)
+            try {
+                Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $this->generateJwt(),
+                    'Content-Type'  => 'application/json',
+                ])->put("{$host}/drive/v2/deliveries/{$tempId}/cancel");
+            } catch (\Throwable) {}
+
+            $delivery['_source'] = 'v2_create_cancel';
+            return $delivery;
+        }
+
+        $body = $createResp->body();
+        $json = json_decode($body, true) ?? [];
+        $msg  = $json['message'] ?? $body;
+        Log::error("DoorDash v2 create-cancel quote error [{$createResp->status()}]: {$body}");
+        throw new \RuntimeException($msg ?: 'DoorDash quote failed. No compatible quote endpoint found for this account.');
     }
 
     /**
