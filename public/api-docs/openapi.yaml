@@ -187,7 +187,31 @@ tags:
     description: |
       Save cards and charge customers using Stripe.
 
-      **All endpoints require OTP Bearer token** (from `POST /api/otp-auth/verify`).
+      ### Complete Checkout Flow
+
+      ```
+      1. GET  /api/payment/stripe/config          → publishable_key (if not in build env)
+      2. GET  /api/ecommerce/cart                 → cart items + subtotal  [X-Session-Id]
+      3. POST /api/delivery/quote  { vendor, pickup_address, dropoff_address }  → fee, eta
+      4. POST /api/otp-auth/send   { email }      → send OTP (for card payment only)
+      5. POST /api/otp-auth/verify { email, otp } → Bearer token
+      6. POST /api/ecommerce/orders {             [X-Session-Id]
+             business_id, customer_name, customer_email, customer_phone,
+             order_type, delivery_address, delivery_vendor, tax_rate, delivery_fee
+           }                                      → order.id, order_number, total
+      7a. Cash on Delivery → done
+      7b. Card payment:
+          POST /api/payment/stripe/setup-intent  → client_secret      [Bearer token]
+          stripe.confirmCardSetup(client_secret) → payment_method
+          POST /api/payment/stripe/save-method   → stripe_pm_id       [Bearer token]
+          POST /api/payment/stripe/charge { order_id, payment_method_id }  [Bearer token]
+      ```
+
+      **Session identification** (steps 2, 6):
+      - Guest: `X-Session-Id: <uuid>` header — generate once and persist in `localStorage`
+      - OTP user: also works with `Authorization: Bearer <token>` (token-based session)
+
+      **Note:** `GET /api/payment/stripe/config` requires no auth. All other Stripe endpoints require OTP Bearer token.
 
       ### Card Save Flow
       1. `POST /api/payment/stripe/setup-intent` → get `client_secret`
@@ -2422,12 +2446,112 @@ paths:
                     - delivery
                 delivery_vendor:
                   type: string
+                  description: Delivery vendor (doordash / uber_eats / instacart / own — blank for in-house)
+                  example: doordash
                 tax_rate:
                   type: number
                   description: Tax rate percentage (e.g. 10 for 10%)
+                  example: 10
+                delivery_fee:
+                  type: number
+                  description: Delivery fee in dollars (from GET /delivery/quote or fixed rate)
+                  example: 3.99
+            example:
+              business_id: 1
+              customer_name: "John Doe"
+              customer_email: "john@example.com"
+              customer_phone: "+1 310 555 0100"
+              order_type: delivery
+              item_delivery_type: delivery
+              delivery_vendor: "doordash"
+              delivery_address: "456 Oak Ave, Los Angeles, CA 90001"
+              notes: "Ring doorbell"
+              tax_rate: 10
+              delivery_fee: 3.99
       responses:
         "201":
-          description: Order placed (cart for this business cleared)
+          description: Order placed — cart for this business cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 42
+                  order_number:
+                    type: string
+                    example: ORD-A1B2C3D4
+                  status:
+                    type: string
+                    enum: [pending, confirmed, preparing, ready, out_for_delivery, delivered, cancelled]
+                    example: pending
+                  payment_status:
+                    type: string
+                    nullable: true
+                    enum: [unpaid, paid, failed]
+                    example: unpaid
+                  subtotal:
+                    type: number
+                    example: 24.99
+                  tax:
+                    type: number
+                    example: 2.50
+                  delivery_fee:
+                    type: number
+                    example: 3.99
+                  total:
+                    type: number
+                    example: 31.48
+                  customer_name:
+                    type: string
+                  customer_email:
+                    type: string
+                  customer_phone:
+                    type: string
+                  delivery_address:
+                    type: string
+                    nullable: true
+                  delivery_vendor:
+                    type: string
+                    nullable: true
+                  doordash_delivery_id:
+                    type: string
+                    nullable: true
+                    description: Set if DoorDash auto-dispatch succeeded
+                  doordash_status:
+                    type: string
+                    nullable: true
+                  doordash_tracking_url:
+                    type: string
+                    nullable: true
+                  tracking_url:
+                    type: string
+                    nullable: true
+                  estimated_delivery_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  business:
+                    type: object
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        price:
+                          type: number
+                        quantity:
+                          type: integer
+                        subtotal:
+                          type: number
+                        modifiers:
+                          type: array
+                          nullable: true
         "422":
           description: Cart is empty for this business
 
@@ -3242,6 +3366,36 @@ paths:
           description: Sync logs
 
   # ── STRIPE PAYMENTS ───────────────────────────────────────────────────────
+
+  /payment/stripe/config:
+    get:
+      tags:
+        - Stripe Payments
+      summary: Get Stripe publishable key
+      description: |
+        Returns the Stripe publishable key for initialising Stripe.js on the frontend.
+        Call this if `VITE_STRIPE_PUBLISHABLE_KEY` is not set in the build environment.
+
+        **No auth required.**
+
+        ```js
+        // Usage in checkout
+        const res = await axios.get('/api/payment/stripe/config');
+        const stripe = Stripe(res.data.publishable_key);
+        ```
+      security: []
+      responses:
+        "200":
+          description: Stripe publishable key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publishable_key:
+                    type: string
+                    example: "pk_test_51..."
+                    description: Stripe publishable key (empty string if Stripe not configured)
 
   /payment/stripe/setup-intent:
     post:
