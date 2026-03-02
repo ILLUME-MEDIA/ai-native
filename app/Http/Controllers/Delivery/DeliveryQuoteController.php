@@ -76,25 +76,44 @@ class DeliveryQuoteController extends Controller
 
     private function quoteDoorDash(array $data): JsonResponse
     {
-        if (empty($data['pickup_address']) || empty($data['dropoff_address'])) {
+        $doorDash = app(DoorDashService::class);
+
+        // ── Resolve pickup address ────────────────────────────────────────────
+        // Use explicit pickup_address if provided; otherwise auto-build from business.
+        $business = !empty($data['business_id']) ? Business::find($data['business_id']) : null;
+
+        $pickupAddress = $data['pickup_address'] ?? null;
+
+        if (! $pickupAddress && $business) {
+            $pickupAddress = implode(', ', array_filter([
+                $business->address   ?? '',
+                $business->address_2 ?? '',
+                $business->city      ?? '',
+                $business->state     ?? '',
+                $business->zip       ?? '',
+            ])) ?: null;
+        }
+
+        $dropoffAddress = $data['dropoff_address'] ?? null;
+
+        if (! $pickupAddress || ! $dropoffAddress) {
             return response()->json([
                 'success' => false,
                 'vendor'  => 'doordash',
-                'message' => 'pickup_address and dropoff_address are required for DoorDash quotes.',
+                'message' => $pickupAddress
+                    ? 'dropoff_address is required for DoorDash quotes.'
+                    : 'pickup_address is required (or provide business_id with a saved address).',
             ], 422);
         }
 
+        // ── Resolve phones ────────────────────────────────────────────────────
+        $pickupPhone  = $business?->phone ?? null;
+        $dropoffPhone = $data['customer_phone'] ?? null;
+
         try {
-            $doorDash = app(DoorDashService::class);
-
-            // Use business phone for pickup; customer_phone (if provided) for dropoff
-            $business    = !empty($data['business_id']) ? Business::find($data['business_id']) : null;
-            $pickupPhone = $business?->phone ?? null;
-            $dropoffPhone = $data['customer_phone'] ?? null;
-
             $raw = $doorDash->getQuote(
-                $data['pickup_address'],
-                $data['dropoff_address'],
+                $pickupAddress,
+                $dropoffAddress,
                 (int) round(($data['order_value'] ?? 0) * 100),
                 $pickupPhone,
                 $dropoffPhone

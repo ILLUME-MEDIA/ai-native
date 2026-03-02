@@ -4123,14 +4123,15 @@ paths:
             schema:
               type: object
               required:
-                - pickup_address
                 - dropoff_address
               properties:
                 pickup_address:
                   type: string
+                  description: Optional if `business_id` provided — auto-built from business saved address
                   example: "123 Main St, Los Angeles, CA 90012"
                 dropoff_address:
                   type: string
+                  description: Customer delivery address (required)
                   example: "456 Oak Ave, Los Angeles, CA 90001"
                 order_value:
                   type: number
@@ -4435,11 +4436,13 @@ paths:
                   example: doordash
                 pickup_address:
                   type: string
-                  description: Required for doordash — full address string
+                  description: |
+                    Pickup address for doordash. Optional if `business_id` is provided —
+                    the business's saved address is used automatically.
                   example: "123 Main St, Los Angeles, CA 90012"
                 dropoff_address:
                   type: string
-                  description: Required for doordash — full address string
+                  description: Dropoff (customer) address — required for doordash
                   example: "456 Oak Ave, Los Angeles, CA 90001"
                 order_value:
                   type: number
@@ -4447,7 +4450,10 @@ paths:
                   example: 35.50
                 business_id:
                   type: integer
-                  description: Required for ubereats / instacart / own
+                  description: |
+                    Required for ubereats / instacart / own.
+                    For doordash: auto-fills `pickup_address` from the business's saved address
+                    and uses the business phone as the pickup contact.
                   example: 1
                 lat:
                   type: number
