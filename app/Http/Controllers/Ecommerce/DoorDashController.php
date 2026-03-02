@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Ecommerce;
 
+use App\Exceptions\DoorDashApiException;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\DoorDashService;
@@ -39,10 +40,13 @@ class DoorDashController extends Controller
                 $data['dropoff_phone'] ?? null,
             );
         } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], 502);
+            $body = ['success' => false, 'message' => $e->getMessage()];
+            if ($e instanceof DoorDashApiException) {
+                $fieldErrors = $e->getFieldErrors();
+                if (! empty($fieldErrors))  $body['field_errors'] = $fieldErrors;
+                if ($e->getDoorDashCode())  $body['error_code']   = $e->getDoorDashCode();
+            }
+            return response()->json($body, 502);
         }
 
         // Normalize fee and tax (both in cents from DoorDash)

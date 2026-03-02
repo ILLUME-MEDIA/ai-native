@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Delivery;
 
+use App\Exceptions\DoorDashApiException;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\DeliverySetting;
@@ -99,11 +100,17 @@ class DeliveryQuoteController extends Controller
                 $dropoffPhone
             );
         } catch (\Throwable $e) {
-            return response()->json([
+            $body = [
                 'success' => false,
                 'vendor'  => 'doordash',
                 'message' => $e->getMessage(),
-            ], 502);
+            ];
+            if ($e instanceof DoorDashApiException) {
+                $fieldErrors = $e->getFieldErrors();
+                if (! empty($fieldErrors))  $body['field_errors'] = $fieldErrors;
+                if ($e->getDoorDashCode())  $body['error_code']   = $e->getDoorDashCode();
+            }
+            return response()->json($body, 502);
         }
 
         $feeCents = $raw['fee'] ?? $raw['delivery_fee'] ?? null;

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\DoorDashApiException;
 use App\Models\Order;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -197,7 +198,7 @@ class DoorDashService
 
         if (! $isEndpointMissing) {
             Log::error("DoorDash v1/estimates error [{$response->status()}]: {$body}");
-            throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
+            throw new DoorDashApiException($msg ?: 'DoorDash quote failed.', $json);
         }
 
         Log::info('DoorDash v1/estimates not available (account uses Drive v2). Falling back to v2 quotes.');
@@ -237,7 +238,7 @@ class DoorDashService
 
         if (! $isV2QuotesMissing) {
             Log::error("DoorDash v2/quotes error [{$response->status()}]: {$body}");
-            throw new \RuntimeException($msg ?: 'DoorDash quote failed.');
+            throw new DoorDashApiException($msg ?: 'DoorDash quote failed.', $json);
         }
 
         Log::info('DoorDash v2/deliveries/quotes not available. Falling back to v2 create+cancel to get fee.');
@@ -280,7 +281,10 @@ class DoorDashService
         $json = json_decode($body, true) ?? [];
         $msg  = $json['message'] ?? $body;
         Log::error("DoorDash v2 create-cancel quote error [{$createResp->status()}]: {$body}");
-        throw new \RuntimeException($msg ?: 'DoorDash quote failed. No compatible quote endpoint found for this account.');
+        throw new DoorDashApiException(
+            $msg ?: 'DoorDash quote failed. No compatible quote endpoint found for this account.',
+            $json
+        );
     }
 
     /**
