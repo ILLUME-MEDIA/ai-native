@@ -6,6 +6,7 @@ use App\Exceptions\DoorDashApiException;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\DeliverySetting;
+use App\Models\Muzzhub;
 use App\Models\DeliveryZone;
 use App\Services\DoorDashService;
 use Illuminate\Http\JsonResponse;
@@ -58,7 +59,7 @@ class DeliveryQuoteController extends Controller
             'pickup_address'  => 'nullable|string',
             'dropoff_address' => 'nullable|string',
             'order_value'     => 'nullable|numeric|min:0',
-            'business_id'     => 'nullable|integer|exists:businesses,id',
+            'business_id'     => 'nullable|integer',
             'lat'             => 'nullable|numeric',
             'lng'             => 'nullable|numeric',
             'customer_phone'  => 'nullable|string|max:30',
@@ -79,18 +80,20 @@ class DeliveryQuoteController extends Controller
         $doorDash = app(DoorDashService::class);
 
         // ── Resolve pickup address ────────────────────────────────────────────
-        // Use explicit pickup_address if provided; otherwise auto-build from business.
-        $business = !empty($data['business_id']) ? Business::find($data['business_id']) : null;
+        // Use explicit pickup_address if provided; otherwise auto-build from muzzhub (via business_id).
+        $muzzhub = !empty($data['business_id'])
+            ? Muzzhub::where('business_id', $data['business_id'])->first()
+            : null;
 
         $pickupAddress = $data['pickup_address'] ?? null;
 
-        if (! $pickupAddress && $business) {
+        if (! $pickupAddress && $muzzhub) {
             $pickupAddress = implode(', ', array_filter([
-                $business->address   ?? '',
-                $business->address_2 ?? '',
-                $business->city      ?? '',
-                $business->state     ?? '',
-                $business->zip       ?? '',
+                $muzzhub->address   ?? '',
+                $muzzhub->address_2 ?? '',
+                $muzzhub->city      ?? '',
+                $muzzhub->state     ?? '',
+                $muzzhub->zip       ?? '',
             ])) ?: null;
         }
 
@@ -102,12 +105,12 @@ class DeliveryQuoteController extends Controller
                 'vendor'  => 'doordash',
                 'message' => $pickupAddress
                     ? 'dropoff_address is required for DoorDash quotes.'
-                    : 'pickup_address is required (or provide business_id with a saved address).',
+                    : 'pickup_address is required (or provide business_id to auto-fill from muzzhub).',
             ], 422);
         }
 
         // ── Resolve phones ────────────────────────────────────────────────────
-        $pickupPhone  = $business?->phone ?? null;
+        $pickupPhone  = $muzzhub?->phone ?? $muzzhub?->mobile_phone ?? null;
         $dropoffPhone = $data['customer_phone'] ?? null;
 
         try {

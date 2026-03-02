@@ -274,11 +274,6 @@ class DynamicEntityService
         // Sorting
         $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
 
-        // Contains filters: always OR LIKE regardless of numeric/string
-        // ?contains[category]=208,107 → WHERE (category LIKE '%208%' OR category LIKE '%107%')
-        $contains = (array) $request->input('contains', []);
-        $this->applyContains($model, $entity, $contains);
-
         $perPage = (int) $request->input('per_page', 15);
 
         $paginator = $model->paginate($perPage);
@@ -454,20 +449,13 @@ class DynamicEntityService
     }
 
     /**
-     * Apply per-column filters.
+     * Apply per-column filters — always uses LIKE (partial match) for all values.
      *
-     * Supports three modes per column:
+     * Single value:          filters[category]=208    → WHERE category LIKE '%208%'
+     * Comma-separated:       filters[category]=208,107 → WHERE (category LIKE '%208%' OR category LIKE '%107%')
+     * Array:                 filters[category][]=208&filters[category][]=107 → same as above
      *
-     *  1. Array syntax   → whereIn
-     *     ?filters[featured][]=1&filters[featured][]=0
-     *
-     *  2. Comma-separated → whereIn
-     *     ?filters[featured]=1,0
-     *     ?filters[status]=active,pending
-     *
-     *  3. Single value
-     *     Numeric → exact WHERE equal
-     *     String  → WHERE LIKE %value%
+     * Works with tab/comma-delimited columns (e.g. "\t208\t288\t322\t").
      */
     protected function applyFilters(Builder $query, SectionEntity $entity, array $filters): void
     {
@@ -482,116 +470,33 @@ class DynamicEntityService
                 continue;
             }
 
-            // Only allow known columns
             if (! in_array($column, $fieldColumns, true) && ! Schema::hasColumn($entity->table_name, $column)) {
                 continue;
             }
 
-            // ── Array of values ───────────────────────────────────────────
+            // Normalize to array of trimmed non-empty strings
             if (is_array($value)) {
-                $vals = array_values(array_filter($value, fn($v) => $v !== '' && $v !== null));
-                if (! empty($vals)) {
-                    $this->applyMultiValue($query, $column, $vals);
-                }
-                continue;
-            }
-
-            // ── Comma-separated string ────────────────────────────────────
-            if (str_contains((string) $value, ',')) {
-                $vals = array_values(array_filter(
-                    array_map('trim', explode(',', (string) $value)),
-                    fn($v) => $v !== ''
-                ));
-                if (! empty($vals)) {
-                    $this->applyMultiValue($query, $column, $vals);
-                }
-                continue;
-            }
-
-            // ── Single value ──────────────────────────────────────────────
-            if (is_numeric($value)) {
-                $query->where($column, $value);
-            } else {
-                $query->where($column, 'like', '%' . $value . '%');
-            }
-        }
-    }
-
-    /**
-     * Apply a multi-value filter to a single column.
-     *
-     * All-numeric values → whereIn (exact match, fast index scan).
-     * Any non-numeric value → grouped OR LIKE (partial text match).
-     *
-     * Examples:
-     *   [1, 0]                      → WHERE col IN (1, 0)
-     *   ['active', 'pending']       → WHERE (col LIKE '%active%' OR col LIKE '%pending%')
-     *   ["Ex-Muslim's", "Nikki"]    → WHERE (col LIKE "%Ex-Muslim's%" OR col LIKE '%Nikki%')
-     */
-    protected function applyMultiValue(Builder $query, string $column, array $vals): void
-    {
-        $allNumeric = count(array_filter($vals, 'is_numeric')) === count($vals);
-
-        if ($allNumeric) {
-            $query->whereIn($column, $vals);
-        } else {
-            $query->where(function (Builder $q) use ($column, $vals) {
-                foreach ($vals as $v) {
-                    $q->orWhere($column, 'like', '%' . $v . '%');
-                }
-            });
-        }
-    }
-
-    /**
-     * Apply "contains" filters — always OR LIKE, never exact/whereIn.
-     * Use this when a column stores delimited values (tab/comma-separated IDs etc.).
-     *
-     * ?contains[category]=208,107
-     *   → WHERE (category LIKE '%208%' OR category LIKE '%107%')
-     *
-     * ?contains[category][]=208&contains[category][]=107
-     *   → same
-     */
-    protected function applyContains(Builder $query, SectionEntity $entity, array $contains): void
-    {
-        if (empty($contains)) {
-            return;
-        }
-
-        $fieldColumns = $entity->fields->pluck('column_name')->all();
-
-        foreach ($contains as $column => $value) {
-            if ($value === '' || $value === null) {
-                continue;
-            }
-
-            if (! in_array($column, $fieldColumns, true) && ! Schema::hasColumn($entity->table_name, $column)) {
-                continue;
-            }
-
-            // Normalize to array of values
-            if (is_array($value)) {
-                $vals = array_values(array_filter($value, fn($v) => $v !== '' && $v !== null));
+                $vals = array_values(array_filter(array_map('trim', $value), fn($v) => $v !== ''));
             } elseif (str_contains((string) $value, ',')) {
-                $vals = array_values(array_filter(
-                    array_map('trim', explode(',', (string) $value)),
-                    fn($v) => $v !== ''
-                ));
+                $vals = array_values(array_filter(array_map('trim', explode(',', (string) $value)), fn($v) => $v !== ''));
             } else {
-                $vals = [(string) $value];
+                $vals = [trim((string) $value)];
             }
 
             if (empty($vals)) {
                 continue;
             }
 
-            // Always OR LIKE — even for numeric values
-            $query->where(function (Builder $q) use ($column, $vals) {
-                foreach ($vals as $v) {
-                    $q->orWhere($column, 'like', '%' . $v . '%');
-                }
-            });
+            // Always OR LIKE — works for plain values and tab/comma-delimited stored values
+            if (count($vals) === 1) {
+                $query->where($column, 'like', '%' . $vals[0] . '%');
+            } else {
+                $query->where(function (Builder $q) use ($column, $vals) {
+                    foreach ($vals as $v) {
+                        $q->orWhere($column, 'like', '%' . $v . '%');
+                    }
+                });
+            }
         }
     }
 
