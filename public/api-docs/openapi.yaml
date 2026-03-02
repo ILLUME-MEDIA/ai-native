@@ -192,6 +192,23 @@ tags:
       ### Session-based (same as checkout page)
       Omit `items[]` — uses session cart identified by `X-Session-Id` or OTP Bearer token.
 
+  - name: Tax
+    description: |
+      **ZIP-based US sales tax lookup** using Avalara tax rate tables (March 2026).
+
+      Covers all 50 US states + DC + Puerto Rico. Returns the combined rate broken down into
+      state, county, city, and special district components.
+
+      Use this endpoint **before checkout** to show the customer the correct tax amount:
+      ```
+      GET /api/ecommerce/tax?zip=90001&subtotal=100.00
+      ```
+
+      Then pass `tax_rate` (as a percentage, e.g. `10.5`) to `POST /api/ecommerce/checkout`.
+
+      > **Risk level**: ZIP codes with `risk_level > 0` span multiple tax jurisdictions.
+      > The returned rate is an estimate — the actual rate may vary by ±5%.
+
   - name: POS Checkout
     description: |
       Point-of-Sale terminal checkout via **Square** and **Clover** integrations.
@@ -3285,6 +3302,85 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OtpAuthError"
+    post:
+      tags:
+        - Discovery Users
+      summary: Save my location (OTP auth)
+      description: |
+        Creates the authenticated user's location record.
+        Safe to call even if a location already exists — behaves as upsert.
+        All fields are optional — send only what you have.
+
+        **Auth:** `Authorization: Bearer <otp-token>` (table: discovery_users)
+
+        Returns the **complete** saved location object (all fields, including nulls).
+        `201` on first save, `200` if location already existed.
+
+        ### Typical GPS save flow
+        1. User grants location permission in browser/app
+        2. Get coords via `navigator.geolocation.getCurrentPosition()`
+        3. Call this endpoint with `lat`, `lng`, `location_from_gps: true`
+        4. Optionally reverse-geocode to fill `address`, `city`, `country` fields
+      security:
+        - otpBearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoveryUserLocationInput"
+            examples:
+              gps_only:
+                summary: GPS coordinates only
+                value:
+                  lat: 40.7128
+                  lng: -74.0060
+                  location_from_gps: true
+              full_address:
+                summary: Full address with GPS
+                value:
+                  lat: 40.7128
+                  lng: -74.0060
+                  address: "123 Main St"
+                  city: "New York"
+                  state: "NY"
+                  zip: "10001"
+                  country: "United States"
+                  country_code: "US"
+                  location_from_gps: true
+      responses:
+        "201":
+          description: Location created (first time)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  location:
+                    $ref: "#/components/schemas/DiscoveryUserLocation"
+        "200":
+          description: Location already existed — updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  location:
+                    $ref: "#/components/schemas/DiscoveryUserLocation"
+        "401":
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpAuthError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
     put:
       tags:
         - Discovery Users
@@ -4407,6 +4503,169 @@ paths:
                       description: "5 mile radius"
         "422":
           description: Missing required fields for the selected vendor
+
+  # ── TAX LOOKUP ───────────────────────────────────────────────────────────────
+
+  /ecommerce/tax:
+    get:
+      tags:
+        - Tax
+      summary: Look up sales tax by ZIP code (GET)
+      description: |
+        Returns the US sales tax rate for a given 5-digit ZIP code.
+        Optionally calculates the tax amount if `subtotal` is provided.
+
+        Data source: Avalara ZIP-based tax rate tables (March 2026).
+        Covers all 50 US states, DC, and Puerto Rico.
+
+        **Workflow:**
+        1. Call this endpoint with the delivery ZIP code and order subtotal
+        2. Use `tax_rate` (a decimal like `0.0975`) — convert to percentage for checkout: `tax_rate * 100`
+        3. Pass that percentage as `tax_rate` to `POST /api/ecommerce/checkout`
+
+        **Risk level:** ZIP codes spanning multiple tax jurisdictions have `risk_level > 0`.
+        The returned rate may vary by ±5% for those cases.
+      security: []
+      parameters:
+        - name: zip
+          in: query
+          required: true
+          description: 5-digit US ZIP code
+          schema:
+            type: string
+            pattern: '^\d{5}$'
+            example: "90001"
+        - name: subtotal
+          in: query
+          required: false
+          description: Order subtotal in dollars — used to calculate tax_amount and total
+          schema:
+            type: number
+            format: float
+            example: 100.00
+      responses:
+        "200":
+          description: Tax data for the ZIP code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxResponse"
+              examples:
+                los_angeles:
+                  summary: Los Angeles, CA (90001) — $100 subtotal
+                  value:
+                    success: true
+                    data:
+                      found: true
+                      zip_code: "90001"
+                      tax_region: "HUNTINGTON PARK"
+                      state: "CA"
+                      tax_rate: 0.105
+                      tax_percentage: "10.5000%"
+                      tax_amount: "10.50"
+                      subtotal: "100.00"
+                      total: "110.50"
+                      risk_level: 0
+                      breakdown:
+                        state_rate: 0.06
+                        county_rate: 0.0025
+                        city_rate: 0.0075
+                        special_rate: 0.035
+                no_tax_state:
+                  summary: Anchorage, AK (99501) — zero sales tax
+                  value:
+                    success: true
+                    data:
+                      found: true
+                      zip_code: "99501"
+                      tax_region: "ANCHORAGE BOROUGH"
+                      state: "AK"
+                      tax_rate: 0.0
+                      tax_percentage: "0.0000%"
+                      tax_amount: "0.00"
+                      subtotal: "100.00"
+                      total: "100.00"
+                      risk_level: 0
+                      breakdown:
+                        state_rate: 0.0
+                        county_rate: 0.0
+                        city_rate: 0.0
+                        special_rate: 0.0
+        "404":
+          description: ZIP code not found in tax database
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "No tax data found for ZIP code 00000. It may not exist or may be outside the US."
+        "422":
+          description: Validation error — invalid ZIP format
+
+    post:
+      tags:
+        - Tax
+      summary: Look up sales tax by ZIP code (POST)
+      description: |
+        Same as GET `/ecommerce/tax` but accepts a JSON body.
+        Useful when building mobile apps or passing data from a form.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - zip
+              properties:
+                zip:
+                  type: string
+                  pattern: '^\d{5}$'
+                  description: 5-digit US ZIP code
+                  example: "10001"
+                subtotal:
+                  type: number
+                  format: float
+                  description: Order subtotal in dollars
+                  example: 75.50
+            example:
+              zip: "10001"
+              subtotal: 75.50
+      responses:
+        "200":
+          description: Tax data for the ZIP code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxResponse"
+              example:
+                success: true
+                data:
+                  found: true
+                  zip_code: "10001"
+                  tax_region: "NEW YORK CITY"
+                  state: "NY"
+                  tax_rate: 0.08875
+                  tax_percentage: "8.8750%"
+                  tax_amount: "6.70"
+                  subtotal: "75.50"
+                  total: "82.20"
+                  risk_level: 0
+                  breakdown:
+                    state_rate: 0.04
+                    county_rate: 0.0
+                    city_rate: 0.045
+                    special_rate: 0.00375
+        "404":
+          description: ZIP code not found
+        "422":
+          description: Validation error
 
   # ── DELIVERY SETTINGS ────────────────────────────────────────────────────────
 
@@ -6485,6 +6744,79 @@ components:
         is_default:
           type: boolean
           example: true
+
+    # ── TAX LOOKUP ──────────────────────────────────────────────────────────────
+
+    TaxResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            found:
+              type: boolean
+              description: false if ZIP code not found in the tax database
+              example: true
+            zip_code:
+              type: string
+              example: "90001"
+            tax_region:
+              type: string
+              nullable: true
+              description: Name of the primary tax region for this ZIP (e.g. "LOS ANGELES")
+              example: "HUNTINGTON PARK"
+            state:
+              type: string
+              nullable: true
+              description: Two-letter state code
+              example: "CA"
+            tax_rate:
+              type: number
+              format: float
+              description: Combined tax rate as a decimal (e.g. 0.105 = 10.5%)
+              example: 0.105
+            tax_percentage:
+              type: string
+              description: Human-readable percentage string
+              example: "10.5000%"
+            tax_amount:
+              type: string
+              description: Calculated tax amount in dollars (string to preserve precision)
+              example: "10.50"
+            subtotal:
+              type: string
+              description: Original subtotal in dollars
+              example: "100.00"
+            total:
+              type: string
+              description: subtotal + tax_amount
+              example: "110.50"
+            risk_level:
+              type: integer
+              description: |
+                Number of tax jurisdictions that overlap this ZIP code.
+                0 = single jurisdiction (precise). Higher = multiple boundaries (estimate may vary ±5%).
+              example: 0
+            breakdown:
+              type: object
+              description: Tax rate components that sum to tax_rate
+              properties:
+                state_rate:
+                  type: number
+                  example: 0.06
+                county_rate:
+                  type: number
+                  example: 0.0025
+                city_rate:
+                  type: number
+                  example: 0.0075
+                special_rate:
+                  type: number
+                  description: Special district rate (transit, fire, etc.)
+                  example: 0.035
 
     # ── DELIVERY QUOTE ─────────────────────────────────────────────────────────
 

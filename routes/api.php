@@ -17,6 +17,7 @@ use App\Http\Controllers\Ecommerce\MenuItemModifierController;
 use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
 use App\Http\Controllers\Ecommerce\CartController;
 use App\Http\Controllers\Ecommerce\CheckoutController;
+use App\Http\Controllers\Ecommerce\TaxController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
@@ -400,6 +401,10 @@ Route::prefix('ecommerce')->group(function () {
 
     // Unified checkout — single call: items + customer + payment → order (external sites)
     Route::post('checkout',         [CheckoutController::class, 'checkout']);
+
+    // Tax lookup — ZIP-based US sales tax rates (Avalara tables)
+    Route::get('tax',               [TaxController::class, 'show']);
+    Route::post('tax',              [TaxController::class, 'calculate']);
 });
 
 // ── DoorDash Drive Delivery Routes ───────────────────────────────────────────
@@ -418,7 +423,8 @@ Route::prefix('ecommerce/discovery-users/me')->group(function () {
     Route::get('/',          [DiscoveryUserController::class, 'meShow']);
     Route::patch('/',        [DiscoveryUserController::class, 'meUpdate']);
     Route::get('location',   [DiscoveryUserController::class, 'locationShow']);
-    Route::put('location',   [DiscoveryUserController::class, 'locationSave']);
+    Route::post('location',  [DiscoveryUserController::class, 'locationSave']);  // create (upsert)
+    Route::put('location',   [DiscoveryUserController::class, 'locationSave']);  // update (upsert)
     Route::delete('location',[DiscoveryUserController::class, 'locationDestroy']);
 });
 
