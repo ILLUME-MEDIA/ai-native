@@ -496,10 +496,6 @@ export const menuItems = [{
       slug: "pages:apps-issue-tracker",
       label: "Issue Tracker"
     }, {
-      url: "/apps/api-keys",
-      slug: "pages:apps-api-keys",
-      label: "API Keys"
-    }, {
       url: "/apps/manage",
       slug: "pages:apps-manage",
       label: "Manage Apps"
@@ -546,6 +542,11 @@ export const menuItems = [{
     icon: "layout-grid",
     slug: "pages:apps-sections-list",
     label: "Section Builder"
+  }, {
+    url: "/apps/api-keys",
+    icon: "key",
+    slug: "pages:apps-api-keys",
+    label: "App Secrets"
   }, {
     url: "/apps/code-editor",
     icon: "code",

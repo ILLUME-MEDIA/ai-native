@@ -11,6 +11,47 @@ const TAG_CATEGORIES = {
     summaryWords: ['entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring', 'practical', 'engaging']
 };
 
+/* ─── Per-platform: exactly 7 tags from TAG_CATEGORIES (based on platform_genres.php) ─── */
+const PLATFORM_TAGS = {
+    // Podify — podcast/talk: education, interviews, news, commentary
+    'Podify':          ['Education', 'Documentary', 'Interview', 'Analysis', 'News', 'informative', 'engaging'],
+    // Bollymix — Bollywood/Indian cinema: films, music, drama
+    'Bollymix':        ['Entertainment', 'Music', 'Documentary', 'Review', 'engaging', 'creative', 'inspiring'],
+    // Learnify — educational: tutorials, how-to, programming, language
+    'Learnify':        ['Education', 'Technology', 'Tutorial', 'Guide', 'Tips', 'educational', 'informative'],
+    // Muslamix — Islamic content: Quran, Nasheed, Duas, country-specific
+    'Muslamix':        ['Education', 'Documentary', 'Music', 'Guide', 'educational', 'informative', 'inspiring'],
+    // Newshub — news platform: breaking news, politics, analysis
+    'Newshub':         ['Documentary', 'News', 'Analysis', 'Interview', 'informative', 'educational', 'engaging'],
+    // Rang — Pakistani entertainment: drama, comedy, music, romance
+    'Rang':            ['Entertainment', 'Comedy', 'Music', 'Review', 'engaging', 'creative', 'inspiring'],
+    // Otakuhub Stream — anime, gaming, reviews, discussion
+    'Otakuhub Stream': ['Gaming', 'Entertainment', 'Music', 'Review', 'Gameplay', 'engaging', 'interactive'],
+    // Genkidz — kids/family: cartoons, learning, nursery rhymes
+    'Genkidz':         ['Education', 'Entertainment', 'Gaming', 'Tutorial', 'Guide', 'educational', 'engaging'],
+    // FreeFlix — movies/TV: all genres, streaming content
+    'FreeFlix':        ['Entertainment', 'Comedy', 'Documentary', 'Sports', 'Review', 'engaging', 'creative'],
+    // ProductSchool — product, AI, engineering, design, marketing
+    'ProductSchool':   ['Technology', 'Education', 'Tutorial', 'Analysis', 'Interview', 'educational', 'informative'],
+    // Furr — animals/pets: care, training, wildlife, rescue
+    'Furr':            ['Education', 'Documentary', 'Health', 'Guide', 'Tips', 'educational', 'informative'],
+    // Champs — sports: fitness, training, analysis, esports
+    'Champs':          ['Sports', 'Health', 'Gaming', 'Analysis', 'Workout', 'competitive', 'engaging'],
+    // Musix — music: all genres, concerts, music theory
+    'Musix':           ['Music', 'Entertainment', 'Review', 'Interview', 'engaging', 'creative', 'inspiring'],
+    // Streamz — live streaming: gaming, music, chatting, IRL
+    'Streamz':         ['Gaming', 'Entertainment', 'Music', 'Tutorial', 'Gameplay', 'engaging', 'interactive'],
+    // TOONZ — animation/cartoons: 2D, 3D, anime-inspired, family
+    'TOONZ':           ['Entertainment', 'Comedy', 'Education', 'Review', 'engaging', 'creative', 'informative'],
+    // MrBeast — challenges, giveaways, philanthropy, stunts
+    'MrBeast':         ['Entertainment', 'Comedy', 'Guide', 'Tips', 'engaging', 'inspiring', 'creative'],
+    // Custom — general purpose, all content types
+    'Custom':          ['Entertainment', 'Education', 'Technology', 'Sports', 'Music', 'informative', 'engaging'],
+};
+
+/* ─── Get tags for a platform ─── */
+const getTagsForPlatform = (platform) => PLATFORM_TAGS[platform] || [];
+
 /* ─── Number formatter (1200 → "1.2K", 1500000 → "1.5M") ─── */
 const fmtNum = (n) => {
     if (!n || n === 0) return '0';
@@ -163,6 +204,14 @@ const Scrapers = () => {
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedGenres, setSelectedGenres] = useState([]);
     const [platformGenres, setPlatformGenres] = useState({});
+
+    /* ─── Add Playlist modal — quick metadata setup ─── */
+    const [addPlatform, setAddPlatform] = useState('');
+    const [addGenres, setAddGenres] = useState([]);
+    const [addTags, setAddTags] = useState([]);
+
+    /* ─── Manual Selector tags tab — platform for tag suggestions ─── */
+    const [tagsPlatform, setTagsPlatform] = useState('');
 
     /* ─── YouTube Search modal state ─── */
     const [showYtSearchModal, setShowYtSearchModal] = useState(false);
@@ -359,6 +408,22 @@ const Scrapers = () => {
     };
 
     /* ─── Playlist actions ─── */
+    const handleOpenAddModal = async () => {
+        setAddPlatform('');
+        setAddGenres([]);
+        setAddTags([]);
+        setShowModal(true);
+        // Pre-load platform genres if not already loaded
+        if (Object.keys(platformGenres).length === 0) {
+            try {
+                const response = await axios.get('/api/ai/scrapers/platform-genres');
+                setPlatformGenres(response.data.genres);
+            } catch (error) {
+                console.error('Error loading platform genres:', error);
+            }
+        }
+    };
+
     const handleAddPlaylist = async (e) => {
         e.preventDefault();
         setSyncing(true);
@@ -376,6 +441,19 @@ const Scrapers = () => {
             // Add playlist to list immediately — no need to wait for enrichment
             if (response.data.playlist) {
                 setPlaylists(prev => [response.data.playlist, ...prev]);
+
+                // Apply genres/tags if user selected any in the quick setup
+                if (addGenres.length > 0 || addTags.length > 0) {
+                    const bulkPayload = { replace: false };
+                    if (addGenres.length > 0) bulkPayload.genres = addGenres;
+                    if (addTags.length > 0) bulkPayload.tags = addTags;
+                    try {
+                        await axios.post(`/api/ai/scrapers/${response.data.playlist.id}/bulk-update`, bulkPayload);
+                    } catch (bulkErr) {
+                        console.error('Failed to apply quick genres/tags:', bulkErr);
+                    }
+                }
+
                 // Start background polling so stats/tags appear as they arrive
                 if (response.data.enriching) {
                     startEnrichPolling(response.data.playlist.playlist_id);
@@ -383,6 +461,11 @@ const Scrapers = () => {
             } else {
                 refreshAll();
             }
+
+            // Reset quick metadata selections
+            setAddPlatform('');
+            setAddGenres([]);
+            setAddTags([]);
 
             alert(response.data.message || 'Playlist added successfully!');
         } catch (error) {
@@ -644,6 +727,7 @@ const Scrapers = () => {
             setSelectedTags([]);
             setSelectedGenres([]);
             setSelectedPlatform('');
+            setTagsPlatform('');
             setShowManualSelectorModal(false);
             setShowMetadataModal(true); // Reopen metadata modal
 
@@ -656,6 +740,7 @@ const Scrapers = () => {
     };
 
     const handleCloseManualSelector = () => {
+        setTagsPlatform('');
         setShowManualSelectorModal(false);
         setShowMetadataModal(true); // Reopen metadata modal
     };
@@ -989,7 +1074,7 @@ const Scrapers = () => {
                                 <Button variant="soft-danger" size="sm" onClick={() => { setYtSearchQuery(''); setYtSearchResults([]); setSelectedYtItems(new Set()); setShowYtSearchModal(true); }}>
                                     <Icon icon="search" className="icon-xs me-1" /> YouTube Search
                                 </Button>
-                                <Button variant="primary" size="sm" onClick={() => setShowModal(true)}>
+                                <Button variant="primary" size="sm" onClick={handleOpenAddModal}>
                                     Add Playlist
                                 </Button>
                             </div>
@@ -1308,7 +1393,7 @@ const Scrapers = () => {
             </Row>
 
             {/* ─── Add Playlist Modal ─── */}
-            <Modal show={showModal} onHide={() => setShowModal(false)}>
+            <Modal show={showModal} onHide={() => { setShowModal(false); setAddPlatform(''); setAddGenres([]); setAddTags([]); }}>
                 <Modal.Header closeButton>
                     <Modal.Title>Add YouTube Playlist</Modal.Title>
                 </Modal.Header>
@@ -1333,6 +1418,39 @@ const Scrapers = () => {
                                 Leave empty for default (up to 5000). Set higher only if your API quota allows it.
                             </Form.Text>
                         </Form.Group>
+
+                        {/* ─── Platform (auto-applies genres + tags silently) ─── */}
+                        <hr />
+                        <Form.Group className="mb-3">
+                            <Form.Label className="small fw-semibold">
+                                Platform <span className="text-muted fw-normal">(Optional)</span>
+                            </Form.Label>
+                            <Form.Select
+                                value={addPlatform}
+                                onChange={(e) => {
+                                    const plat = e.target.value;
+                                    setAddPlatform(plat);
+                                    if (plat) {
+                                        setAddGenres((platformGenres[plat] || []).slice(0, 5));
+                                        setAddTags(getTagsForPlatform(plat));
+                                    } else {
+                                        setAddGenres([]);
+                                        setAddTags([]);
+                                    }
+                                }}
+                            >
+                                <option value="">No platform</option>
+                                {Object.keys(platformGenres).map((p) => (
+                                    <option key={p} value={p}>{p}</option>
+                                ))}
+                            </Form.Select>
+                            {addPlatform && (
+                                <Form.Text className="text-success">
+                                    5 genres + 7 tags will be auto-applied after import
+                                </Form.Text>
+                            )}
+                        </Form.Group>
+
                         <div className="text-end">
                             <Button variant="secondary" className="me-1" onClick={() => setShowModal(false)}>Cancel</Button>
                             <Button variant="primary" type="submit" disabled={syncing}>
@@ -1483,6 +1601,47 @@ const Scrapers = () => {
                                 )}
 
                                 <hr />
+
+                                {/* Platform → auto-suggest tags */}
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="small fw-semibold">
+                                        <Icon icon="sparkles" className="icon-xs me-1 text-warning" />
+                                        Auto-suggest from Platform Genres
+                                    </Form.Label>
+                                    <div className="d-flex gap-2">
+                                        <Form.Select
+                                            size="sm"
+                                            value={tagsPlatform}
+                                            onChange={(e) => {
+                                                const plat = e.target.value;
+                                                setTagsPlatform(plat);
+                                                if (plat) {
+                                                    const tags = getTagsForPlatform(plat);
+                                                    setSelectedTags(prev => [...new Set([...prev, ...tags])]);
+                                                }
+                                            }}
+                                        >
+                                            <option value="">Choose platform to auto-suggest tags...</option>
+                                            {Object.keys(platformGenres).map((p) => (
+                                                <option key={p} value={p}>{p}</option>
+                                            ))}
+                                        </Form.Select>
+                                        {tagsPlatform && (
+                                            <Button
+                                                variant="outline-secondary"
+                                                size="sm"
+                                                onClick={() => setTagsPlatform('')}
+                                            >
+                                                Clear
+                                            </Button>
+                                        )}
+                                    </div>
+                                    {tagsPlatform && (
+                                        <Form.Text className="text-success">
+                                            Tags suggested from <strong>{tagsPlatform}</strong> genres have been added above.
+                                        </Form.Text>
+                                    )}
+                                </Form.Group>
 
                                 {/* Content Types */}
                                 <div className="mb-3">
