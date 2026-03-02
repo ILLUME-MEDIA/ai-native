@@ -153,9 +153,14 @@ class DoorDashService
         $jwt     = $this->generateJwt();
         $headers = ['Authorization' => "Bearer {$jwt}", 'Content-Type' => 'application/json'];
 
-        // Resolve phone numbers — use caller-supplied phones, fall back to valid placeholder
-        $phPickup  = $this->normalizePhone($pickupPhone ?? '');
+        // Resolve phone numbers (null = could not be normalized — field will be omitted)
+        $phPickup  = $this->normalizePhone($pickupPhone  ?? '');
         $phDropoff = $this->normalizePhone($dropoffPhone ?? '');
+
+        // Cross-fallback: if one side has no valid phone, use the other side's number.
+        // For a quote, DoorDash only needs the format to be valid — the number isn't called.
+        $phPickup  = $phPickup  ?? $phDropoff;
+        $phDropoff = $phDropoff ?? $phPickup;
 
         // DoorDash accepts full_address string inside an address object
         $pickupObj  = ['full_address' => $pickupAddress];
@@ -204,19 +209,17 @@ class DoorDashService
         Log::info('DoorDash v1/estimates not available (account uses Drive v2). Falling back to v2 quotes.');
 
         // ── Attempt 2: Drive v2 quotes (newer accounts) ───────────────────────
-        // v2/deliveries/quotes requires phone numbers and contact names in addition
-        // to addresses — omitting them causes "Validation Failed".
-        $v2Payload = [
+        $v2Payload = array_filter([
             'external_delivery_id'  => 'quote-' . uniqid(),
             'pickup_address'        => $pickupAddress,
             'pickup_business_name'  => 'Pickup Location',
-            'pickup_phone_number'   => $phPickup,
+            'pickup_phone_number'   => $phPickup,   // null → field omitted by array_filter
             'dropoff_address'       => $dropoffAddress,
             'dropoff_business_name' => 'Dropoff Location',
             'dropoff_phone_number'  => $phDropoff,
             'order_value'           => $orderValue,
             'currency'              => 'USD',
-        ];
+        ], fn($v) => $v !== null);
 
         $response = Http::withHeaders($headers)
             ->post("{$host}/drive/v2/deliveries/quotes", $v2Payload);
@@ -247,7 +250,7 @@ class DoorDashService
         // Last resort for Drive v2 accounts that don't expose /quotes at all.
         $tempId = 'fee-check-' . uniqid();
 
-        $v2CreatePayload = [
+        $v2CreatePayload = array_filter([
             'external_delivery_id'  => $tempId,
             'pickup_address'        => $pickupAddress,
             'pickup_business_name'  => 'Pickup Location',
@@ -257,7 +260,7 @@ class DoorDashService
             'dropoff_phone_number'  => $phDropoff,
             'order_value'           => $orderValue,
             'currency'              => 'USD',
-        ];
+        ], fn($v) => $v !== null);
 
         $createResp = Http::withHeaders($headers)
             ->post("{$host}/drive/v2/deliveries", $v2CreatePayload);
@@ -306,13 +309,27 @@ class DoorDashService
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
-     * Ensure phone is E.164 format; fall back to placeholder if blank.
+     * Normalize a phone number to E.164 format.
+     * Returns null when the input is empty, malformed, non-US, or has extra
+     * digits (e.g. extensions) — callers must omit the field in that case.
+     * Never returns a placeholder; DoorDash production validates real numbers.
      */
-    private function normalizePhone(?string $phone): string
+    private function normalizePhone(?string $phone): ?string
     {
-        if (! $phone) return '+12025550179'; // valid E.164 placeholder
+        if (! $phone || trim($phone) === '') return null;
+
+        // Strip everything except digits
         $digits = preg_replace('/\D/', '', $phone);
+
+        // 10-digit US number → prepend country code
         if (strlen($digits) === 10) $digits = '1' . $digits;
+
+        // Valid US/Canada: exactly 11 digits starting with '1'
+        if (strlen($digits) !== 11 || $digits[0] !== '1') {
+            Log::warning("DoorDash: phone '{$phone}' could not be normalized to E.164 — omitting field.");
+            return null;
+        }
+
         return '+' . $digits;
     }
 
