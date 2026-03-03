@@ -106,7 +106,7 @@ const SectionFields = ({ fields, onChange, entities = [] }) => {
 
     const set = (key, value) => setCurrentField((prev) => ({ ...prev, [key]: value }));
 
-    const isRelation      = currentField.type === 'relationship';
+    const isRelation      = currentField.type === 'relationship' || !!currentField.related_entity_id;
     const isBelongsTo     = currentField.relation_type === 'belongsTo';
     const existingSlugs   = fields.map((f) => f.slug).filter(Boolean);
     const slugAlreadyInDB = editingIndex === null && existingSlugs.includes(currentField.slug);
