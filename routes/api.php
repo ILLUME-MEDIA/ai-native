@@ -212,6 +212,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('logs',                          [YelpController::class, 'logsIndex']);
         Route::get('logs/{log}',                    [YelpController::class, 'logProgress']);
         Route::get('logs/{log}/rows',               [YelpController::class, 'logRows']);
+        Route::get('logs/{log}/rows/{rowId}',       [YelpController::class, 'rowDetail']);
         Route::post('logs/{log}/stop',              [YelpController::class, 'logStop']);
 
         // Reconciliation

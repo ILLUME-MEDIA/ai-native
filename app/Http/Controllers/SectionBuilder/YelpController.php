@@ -242,6 +242,29 @@ class YelpController extends Controller
         return response()->json($rows);
     }
 
+    /** Full detail for a single row: row log + match diff (source payload, yelp payload, diffs) */
+    public function rowDetail(YelpJobLog $log, int $rowId): JsonResponse
+    {
+        $rowLog = YelpRowLog::where('log_id', $log->id)
+            ->where('row_id', $rowId)
+            ->first();
+
+        $diff = YelpMatchDiff::where('log_id', $log->id)
+            ->where('source_row_id', $rowId)
+            ->first();
+
+        return response()->json([
+            'row_log'        => $rowLog,
+            'source_payload' => $diff?->source_payload,
+            'yelp_payload'   => $diff?->yelp_payload,
+            'field_diffs'    => $diff?->field_diffs,
+            'mapped_updates' => $diff?->mapped_updates,
+            'merge_status'   => $diff?->merge_status,
+            'yelp_business_id'   => $diff?->yelp_business_id,
+            'yelp_business_name' => $diff?->yelp_business_name,
+        ]);
+    }
+
     /** Signal a running log to stop (sets stop_requested_at) */
     public function logStop(YelpJobLog $log): JsonResponse
     {

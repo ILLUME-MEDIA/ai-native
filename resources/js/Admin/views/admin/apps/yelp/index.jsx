@@ -764,6 +764,196 @@ function JobsTab() {
     );
 }
 
+// ─── ROW DETAIL MODAL ─────────────────────────────────────────────────────────
+function RowDetailModal({ logId, rowId, onClose }) {
+    const [detail, setDetail] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        setLoading(true);
+        api(`logs/${logId}/rows/${rowId}`)
+            .then(r => setDetail(r.data))
+            .catch(() => setDetail(null))
+            .finally(() => setLoading(false));
+    }, [logId, rowId]);
+
+    const rowLog = detail?.row_log;
+    const rs = rowLog ? (ROW_STATUS[rowLog.status] ?? { cls: 'bg-secondary-subtle text-secondary', label: rowLog.status }) : null;
+
+    return (
+        <Modal show onHide={onClose} centered size="xl">
+            <ModalHeader closeButton>
+                <ModalTitle as="h5">
+                    Row Detail — DB Row #{rowId}
+                </ModalTitle>
+            </ModalHeader>
+            <ModalBody style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                {loading ? (
+                    <div className="text-center py-5"><Spinner animation="border" size="sm" /></div>
+                ) : !detail || !rowLog ? (
+                    <div className="text-muted text-center py-5">No detail found for this row.</div>
+                ) : (<>
+                    {/* ── Summary bar ── */}
+                    <div className="d-flex flex-wrap gap-3 mb-4 pb-3 border-bottom align-items-start">
+                        <div>
+                            <small className="text-muted d-block mb-1">Status</small>
+                            <span className={`badge fs-sm ${rs.cls}`}>{rs.label}</span>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Search Term Sent</small>
+                            <strong>{rowLog.search_term || <span className="text-danger">—empty—</span>}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Location Sent</small>
+                            <strong>{rowLog.search_location || <span className="text-warning">—none—</span>}</strong>
+                        </div>
+                        {detail.yelp_business_name && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Yelp Match</small>
+                                <strong>{detail.yelp_business_name}</strong>
+                                {detail.yelp_business_id && (
+                                    <small className="text-muted d-block font-monospace">{detail.yelp_business_id}</small>
+                                )}
+                            </div>
+                        )}
+                        {rowLog.yelp_rating != null && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Yelp Rating</small>
+                                <strong>{'⭐'.repeat(Math.round(rowLog.yelp_rating))} {rowLog.yelp_rating}</strong>
+                            </div>
+                        )}
+                        {detail.merge_status && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Merge Status</small>
+                                <span className={`badge ${detail.merge_status === 'merged' ? 'bg-success-subtle text-success' : detail.merge_status === 'skipped' ? 'bg-warning-subtle text-warning' : 'bg-secondary-subtle text-secondary'}`}>
+                                    {detail.merge_status}
+                                </span>
+                            </div>
+                        )}
+                        {rowLog.error && (
+                            <div className="w-100">
+                                <small className="text-muted d-block mb-1">Error</small>
+                                <span className="text-danger small">{rowLog.error}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="row g-3">
+                        {/* ── DB Source Row ── */}
+                        <div className="col-md-6">
+                            <h6 className="fw-semibold mb-2">
+                                <span className="badge bg-info-subtle text-info me-2">DB</span>
+                                Source Row (your database data)
+                            </h6>
+                            {detail.source_payload ? (
+                                <div className="table-responsive" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Column</th><th>Value</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {Object.entries(detail.source_payload).map(([col, val]) => (
+                                                <tr key={col}>
+                                                    <td className="font-monospace text-muted fw-semibold text-nowrap">{col}</td>
+                                                    <td style={{ wordBreak: 'break-word', maxWidth: 220 }}>
+                                                        {val === null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : val === ''
+                                                            ? <span className="text-muted fst-italic">empty</span>
+                                                            : String(val)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="text-muted small">No source data stored (skipped/not-found rows don't capture source payload).</p>
+                            )}
+                        </div>
+
+                        {/* ── Field Comparison ── */}
+                        <div className="col-md-6">
+                            <h6 className="fw-semibold mb-2">
+                                <span className="badge bg-primary-subtle text-primary me-2">DIFF</span>
+                                Field Comparison (DB vs Yelp)
+                            </h6>
+                            {detail.field_diffs?.length > 0 ? (
+                                <div className="table-responsive" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Yelp Field</th><th>DB Column</th><th>Your Value</th><th>Yelp Value</th><th>Changed</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {detail.field_diffs.map((d, i) => (
+                                                <tr key={i} className={d.changed ? 'table-warning' : ''}>
+                                                    <td className="font-monospace text-muted text-nowrap">{d.yelp_field}</td>
+                                                    <td className="font-monospace text-nowrap">{d.db_column}</td>
+                                                    <td style={{ maxWidth: 120, wordBreak: 'break-word' }}>
+                                                        {d.local_value == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : String(d.local_value)}
+                                                    </td>
+                                                    <td style={{ maxWidth: 120, wordBreak: 'break-word' }} className={d.changed ? 'text-success fw-semibold' : ''}>
+                                                        {d.yelp_value == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : String(d.yelp_value)}
+                                                    </td>
+                                                    <td className="text-center">
+                                                        {d.changed
+                                                            ? <span className="badge bg-warning-subtle text-warning">Yes</span>
+                                                            : <span className="badge bg-success-subtle text-success">Same</span>}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="text-muted small">No field comparison data (row was skipped, not found, or verify-only mode).</p>
+                            )}
+                        </div>
+
+                        {/* ── Yelp Raw Response ── */}
+                        {detail.yelp_payload && (
+                            <div className="col-12">
+                                <h6 className="fw-semibold mb-2">
+                                    <span className="badge bg-danger-subtle text-danger me-2">YELP</span>
+                                    Yelp API Response (extracted fields)
+                                </h6>
+                                <div className="table-responsive" style={{ maxHeight: 280, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Yelp Field</th><th>Value</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {Object.entries(detail.yelp_payload).map(([k, v]) => (
+                                                <tr key={k}>
+                                                    <td className="font-monospace text-muted text-nowrap">{k}</td>
+                                                    <td style={{ wordBreak: 'break-word', maxWidth: 400 }}>
+                                                        {v == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : typeof v === 'object'
+                                                            ? <code style={{ fontSize: 11 }}>{JSON.stringify(v)}</code>
+                                                            : String(v)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>)}
+            </ModalBody>
+            <ModalFooter>
+                <button className="btn btn-light" onClick={onClose}>Close</button>
+            </ModalFooter>
+        </Modal>
+    );
+}
+
 // ─── ROW STATUS helpers ───────────────────────────────────────────────────────
 const ROW_STATUS = {
     updated:   { cls: 'bg-success-subtle text-success',   label: 'Updated'    },
@@ -784,6 +974,7 @@ function LogDetailModal({ log, onClose }) {
     const [rowPage, setRowPage]     = useState(1);
     const [rowMeta, setRowMeta]     = useState(null);
     const [rowStatusFilter, setRowStatusFilter] = useState('');
+    const [detailRow, setDetailRow] = useState(null);
     const pollRef                   = useRef(null);
 
     // If log is still running, poll for live updates
@@ -842,7 +1033,7 @@ function LogDetailModal({ log, onClose }) {
         { label: 'Total Rows',    value: total,                       cls: 'fw-semibold',   icon: '#', key: ''          },
     ];
 
-    return (
+    return (<>
         <Modal show onHide={onClose} centered size="xl">
             <ModalHeader closeButton>
                 <ModalTitle as="h5">
@@ -979,6 +1170,7 @@ function LogDetailModal({ log, onClose }) {
                                         <th>Yelp Result</th>
                                         <th>Rating</th>
                                         <th>Note</th>
+                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1011,6 +1203,15 @@ function LogDetailModal({ log, onClose }) {
                                                     {r.error && <small className="text-danger">{r.error}</small>}
                                                     {r.yelp_is_closed && <span className="badge bg-danger-subtle text-danger">Perm. Closed</span>}
                                                 </td>
+                                                <td>
+                                                    <button
+                                                        className="btn btn-soft-primary btn-sm btn-icon"
+                                                        title="View row detail"
+                                                        onClick={() => setDetailRow(r)}
+                                                    >
+                                                        <Icon icon="eye" className="fs-lg" />
+                                                    </button>
+                                                </td>
                                             </tr>
                                         );
                                     })}
@@ -1037,7 +1238,15 @@ function LogDetailModal({ log, onClose }) {
                 <button className="btn btn-light" onClick={onClose}>Close</button>
             </ModalFooter>
         </Modal>
-    );
+
+        {detailRow && (
+            <RowDetailModal
+                logId={log.id}
+                rowId={detailRow.row_id}
+                onClose={() => setDetailRow(null)}
+            />
+        )}
+    </>);
 }
 
 // ─── LOGS TAB ─────────────────────────────────────────────────────────────────
