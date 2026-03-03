@@ -2,29 +2,29 @@ import bgPattern from '@admin/assets/images/user-bg-pattern.svg';
 import user1 from '@admin/assets/images/users/user-1.jpg';
 import Icon from '@admin/components/wrappers/Icon';
 import { useInitialProps } from '@admin/context/InitialPropsContext';
-import { useRef } from 'react';
+
 import { Link } from 'react-router';
 import { Dropdown, DropdownHeader, DropdownItem, DropdownMenu, DropdownToggle } from 'react-bootstrap';
 
 const UserProfileSettings = () => {
   const { user } = useInitialProps();
-  const logoutFormRef = useRef(null);
 
-  const handleLogout = (e) => {
+  const handleLogout = async (e) => {
     e.preventDefault();
     const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    const input = logoutFormRef.current?.querySelector('[name="_token"]');
-    if (input) input.value = token;
-    logoutFormRef.current?.submit();
+    try {
+      await fetch('/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-TOKEN': token, 'X-Requested-With': 'XMLHttpRequest' },
+      });
+    } catch (_) { /* ignore */ }
+    window.location.href = '/login';
   };
 
   return <div id="user-profile-settings" className="sidenav-user" style={{
     background: `url(${bgPattern})`
   }}>
-    {/* Hidden logout form */}
-    <form ref={logoutFormRef} method="POST" action="/logout" style={{ display: 'none' }}>
-      <input type="hidden" name="_token" value="" />
-    </form>
 
     <div className="d-flex justify-content-between align-items-center">
       <div>

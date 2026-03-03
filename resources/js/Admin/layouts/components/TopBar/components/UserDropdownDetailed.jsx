@@ -1,7 +1,7 @@
 import User1 from "@admin/assets/images/users/user-1.jpg";
 import Icon from "@admin/components/wrappers/Icon";
 import { Dropdown, DropdownDivider, DropdownHeader, DropdownItem, DropdownMenu, DropdownToggle } from "react-bootstrap";
-import { Fragment, useRef } from "react";
+import { Fragment } from "react";
 import { useInitialProps } from "@admin/context/InitialPropsContext";
 const menuItems = [{
   id: "profile",
@@ -38,22 +38,21 @@ const menuItems = [{
 }];
 const UserDropdown = () => {
   const { user } = useInitialProps();
-  const logoutFormRef = useRef(null);
-  
-  const handleLogout = (e) => {
+
+  const handleLogout = async (e) => {
     e.preventDefault();
-    // Read token fresh at submit time (meta tag may be stale after login session regeneration)
     const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    const input = logoutFormRef.current?.querySelector('[name="_token"]');
-    if (input) input.value = token;
-    logoutFormRef.current?.submit();
+    try {
+      await fetch('/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-TOKEN': token, 'X-Requested-With': 'XMLHttpRequest' },
+      });
+    } catch (_) { /* ignore */ }
+    window.location.href = '/login';
   };
 
   return <div id="user-dropdown-detailed" className="topbar-item nav-user">
-    {/* Hidden logout form */}
-    <form ref={logoutFormRef} method="POST" action="/logout" style={{ display: 'none' }}>
-      <input type="hidden" name="_token" value="" />
-    </form>
     
     <Dropdown>
       <DropdownToggle className="topbar-link drop-arrow-none px-2">
