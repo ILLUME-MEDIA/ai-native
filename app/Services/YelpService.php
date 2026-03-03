@@ -57,6 +57,22 @@ class YelpService
     }
 
     /**
+     * Best-effort menu fetch. Yelp may return 404/empty for many businesses.
+     */
+    public function getBusinessMenu(string $id): ?array
+    {
+        try {
+            $resp = $this->client->get("https://api.yelp.com/v3/businesses/{$id}/menu", [
+                'headers' => $this->headers(),
+            ]);
+
+            return json_decode((string) $resp->getBody(), true);
+        } catch (RequestException $e) {
+            return null;
+        }
+    }
+
+    /**
      * Extract normalized flat values from a Yelp business DETAILS response.
      *
      * permanently_closed  — comes from details.is_closed (most reliable source).
@@ -102,6 +118,75 @@ class YelpService
             'longitude'          => $coords['longitude'] ?? null,
             'photo_url'          => $photos[0] ?? null,
         ];
+    }
+
+    /**
+     * Normalize menu items from menu endpoint or details fallback.
+     */
+    public function extractMenuItems(array $details, ?array $menuPayload = null): array
+    {
+        $items = [];
+        $sort = 0;
+        $menuUrl = $details['attributes']['menu_url'] ?? null;
+        $currency = $details['currency'] ?? 'USD';
+
+        if ($menuPayload && isset($menuPayload['menu_items']) && is_array($menuPayload['menu_items'])) {
+            foreach ($menuPayload['menu_items'] as $item) {
+                $items[] = [
+                    'yelp_menu_item_id' => $item['id'] ?? null,
+                    'name'              => $item['name'] ?? 'Untitled',
+                    'category'          => $item['category'] ?? null,
+                    'description'       => $item['description'] ?? null,
+                    'price'             => $this->extractPriceValue($item['price'] ?? null),
+                    'currency'          => $currency,
+                    'image'             => $item['image_url'] ?? null,
+                    'sort_order'        => $sort++,
+                    'source_type'       => 'menu_endpoint',
+                    'raw_payload'       => $item,
+                ];
+            }
+        }
+
+        // Fallback when endpoint data isn't available: at least keep category/menu URL.
+        if (empty($items)) {
+            $categories = $details['categories'] ?? [];
+            foreach ($categories as $cat) {
+                $title = $cat['title'] ?? null;
+                if (!$title) {
+                    continue;
+                }
+                $items[] = [
+                    'yelp_menu_item_id' => null,
+                    'name'              => $title,
+                    'category'          => 'Yelp Category',
+                    'description'       => $menuUrl ?: 'Menu URL unavailable',
+                    'price'             => null,
+                    'currency'          => $currency,
+                    'image'             => null,
+                    'sort_order'        => $sort++,
+                    'source_type'       => 'details_fallback',
+                    'raw_payload'       => $cat,
+                ];
+            }
+        }
+
+        return $items;
+    }
+
+    protected function extractPriceValue(mixed $raw): ?float
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (is_numeric($raw)) {
+            return round((float) $raw, 2);
+        }
+
+        if (preg_match('/([0-9]+(\.[0-9]+)?)/', (string) $raw, $m)) {
+            return round((float) $m[1], 2);
+        }
+
+        return null;
     }
 
     /**

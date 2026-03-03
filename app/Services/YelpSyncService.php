@@ -5,89 +5,55 @@ namespace App\Services;
 use App\Models\SectionEntity;
 use App\Models\SectionField;
 use App\Models\YelpAccount;
+use App\Models\YelpClosedBusiness;
 use App\Models\YelpJob;
 use App\Models\YelpJobLog;
+use App\Models\YelpMatchDiff;
+use App\Models\YelpMatchMenuItem;
+use App\Models\YelpNotFoundBusiness;
 use App\Models\YelpRowLog;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Database\Schema\Blueprint;
 
 class YelpSyncService
 {
-    /**
-     * Run a Yelp sync job.
-     *
-     * ── What "permanently closed" means ──────────────────────────────────────
-     * Yelp's search result `is_closed` is NOT reliable for permanent closure —
-     * it can return true during off-hours on some responses.
-     * We ALWAYS fetch the business Details endpoint and use details.is_closed
-     * which is the authoritative "business has gone out of business" flag.
-     *
-     * ── yelp_verified column ─────────────────────────────────────────────────
-     * A `yelp_verified` (boolean) column is auto-created in the target table
-     * when the job first runs.
-     *   1 = row was successfully checked/updated by Yelp
-     *   0 = not yet processed, not found, or failed
-     *
-     * ── Resume support ───────────────────────────────────────────────────────
-     * `yelp_jobs.last_processed_id` stores the last row ID that was processed.
-     * On next run, processing starts from WHERE id > last_processed_id.
-     * When all rows are done, last_processed_id resets to 0 for next full cycle.
-     *
-     * ── Per-run call limit ───────────────────────────────────────────────────
-     * `yelp_jobs.max_calls_per_run` (0 = unlimited) caps how many API calls
-     * are made in a single cron execution. Each row costs 2 calls.
-     * When the limit is hit, job pauses and resumes next cron run from where
-     * it stopped (via last_processed_id).
-     *
-     * Modes:
-     *   smart       – Get details for every row (2 calls).
-     *                 If permanently_closed = true  → ONLY update that column.
-     *                 If permanently_closed = false → update ALL mapped columns.
-     *   full        – Same as smart.
-     *   verify_only – Only check permanent closure status, nothing else.
-     */
     public function run(YelpJob $job, YelpJobLog $log): void
     {
         $log->update(['status' => 'running', 'started_at' => now()]);
 
-        // Auto-cleanup: delete row logs older than 2 days to keep DB lean
         YelpRowLog::whereHas('log', fn ($q) => $q->where('started_at', '<', now()->subDays(2)))->delete();
 
         $entity = $job->entity;
         if (!$entity) {
-            $log->update(['status' => 'failed', 'error_message' => 'Entity not found.', 'completed_at' => now()]);
+            $log->update([
+                'status' => 'failed',
+                'error_message' => 'Entity not found.',
+                'completed_at' => now(),
+            ]);
             return;
         }
 
-        $tableName    = $entity->table_name;
-        $searchCols   = $job->search_columns;
-        $columnMap    = $job->column_mapping;
-        $mode         = $job->mode ?? 'smart';
-        $resumeFromId = (int) ($job->last_processed_id ?? 0);
-        $maxCalls     = (int) ($job->max_calls_per_run ?? 0); // 0 = unlimited
-
+        $tableName = $entity->table_name;
         if (!Schema::hasTable($tableName)) {
-            $log->update(['status' => 'failed', 'error_message' => "Table `{$tableName}` not found.", 'completed_at' => now()]);
+            $log->update([
+                'status' => 'failed',
+                'error_message' => "Table `{$tableName}` not found.",
+                'completed_at' => now(),
+            ]);
             return;
         }
 
-        // ── Auto-create yelp_verified column in target table ──────────────────
+        $searchCols = $job->search_columns ?? [];
+        $columnMap = $job->column_mapping ?? [];
+        $mode = $job->mode ?? 'smart';
+        $autoMerge = (bool) ($job->auto_merge ?? false);
+        $resumeFromId = (int) ($job->last_processed_id ?? 0);
+        $maxCalls = (int) ($job->max_calls_per_run ?? 0);
+
         $this->ensureYelpVerifiedColumn($entity, $tableName);
 
-        // ── permanently_closed column in target table (if mapped) ────────────
-        $permClosedCol = $columnMap['permanently_closed'] ?? null;
-
-        // Count only rows that are NOT already permanently closed
-        $countQ = DB::table($tableName);
-        if ($permClosedCol && Schema::hasColumn($tableName, $permClosedCol)) {
-            $countQ->where(function ($q) use ($permClosedCol) {
-                $q->whereNull($permClosedCol)
-                  ->orWhere($permClosedCol, false)
-                  ->orWhere($permClosedCol, 0);
-            });
-        }
-        $total = $countQ->count();
+        $total = DB::table($tableName)->where('id', '>', $resumeFromId)->count();
         $log->update(['total_rows' => $total]);
 
         if ($total === 0) {
@@ -98,281 +64,336 @@ class YelpSyncService
         }
 
         $newColumnsAdded = [];
-        $processed       = 0;
-        $failed          = 0;
-        $skipped         = 0;
-        $closedRows      = 0;
-        $notFoundRows    = 0;
-        $account         = null;
-        $stopped         = false;
-        $limitHit        = false;
-        $callsMade       = 0;
+        $processed = 0;
+        $failed = 0;
+        $skipped = 0;
+        $closedRows = 0;
+        $notFoundRows = 0;
+        $account = null;
+        $stopped = false;
+        $limitHit = false;
+        $callsMade = 0;
         $lastProcessedId = $resumeFromId;
 
-        // Only process rows that are NOT already permanently closed
-        $baseQuery = DB::table($tableName)->where('id', '>', $resumeFromId);
-        if ($permClosedCol && Schema::hasColumn($tableName, $permClosedCol)) {
-            $baseQuery->where(function ($q) use ($permClosedCol) {
-                $q->whereNull($permClosedCol)
-                  ->orWhere($permClosedCol, false)
-                  ->orWhere($permClosedCol, 0);
-            });
-        }
-
-        $baseQuery->orderBy('id')->chunk(50, function ($rows) use (
-            $tableName, $searchCols, $columnMap, $entity, $mode,
-            $maxCalls, &$callsMade, &$lastProcessedId,
-            &$processed, &$failed, &$skipped, &$closedRows, &$notFoundRows,
-            &$newColumnsAdded, &$account, &$stopped, &$limitHit, $log
-        ) {
+        DB::table($tableName)
+            ->where('id', '>', $resumeFromId)
+            ->orderBy('id')
+            ->chunkById(50, function ($rows) use (
+                $job,
+                $log,
+                $entity,
+                $tableName,
+                $searchCols,
+                $columnMap,
+                $mode,
+                $autoMerge,
+                $maxCalls,
+                &$callsMade,
+                &$lastProcessedId,
+                &$processed,
+                &$failed,
+                &$skipped,
+                &$closedRows,
+                &$notFoundRows,
+                &$newColumnsAdded,
+                &$account,
+                &$stopped,
+                &$limitHit
+            ) {
                 foreach ($rows as $row) {
-                    // Check stop signal from UI
                     if ($log->isStopRequested()) {
                         $stopped = true;
                         return false;
                     }
 
-                    // Check per-run call limit (each row costs 2 API calls)
-                    if ($maxCalls > 0 && ($callsMade + 2) > $maxCalls) {
+                    // Search + details + menu (best-effort) can use up to 3 calls per row.
+                    if ($maxCalls > 0 && ($callsMade + 3) > $maxCalls) {
                         $limitHit = true;
                         return false;
                     }
 
-                    // Pick account with quota
-                    $account = $this->pickAccount();
-                    if (!$account) {
-                        $log->update([
-                            'status'         => 'paused',
-                            'error_message'  => 'All Yelp accounts exhausted for today. Resume tomorrow.',
-                            'processed_rows' => $processed,
-                            'failed_rows'    => $failed,
-                            'skipped_rows'   => $skipped,
-                            'closed_rows'    => $closedRows,
-                            'not_found_rows' => $notFoundRows,
-                            'completed_at'   => now(),
-                        ]);
-                        return false;
-                    }
+                    $rowArr = (array) $row;
+                    $rowId = $rowArr['id'] ?? null;
+                    $lastProcessedId = (int) ($rowId ?: $lastProcessedId);
 
-                    $rowArr   = (array) $row;
-                    $rowId    = $rowArr['id'] ?? null;
-                    $term     = $this->colValue($rowArr, $searchCols['term'] ?? null);
-                    $address  = $this->colValue($rowArr, $searchCols['address'] ?? null);
-                    $city     = $this->colValue($rowArr, $searchCols['city'] ?? null);
-                    $state    = $this->colValue($rowArr, $searchCols['state'] ?? null);
-                    $zip      = $this->colValue($rowArr, $searchCols['zip'] ?? null);
-
-                    $location = implode(', ', array_filter([$address, $city, $state, $zip]));
-
-                    if (!$term) {
-                        $skipped++;
-                        if ($rowId) $lastProcessedId = $rowId;
-                        YelpRowLog::create([
-                            'log_id'      => $log->id,
-                            'row_id'      => $rowId,
-                            'status'      => 'skipped',
-                            'error'       => 'Search term column is empty or not mapped',
-                        ]);
-                        if (($skipped % 10) === 0) {
+                    try {
+                        $country = $this->resolveCountry($rowArr, $searchCols);
+                        if (!$this->isUsCountry($country)) {
+                            $skipped++;
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'status' => 'skipped',
+                                'error' => 'Country is not US/USA or country is missing.',
+                            ]);
                             $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                        }
-                        continue;
-                    }
-
-                    $yelp = new YelpService($account->api_key);
-
-                    // ── STEP 1: Search to find the Yelp business ID ───────────
-                    $match = $yelp->searchBusiness($term, $location);
-                    $account->incrementUsage();
-                    $callsMade++;
-
-                    if (!$match) {
-                        $notFoundRows++;
-                        if ($rowId) {
-                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
-                            $lastProcessedId = $rowId;
-                        }
-                        YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
-                            'search_location' => $location ?: null,
-                            'status'          => 'not_found',
-                        ]);
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                        usleep(300000);
-                        continue;
-                    }
-
-                    // ── STEP 2: Fetch Details (ONLY reliable source for ───────
-                    // permanent closure — never use search result is_closed)
-                    $details = $yelp->getBusiness($match['id']);
-                    $account->incrementUsage();
-                    $callsMade++;
-
-                    if (!$details) {
-                        $failed++;
-                        if ($rowId) {
-                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
-                            $lastProcessedId = $rowId;
-                        }
-                        YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
-                            'search_location' => $location ?: null,
-                            'status'          => 'failed',
-                            'yelp_id'         => $match['id'] ?? null,
-                            'yelp_name'       => $match['name'] ?? null,
-                            'error'           => 'Details fetch returned null',
-                        ]);
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                        usleep(300000);
-                        continue;
-                    }
-
-                    // ── STEP 3: Check PERMANENT closure from details ──────────
-                    $permanentlyClosed = (bool) ($details['is_closed'] ?? false);
-                    $extracted         = $yelp->extractFields($details);
-
-                    if ($permanentlyClosed) {
-                        $this->updatePermanentlyClosedColumn(
-                            $entity, $tableName, $columnMap, $rowArr, $newColumnsAdded, true
-                        );
-                        // Verified = 1 (we checked it; it's permanently closed)
-                        if ($rowId) {
-                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
-                            $lastProcessedId = $rowId;
-                        }
-                        YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
-                            'search_location' => $location ?: null,
-                            'status'          => 'closed',
-                            'yelp_id'         => $details['id'] ?? null,
-                            'yelp_name'       => $details['name'] ?? null,
-                            'yelp_city'       => $details['location']['city'] ?? null,
-                            'yelp_rating'     => $details['rating'] ?? null,
-                            'yelp_is_closed'  => true,
-                        ]);
-                        $closedRows++;
-                        $processed++;
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                        usleep(300000);
-                        continue;
-                    }
-
-                    // ── STEP 4: Business is STILL OPERATING ──────────────────
-                    if ($mode === 'verify_only') {
-                        $this->updatePermanentlyClosedColumn(
-                            $entity, $tableName, $columnMap, $rowArr, $newColumnsAdded, false
-                        );
-                        if ($rowId) {
-                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
-                            $lastProcessedId = $rowId;
-                        }
-                        YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
-                            'search_location' => $location ?: null,
-                            'status'          => 'found',
-                            'yelp_id'         => $details['id'] ?? null,
-                            'yelp_name'       => $details['name'] ?? null,
-                            'yelp_city'       => $details['location']['city'] ?? null,
-                            'yelp_rating'     => $details['rating'] ?? null,
-                            'yelp_is_closed'  => false,
-                        ]);
-                        $processed++;
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                        usleep(300000);
-                        continue;
-                    }
-
-                    // ── STEP 5: Update ALL mapped columns ────────────────────
-                    $updates = [];
-                    foreach ($columnMap as $yelpField => $dbColumn) {
-                        if (!array_key_exists($yelpField, $extracted)) {
                             continue;
                         }
-                        if (!Schema::hasColumn($tableName, $dbColumn)) {
-                            $this->addColumn($entity, $tableName, $dbColumn, $yelpField);
-                            $newColumnsAdded[] = $dbColumn;
-                        }
-                        $updates[$dbColumn] = $extracted[$yelpField];
-                    }
 
-                    if (!empty($updates) && $rowId) {
-                        $updates['yelp_verified'] = 1; // mark as verified
-                        DB::table($tableName)->where('id', $rowId)->update($updates);
-                        $lastProcessedId = $rowId;
-                        $processed++;
-                        YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
-                            'search_location' => $location ?: null,
-                            'status'          => 'updated',
-                            'yelp_id'         => $details['id'] ?? null,
-                            'yelp_name'       => $details['name'] ?? null,
-                            'yelp_city'       => $details['location']['city'] ?? null,
-                            'yelp_rating'     => $details['rating'] ?? null,
-                            'yelp_is_closed'  => false,
-                        ]);
-                    } else {
-                        if ($rowId) {
+                        $term = $this->colValue($rowArr, $searchCols['term'] ?? null);
+                        $address = $this->colValue($rowArr, $searchCols['address'] ?? null);
+                        $city = $this->colValue($rowArr, $searchCols['city'] ?? null);
+                        $state = $this->colValue($rowArr, $searchCols['state'] ?? null);
+                        $zip = $this->colValue($rowArr, $searchCols['zip'] ?? null);
+                        $location = implode(', ', array_filter([$address, $city, $state, $zip]));
+
+                        if (!$term) {
+                            $skipped++;
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'status' => 'skipped',
+                                'error' => 'Search term column is empty or not mapped.',
+                            ]);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            continue;
+                        }
+
+                        $account = $this->pickAccount();
+                        if (!$account) {
+                            $log->update([
+                                'status' => 'paused',
+                                'error_message' => 'All Yelp accounts exhausted for today. Resume tomorrow.',
+                                'processed_rows' => $processed,
+                                'failed_rows' => $failed,
+                                'skipped_rows' => $skipped,
+                                'closed_rows' => $closedRows,
+                                'not_found_rows' => $notFoundRows,
+                                'completed_at' => now(),
+                            ]);
+                            return false;
+                        }
+
+                        $yelp = new YelpService($account->api_key);
+
+                        $match = $yelp->searchBusiness($term, $location);
+                        $account->incrementUsage();
+                        $callsMade++;
+
+                        if (!$match) {
+                            $notFoundRows++;
+                            $removed = $this->archiveNotFoundAndRemove(
+                                $job,
+                                $log,
+                                $entity,
+                                $tableName,
+                                $rowId,
+                                $rowArr,
+                                $term,
+                                $location,
+                                $country
+                            );
+
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'search_term' => $term,
+                                'search_location' => $location ?: null,
+                                'status' => 'not_found',
+                                'error' => $removed ? null : 'Archived as not_found but source row was not deleted.',
+                            ]);
+
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            usleep(300000);
+                            continue;
+                        }
+
+                        $details = $yelp->getBusiness($match['id']);
+                        $account->incrementUsage();
+                        $callsMade++;
+
+                        if (!$details) {
+                            $failed++;
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 0]);
-                            $lastProcessedId = $rowId;
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'search_term' => $term,
+                                'search_location' => $location ?: null,
+                                'status' => 'failed',
+                                'yelp_id' => $match['id'] ?? null,
+                                'yelp_name' => $match['name'] ?? null,
+                                'error' => 'Details fetch returned null.',
+                            ]);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            usleep(300000);
+                            continue;
                         }
+
+                        $permanentlyClosed = (bool) ($details['is_closed'] ?? false);
+                        $extracted = $yelp->extractFields($details);
+
+                        if ($permanentlyClosed) {
+                            $this->updatePermanentlyClosedColumn(
+                                $entity,
+                                $tableName,
+                                $columnMap,
+                                $rowArr,
+                                $newColumnsAdded,
+                                true
+                            );
+
+                            $removed = $this->archiveClosedAndRemove(
+                                $job,
+                                $log,
+                                $entity,
+                                $tableName,
+                                $rowId,
+                                $rowArr,
+                                $term,
+                                $location,
+                                $country,
+                                $details
+                            );
+
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'search_term' => $term,
+                                'search_location' => $location ?: null,
+                                'status' => 'closed',
+                                'yelp_id' => $details['id'] ?? null,
+                                'yelp_name' => $details['name'] ?? null,
+                                'yelp_city' => $details['location']['city'] ?? null,
+                                'yelp_rating' => $details['rating'] ?? null,
+                                'yelp_is_closed' => true,
+                                'error' => $removed ? null : 'Archived as closed but source row was not deleted.',
+                            ]);
+
+                            $closedRows++;
+                            $processed++;
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            usleep(300000);
+                            continue;
+                        }
+
+                        if ($mode === 'verify_only') {
+                            $this->updatePermanentlyClosedColumn(
+                                $entity,
+                                $tableName,
+                                $columnMap,
+                                $rowArr,
+                                $newColumnsAdded,
+                                false
+                            );
+
+                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
+
+                            YelpRowLog::create([
+                                'log_id' => $log->id,
+                                'row_id' => $rowId,
+                                'search_term' => $term,
+                                'search_location' => $location ?: null,
+                                'status' => 'found',
+                                'yelp_id' => $details['id'] ?? null,
+                                'yelp_name' => $details['name'] ?? null,
+                                'yelp_city' => $details['location']['city'] ?? null,
+                                'yelp_rating' => $details['rating'] ?? null,
+                                'yelp_is_closed' => false,
+                            ]);
+
+                            $processed++;
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            usleep(300000);
+                            continue;
+                        }
+
+                        [$updates, $diffs] = $this->buildMappedUpdatesAndDiffs(
+                            $entity,
+                            $tableName,
+                            $columnMap,
+                            $extracted,
+                            $rowArr,
+                            $newColumnsAdded
+                        );
+
+                        $diff = $this->storeMatchDiff(
+                            $job,
+                            $log,
+                            $entity,
+                            $tableName,
+                            (int) $rowId,
+                            $rowArr,
+                            $extracted,
+                            $updates,
+                            $diffs,
+                            $details,
+                            $country
+                        );
+
+                        $menuItems = $this->fetchAndNormalizeMenuItems($yelp, $details, $account, $callsMade);
+                        $businessId = $this->resolveBusinessId($tableName, $rowArr, $rowId ? (int) $rowId : null);
+                        $this->storeMatchMenuItems(
+                            $diff,
+                            $job,
+                            $tableName,
+                            (int) $rowId,
+                            $businessId,
+                            $details['id'] ?? null,
+                            $menuItems
+                        );
+
+                        if ($autoMerge && !empty($updates)) {
+                            $updates['yelp_verified'] = 1;
+                            DB::table($tableName)->where('id', $rowId)->update($updates);
+                            $diff->update([
+                                'merge_status' => 'merged',
+                                'merge_note' => 'Auto-merged during sync run.',
+                                'merged_at' => now(),
+                            ]);
+                        } else {
+                            DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
+                        }
+
                         YelpRowLog::create([
-                            'log_id'          => $log->id,
-                            'row_id'          => $rowId,
-                            'search_term'     => $term,
+                            'log_id' => $log->id,
+                            'row_id' => $rowId,
+                            'search_term' => $term,
                             'search_location' => $location ?: null,
-                            'status'          => 'found',
-                            'yelp_id'         => $details['id'] ?? null,
-                            'yelp_name'       => $details['name'] ?? null,
-                            'yelp_city'       => $details['location']['city'] ?? null,
-                            'yelp_rating'     => $details['rating'] ?? null,
-                            'yelp_is_closed'  => false,
-                            'error'           => 'No column mappings matched',
+                            'status' => empty($updates) ? 'found' : 'updated',
+                            'yelp_id' => $details['id'] ?? null,
+                            'yelp_name' => $details['name'] ?? null,
+                            'yelp_city' => $details['location']['city'] ?? null,
+                            'yelp_rating' => $details['rating'] ?? null,
+                            'yelp_is_closed' => false,
+                            'error' => empty($updates) ? 'No mapped fields found to compare.' : null,
                         ]);
-                        $skipped++;
+
+                        $processed++;
+                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                        usleep(300000);
+                    } catch (\Throwable $e) {
+                        $failed++;
+                        YelpRowLog::create([
+                            'log_id' => $log->id,
+                            'row_id' => $rowId,
+                            'status' => 'failed',
+                            'error' => $e->getMessage(),
+                        ]);
+                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                     }
-
-                    $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
-                    usleep(500000);
                 }
-            });
+            }, 'id');
 
-        // ── Determine final status ────────────────────────────────────────────
-        $freshLog    = $log->fresh();
+        $freshLog = $log->fresh();
         $finalStatus = 'completed';
-        if ($stopped) {
-            $finalStatus = 'stopped';
-        } elseif ($limitHit) {
-            // Paused due to per-run limit — will resume next cron run
-            $finalStatus = 'paused';
-        } elseif ($freshLog->status === 'paused') {
+
+        if ($stopped || $limitHit || $freshLog->status === 'paused') {
             $finalStatus = 'paused';
         }
 
-        // Save resume position:
-        //  - completed → reset to 0 (next full cycle starts from beginning)
-        //  - stopped/paused/limit_hit → save last ID so next run continues
-        $nextResumeId = ($finalStatus === 'completed') ? 0 : $lastProcessedId;
+        $nextResumeId = $finalStatus === 'completed' ? 0 : $lastProcessedId;
 
         $log->update([
-            'status'            => $finalStatus,
-            'processed_rows'    => $processed,
-            'failed_rows'       => $failed,
-            'skipped_rows'      => $skipped,
-            'closed_rows'       => $closedRows,
-            'not_found_rows'    => $notFoundRows,
+            'status' => $finalStatus,
+            'processed_rows' => $processed,
+            'failed_rows' => $failed,
+            'skipped_rows' => $skipped,
+            'closed_rows' => $closedRows,
+            'not_found_rows' => $notFoundRows,
             'new_columns_added' => array_values(array_unique($newColumnsAdded)),
-            'account_id'        => $account?->id,
-            'completed_at'      => now(),
+            'account_id' => $account?->id,
+            'completed_at' => now(),
         ]);
 
         $job->update(['last_processed_id' => $nextResumeId]);
@@ -383,21 +404,288 @@ class YelpSyncService
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    protected function resolveCountry(array $row, array $searchCols): ?string
+    {
+        $country = $this->colValue($row, $searchCols['country'] ?? null);
 
-    /**
-     * Auto-create `yelp_verified` boolean column in the target table.
-     * Registered in section_fields so it appears in Section Builder.
-     */
+        if ($country) {
+            return $country;
+        }
+
+        foreach (['country', 'country_code', 'country_name'] as $fallback) {
+            if (array_key_exists($fallback, $row) && trim((string) $row[$fallback]) !== '') {
+                return trim((string) $row[$fallback]);
+            }
+        }
+
+        return null;
+    }
+
+    protected function isUsCountry(?string $country): bool
+    {
+        if (!$country) {
+            return false;
+        }
+
+        $normalized = strtoupper(preg_replace('/[^A-Z]/', '', $country));
+
+        return in_array($normalized, [
+            'US',
+            'USA',
+            'UNITEDSTATES',
+            'UNITEDSTATESOFAMERICA',
+        ], true);
+    }
+
+    protected function buildMappedUpdatesAndDiffs(
+        SectionEntity $entity,
+        string $tableName,
+        array $columnMap,
+        array $extracted,
+        array $rowArr,
+        array &$newColumnsAdded
+    ): array {
+        $updates = [];
+        $diffs = [];
+
+        foreach ($columnMap as $yelpField => $dbColumn) {
+            if (!array_key_exists($yelpField, $extracted)) {
+                continue;
+            }
+
+            if (!Schema::hasColumn($tableName, $dbColumn)) {
+                $this->addColumn($entity, $tableName, $dbColumn, $yelpField);
+                $newColumnsAdded[] = $dbColumn;
+            }
+
+            $localValue = $rowArr[$dbColumn] ?? null;
+            $yelpValue = $extracted[$yelpField];
+            $changed = $this->valuesDiffer($localValue, $yelpValue);
+
+            $updates[$dbColumn] = $yelpValue;
+            $diffs[] = [
+                'yelp_field' => $yelpField,
+                'db_column' => $dbColumn,
+                'local_value' => $localValue,
+                'yelp_value' => $yelpValue,
+                'changed' => $changed,
+            ];
+        }
+
+        return [$updates, $diffs];
+    }
+
+    protected function valuesDiffer(mixed $localValue, mixed $yelpValue): bool
+    {
+        if (is_bool($localValue) || is_bool($yelpValue)) {
+            return (bool) $localValue !== (bool) $yelpValue;
+        }
+
+        if ((is_numeric($localValue) && is_numeric($yelpValue))) {
+            return (float) $localValue !== (float) $yelpValue;
+        }
+
+        return (string) ($localValue ?? '') !== (string) ($yelpValue ?? '');
+    }
+
+    protected function storeMatchDiff(
+        YelpJob $job,
+        YelpJobLog $log,
+        SectionEntity $entity,
+        string $tableName,
+        int $rowId,
+        array $rowArr,
+        array $extracted,
+        array $updates,
+        array $diffs,
+        array $details,
+        ?string $country
+    ): YelpMatchDiff {
+        return YelpMatchDiff::updateOrCreate(
+            [
+                'job_id' => $job->id,
+                'source_row_id' => $rowId,
+            ],
+            [
+                'log_id' => $log->id,
+                'entity_id' => $entity->id,
+                'source_table' => $tableName,
+                'yelp_business_id' => $details['id'] ?? null,
+                'yelp_business_name' => $details['name'] ?? null,
+                'country_code' => $country,
+                'source_payload' => $rowArr,
+                'yelp_payload' => $extracted,
+                'field_diffs' => $diffs,
+                'mapped_updates' => $updates,
+                'merge_status' => 'pending',
+                'merge_note' => null,
+                'merged_at' => null,
+            ]
+        );
+    }
+
+    protected function fetchAndNormalizeMenuItems(
+        YelpService $yelp,
+        array $details,
+        ?YelpAccount $account,
+        int &$callsMade
+    ): array {
+        $menuPayload = null;
+        if (!empty($details['id'])) {
+            $menuPayload = $yelp->getBusinessMenu((string) $details['id']);
+            if ($account) {
+                $account->incrementUsage();
+            }
+            $callsMade++;
+        }
+
+        return $yelp->extractMenuItems($details, $menuPayload);
+    }
+
+    protected function resolveBusinessId(string $sourceTable, array $rowArr, ?int $rowId): ?int
+    {
+        if (isset($rowArr['business_id']) && is_numeric($rowArr['business_id'])) {
+            $candidate = (int) $rowArr['business_id'];
+            if ($candidate > 0 && Schema::hasTable('businesses') && DB::table('businesses')->where('id', $candidate)->exists()) {
+                return $candidate;
+            }
+        }
+
+        if ($sourceTable === 'businesses' && $rowId && Schema::hasTable('businesses')) {
+            if (DB::table('businesses')->where('id', $rowId)->exists()) {
+                return $rowId;
+            }
+        }
+
+        return null;
+    }
+
+    protected function storeMatchMenuItems(
+        YelpMatchDiff $diff,
+        YelpJob $job,
+        string $sourceTable,
+        int $sourceRowId,
+        ?int $businessId,
+        ?string $yelpBusinessId,
+        array $items
+    ): void {
+        YelpMatchMenuItem::where('match_diff_id', $diff->id)->delete();
+
+        foreach ($items as $idx => $item) {
+            $menuItemId = $item['yelp_menu_item_id'] ?? substr(
+                sha1(($item['name'] ?? 'item') . '|' . ($item['category'] ?? '') . '|' . $idx),
+                0,
+                40
+            );
+
+            YelpMatchMenuItem::create([
+                'match_diff_id'    => $diff->id,
+                'job_id'           => $job->id,
+                'source_row_id'    => $sourceRowId,
+                'source_table'     => $sourceTable,
+                'business_id'      => $businessId,
+                'yelp_business_id' => $yelpBusinessId,
+                'yelp_menu_item_id'=> $menuItemId,
+                'name'             => (string) ($item['name'] ?? 'Untitled Item'),
+                'category'         => $item['category'] ?? null,
+                'description'      => $item['description'] ?? null,
+                'price'            => isset($item['price']) ? (float) $item['price'] : null,
+                'currency'         => $item['currency'] ?? 'USD',
+                'image'            => $item['image'] ?? null,
+                'is_available'     => (bool) ($item['is_available'] ?? true),
+                'sort_order'       => (int) ($item['sort_order'] ?? $idx),
+                'source_type'      => $item['source_type'] ?? 'details_fallback',
+                'raw_payload'      => $item['raw_payload'] ?? null,
+            ]);
+        }
+    }
+
+    protected function archiveClosedAndRemove(
+        YelpJob $job,
+        YelpJobLog $log,
+        SectionEntity $entity,
+        string $tableName,
+        ?int $rowId,
+        array $rowArr,
+        string $term,
+        string $location,
+        ?string $country,
+        array $details
+    ): bool {
+        $removed = $this->removeSourceRow($job, $tableName, $rowId);
+
+        YelpClosedBusiness::create([
+            'job_id' => $job->id,
+            'log_id' => $log->id,
+            'entity_id' => $entity->id,
+            'source_table' => $tableName,
+            'source_row_id' => $rowId,
+            'search_term' => $term,
+            'search_location' => $location ?: null,
+            'country_code' => $country,
+            'yelp_business_id' => $details['id'] ?? null,
+            'yelp_business_name' => $details['name'] ?? null,
+            'source_payload' => $rowArr,
+            'yelp_payload' => $details,
+            'removed_from_source' => $removed,
+            'reason' => 'permanently_closed_on_yelp',
+        ]);
+
+        return $removed;
+    }
+
+    protected function archiveNotFoundAndRemove(
+        YelpJob $job,
+        YelpJobLog $log,
+        SectionEntity $entity,
+        string $tableName,
+        ?int $rowId,
+        array $rowArr,
+        string $term,
+        string $location,
+        ?string $country
+    ): bool {
+        $removed = $this->removeSourceRow($job, $tableName, $rowId);
+
+        YelpNotFoundBusiness::create([
+            'job_id' => $job->id,
+            'log_id' => $log->id,
+            'entity_id' => $entity->id,
+            'source_table' => $tableName,
+            'source_row_id' => $rowId,
+            'search_term' => $term,
+            'search_location' => $location ?: null,
+            'country_code' => $country,
+            'source_payload' => $rowArr,
+            'removed_from_source' => $removed,
+            'reason' => 'not_found_on_yelp',
+        ]);
+
+        return $removed;
+    }
+
+    protected function removeSourceRow(YelpJob $job, string $tableName, ?int $rowId): bool
+    {
+        if (!$rowId) {
+            return false;
+        }
+
+        YelpMatchDiff::where('job_id', $job->id)
+            ->where('source_row_id', $rowId)
+            ->delete();
+
+        return DB::table($tableName)->where('id', $rowId)->delete() > 0;
+    }
+
     protected function ensureYelpVerifiedColumn(SectionEntity $entity, string $tableName): void
     {
         if (Schema::hasColumn($tableName, 'yelp_verified')) {
             return;
         }
 
-        // Disable strict mode for this session so that existing columns with
-        // legacy defaults (e.g. start_date '0000-00-00') don't block ALTER TABLE.
-        DB::statement("SET SESSION sql_mode = ''");
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("SET SESSION sql_mode = ''");
+        }
 
         Schema::table($tableName, function (Blueprint $table) {
             $table->boolean('yelp_verified')->default(0)->after('id');
@@ -406,20 +694,17 @@ class YelpSyncService
         SectionField::firstOrCreate(
             ['entity_id' => $entity->id, 'column_name' => 'yelp_verified'],
             [
-                'label'        => 'Yelp Verified',
-                'type'         => 'boolean',
-                'nullable'     => false,
+                'label' => 'Yelp Verified',
+                'type' => 'boolean',
+                'nullable' => false,
                 'list_visible' => true,
-                'sort_order'   => 998,
+                'sort_order' => 998,
                 'mcp_readable' => true,
                 'mcp_writable' => false,
             ]
         );
     }
 
-    /**
-     * Write only the permanently_closed flag to the DB row.
-     */
     protected function updatePermanentlyClosedColumn(
         SectionEntity $entity,
         string $tableName,
@@ -443,27 +728,30 @@ class YelpSyncService
         }
     }
 
-    /** Persist progress counters to DB so the UI can poll them. */
     protected function persistProgress(
         YelpJobLog $log,
-        int $processed, int $failed, int $skipped, int $closed, int $notFound
+        int $processed,
+        int $failed,
+        int $skipped,
+        int $closed,
+        int $notFound
     ): void {
         YelpJobLog::where('id', $log->id)->update([
             'processed_rows' => $processed,
-            'failed_rows'    => $failed,
-            'skipped_rows'   => $skipped,
-            'closed_rows'    => $closed,
+            'failed_rows' => $failed,
+            'skipped_rows' => $skipped,
+            'closed_rows' => $closed,
             'not_found_rows' => $notFound,
         ]);
     }
 
-    /** Pick the active account with the highest remaining quota. */
     protected function pickAccount(): ?YelpAccount
     {
         $accounts = YelpAccount::where('is_active', true)->get();
         foreach ($accounts as $account) {
             $account->resetIfStale();
         }
+
         return $accounts
             ->filter(fn ($a) => $a->hasQuota())
             ->sortByDesc(fn ($a) => $a->daily_limit - $a->requests_today)
@@ -472,34 +760,37 @@ class YelpSyncService
 
     protected function colValue(array $row, ?string $col): ?string
     {
-        if (!$col || !isset($row[$col])) {
+        if (!$col || !array_key_exists($col, $row)) {
             return null;
         }
-        return (string) $row[$col];
+
+        $value = trim((string) ($row[$col] ?? ''));
+        return $value === '' ? null : $value;
     }
 
     protected function addColumn(SectionEntity $entity, string $tableName, string $dbColumn, string $yelpField): void
     {
-        $fieldInfo = YelpService::availableFields()[$yelpField] ?? ['label' => ucwords(str_replace('_', ' ', $dbColumn)), 'type' => 'string'];
-        $colType   = $fieldInfo['type'];
+        $fieldInfo = YelpService::availableFields()[$yelpField]
+            ?? ['label' => ucwords(str_replace('_', ' ', $dbColumn)), 'type' => 'string'];
+        $colType = $fieldInfo['type'];
 
         Schema::table($tableName, function (Blueprint $table) use ($dbColumn, $colType) {
             match ($colType) {
                 'boolean' => $table->boolean($dbColumn)->nullable()->after('id'),
                 'integer' => $table->unsignedInteger($dbColumn)->nullable()->after('id'),
                 'decimal' => $table->decimal($dbColumn, 10, 7)->nullable()->after('id'),
-                default   => $table->string($dbColumn)->nullable()->after('id'),
+                default => $table->string($dbColumn)->nullable()->after('id'),
             };
         });
 
         SectionField::firstOrCreate(
             ['entity_id' => $entity->id, 'column_name' => $dbColumn],
             [
-                'label'        => $fieldInfo['label'],
-                'type'         => $colType,
-                'nullable'     => true,
+                'label' => $fieldInfo['label'],
+                'type' => $colType,
+                'nullable' => true,
                 'list_visible' => true,
-                'sort_order'   => 999,
+                'sort_order' => 999,
                 'mcp_readable' => true,
                 'mcp_writable' => false,
             ]

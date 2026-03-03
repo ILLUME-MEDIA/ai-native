@@ -213,6 +213,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('logs/{log}',                    [YelpController::class, 'logProgress']);
         Route::get('logs/{log}/rows',               [YelpController::class, 'logRows']);
         Route::post('logs/{log}/stop',              [YelpController::class, 'logStop']);
+
+        // Reconciliation
+        Route::get('reconciliation/summary',        [YelpController::class, 'reconciliationSummary']);
+        Route::get('reconciliation/matches',        [YelpController::class, 'reconciliationMatches']);
+        Route::get('reconciliation/menu-items',     [YelpController::class, 'reconciliationMenuItems']);
+        Route::get('reconciliation/closed',         [YelpController::class, 'reconciliationClosed']);
+        Route::get('reconciliation/not-found',      [YelpController::class, 'reconciliationNotFound']);
+        Route::post('reconciliation/merge',         [YelpController::class, 'reconciliationMerge']);
     });
 
     //
@@ -654,4 +662,3 @@ Route::post('/auth/token', function (\Illuminate\Http\Request $request) {
         'user'       => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
     ]);
 })->middleware('throttle:10,1')->name('auth.token');
-

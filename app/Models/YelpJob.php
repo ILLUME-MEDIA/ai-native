@@ -16,6 +16,7 @@ class YelpJob extends Model
         'column_mapping',
         'schedule',
         'mode',
+        'auto_merge',
         'is_active',
         'last_run_at',
         'next_run_at',
@@ -27,6 +28,7 @@ class YelpJob extends Model
         'search_columns'    => 'array',
         'column_mapping'    => 'array',
         'is_active'         => 'boolean',
+        'auto_merge'        => 'boolean',
         'last_run_at'       => 'datetime',
         'next_run_at'       => 'datetime',
         'last_processed_id' => 'integer',
@@ -46,6 +48,11 @@ class YelpJob extends Model
     public function latestLog(): HasMany
     {
         return $this->hasMany(YelpJobLog::class, 'job_id')->latest()->limit(1);
+    }
+
+    public function matchDiffs(): HasMany
+    {
+        return $this->hasMany(YelpMatchDiff::class, 'job_id')->latest();
     }
 
     /** Calculate and store the next run time from the cron/preset schedule */
