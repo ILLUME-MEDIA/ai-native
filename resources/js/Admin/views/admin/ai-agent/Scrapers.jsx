@@ -444,9 +444,10 @@ const Scrapers = () => {
 
                 // Apply genres/tags if user selected any in the quick setup
                 if (addGenres.length > 0 || addTags.length > 0) {
-                    const bulkPayload = { replace: false };
+                    // replace: true — discard YouTube multi-word tags, keep only our clean platform tags
+                    const bulkPayload = { replace: true };
                     if (addGenres.length > 0) bulkPayload.genres = addGenres;
-                    if (addTags.length > 0) bulkPayload.tags = addTags;
+                    if (addTags.length > 0) bulkPayload.tags = addTags.filter(t => !t.includes(' ')).slice(0, 7);
                     try {
                         await axios.post(`/api/ai/scrapers/${response.data.playlist.id}/bulk-update`, bulkPayload);
                     } catch (bulkErr) {
