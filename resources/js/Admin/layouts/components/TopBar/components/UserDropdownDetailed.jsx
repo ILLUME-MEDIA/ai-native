@@ -39,17 +39,14 @@ const menuItems = [{
 const UserDropdown = () => {
   const { user } = useInitialProps();
 
-  const handleLogout = async (e) => {
+  const handleLogout = (e) => {
     e.preventDefault();
-    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    try {
-      await fetch('/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'X-CSRF-TOKEN': token, 'X-Requested-With': 'XMLHttpRequest' },
-      });
-    } catch (_) { /* ignore */ }
-    window.location.href = '/login';
+    // Logout is CSRF-exempt — plain native form POST is simplest and most reliable
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/logout';
+    document.body.appendChild(form);
+    form.submit();
   };
 
   return <div id="user-dropdown-detailed" className="topbar-item nav-user">

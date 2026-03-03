@@ -33,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
         $middleware->validateCsrfTokens(except: [
             'api/*',
+            'logout',
         ]);
 
         $middleware->alias([

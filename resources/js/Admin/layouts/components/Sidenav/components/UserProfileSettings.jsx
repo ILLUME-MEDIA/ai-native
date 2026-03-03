@@ -9,17 +9,13 @@ import { Dropdown, DropdownHeader, DropdownItem, DropdownMenu, DropdownToggle } 
 const UserProfileSettings = () => {
   const { user } = useInitialProps();
 
-  const handleLogout = async (e) => {
+  const handleLogout = (e) => {
     e.preventDefault();
-    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    try {
-      await fetch('/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'X-CSRF-TOKEN': token, 'X-Requested-With': 'XMLHttpRequest' },
-      });
-    } catch (_) { /* ignore */ }
-    window.location.href = '/login';
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/logout';
+    document.body.appendChild(form);
+    form.submit();
   };
 
   return <div id="user-profile-settings" className="sidenav-user" style={{
