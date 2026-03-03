@@ -1,10 +1,9 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
 import { Button, Col, Row } from 'react-bootstrap';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
-export default function Login({ status, canResetPassword, csrf_token: csrfToken = '' }) {
-    const formRef = useRef(null);
+export default function Login({ status, canResetPassword }) {
     const [processing, setProcessing] = useState(false);
     const [formData, setFormData] = useState({ email: '', password: '', remember: false });
     const { props: pageProps } = usePage();
@@ -13,11 +12,11 @@ export default function Login({ status, canResetPassword, csrf_token: csrfToken 
     const submit = (e) => {
         e.preventDefault();
         setProcessing(true);
-        // Native form submit = full page POST → server 302 → full page redirect.
-        // Inertia will not intercept, so URL will update to /admin/dashboard/ecommerce.
-        const form = formRef.current;
-        if (form) form.submit();
-        else setProcessing(false);
+        // Use Inertia router.post — CSRF handled automatically via XSRF-TOKEN cookie.
+        // Inertia::location() in the controller triggers window.location = '/admin/...' (full page load).
+        router.post(route('login'), formData, {
+            onFinish: () => setProcessing(false),
+        });
     };
 
     const socialContent = (
@@ -69,13 +68,7 @@ export default function Login({ status, canResetPassword, csrf_token: csrfToken 
                 </div>
             )}
 
-            <form
-                ref={formRef}
-                action={route('login')}
-                method="POST"
-                onSubmit={submit}
-            >
-                <input type="hidden" name="_token" value={csrfToken || (typeof document !== 'undefined' ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') : '') || ''} />
+            <form onSubmit={submit}>
                 <div className="mb-3">
                     <label htmlFor="email" className="form-label">
                         Email address <span className="text-danger">*</span>
