@@ -141,7 +141,7 @@ function JobsTab() {
     const empty = {
         name: '',
         entity_id: '',
-        search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '' },
+        search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
         column_mapping: {},
         schedule: 'daily',
         custom_cron: '',
@@ -168,7 +168,15 @@ function JobsTab() {
         setForm({
             name: job.name,
             entity_id: String(job.entity_id),
-            search_columns: { term: sc.term || '', address: sc.address || '', city: sc.city || '', state: sc.state || '', zip: sc.zip || '', country: sc.country || '' },
+            search_columns: {
+                term: sc.term || '',
+                address: sc.address || '',
+                city: sc.city || '',
+                state: sc.state || '',
+                zip: sc.zip || '',
+                country: sc.country || '',
+                country_value: sc.country_value || 'us',
+            },
             column_mapping: job.column_mapping || {},
             schedule: isCustom ? 'custom' : job.schedule,
             custom_cron: isCustom ? job.schedule : '',
@@ -263,7 +271,7 @@ function JobsTab() {
                     {error && <p className="mb-3 text-red-600 text-sm bg-red-50 p-2 rounded">{error}</p>}
                     <div className="space-y-5">
                         <input className="w-full border rounded-md px-3 py-2 text-sm" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Job name" />
-                        <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.entity_id} onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '' }, column_mapping: {} }))}>
+                        <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.entity_id} onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' }, column_mapping: {} }))}>
                             <option value="">- Select table -</option>
                             {entities.map(e => <option key={e.id} value={e.id}>{e.name} ({e.table_name})</option>)}
                         </select>
@@ -277,7 +285,7 @@ function JobsTab() {
                                         ['city', 'City'],
                                         ['state', 'State'],
                                         ['zip', 'Zip'],
-                                        ['country', 'Country (US/USA) *'],
+                                        ['country', 'Country column (optional)'],
                                     ].map(([key, label]) => (
                                         <div key={key} className="flex items-center gap-3">
                                             <span className="w-48 text-xs text-gray-600">{label}</span>
@@ -287,6 +295,15 @@ function JobsTab() {
                                             </select>
                                         </div>
                                     ))}
+                                    <div className="flex items-center gap-3">
+                                        <span className="w-48 text-xs text-gray-600">Country value (manual)</span>
+                                        <input
+                                            className="flex-1 border rounded px-2 py-1 text-xs"
+                                            value={form.search_columns.country_value || ''}
+                                            onChange={e => setForm(f => ({ ...f, search_columns: { ...f.search_columns, country_value: e.target.value } }))}
+                                            placeholder="us / usa / united states"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div className="border rounded-lg p-4 bg-gray-50 max-h-64 overflow-y-auto space-y-2">
@@ -311,7 +328,7 @@ function JobsTab() {
                         {form.schedule === 'custom' && <input className="w-full border rounded-md px-3 py-2 text-sm font-mono" value={form.custom_cron} onChange={e => setForm(f => ({ ...f, custom_cron: e.target.value }))} placeholder="0 6 * * *" />}
                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.auto_merge} onChange={e => setForm(f => ({ ...f, auto_merge: e.target.checked }))} /> Auto merge</label>
                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} /> Active</label>
-                        <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setModal(null)}>Cancel</Btn><Btn onClick={save} disabled={saving || !form.entity_id || !form.name || !form.search_columns.term || !form.search_columns.country}>{saving ? 'Saving...' : 'Save Job'}</Btn></div>
+                        <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setModal(null)}>Cancel</Btn><Btn onClick={save} disabled={saving || !form.entity_id || !form.name || !form.search_columns.term}>{saving ? 'Saving...' : 'Save Job'}</Btn></div>
                     </div>
                 </Modal>
             )}

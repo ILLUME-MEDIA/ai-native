@@ -406,6 +406,11 @@ class YelpSyncService
 
     protected function resolveCountry(array $row, array $searchCols): ?string
     {
+        $manualCountry = trim((string) ($searchCols['country_value'] ?? ''));
+        if ($manualCountry !== '') {
+            return $manualCountry;
+        }
+
         $country = $this->colValue($row, $searchCols['country'] ?? null);
 
         if ($country) {
@@ -427,7 +432,7 @@ class YelpSyncService
             return false;
         }
 
-        $normalized = strtoupper(preg_replace('/[^A-Z]/', '', $country));
+        $normalized = strtoupper((string) preg_replace('/[^a-z]/i', '', $country));
 
         return in_array($normalized, [
             'US',

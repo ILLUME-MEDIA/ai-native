@@ -301,8 +301,8 @@ function JobsTab() {
 
     const emptyForm = {
         name: '', entity_id: '', mode: 'smart', schedule: 'daily',
-        custom_cron: '', is_active: true, max_calls_per_run: 0,
-        search_columns: { term: '', address: '', city: '', state: '', zip: '' },
+        custom_cron: '', is_active: true, auto_merge: false, max_calls_per_run: 0,
+        search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
         column_mapping: {},
     };
     const [form, setForm] = useState(emptyForm);
@@ -369,8 +369,17 @@ function JobsTab() {
             schedule: isCustom ? 'custom' : job.schedule,
             custom_cron: isCustom ? job.schedule : '',
             is_active: job.is_active,
+            auto_merge: !!job.auto_merge,
             max_calls_per_run: job.max_calls_per_run ?? 0,
-            search_columns: { term: sc.term||'', address: sc.address||'', city: sc.city||'', state: sc.state||'', zip: sc.zip||'' },
+            search_columns: {
+                term: sc.term || '',
+                address: sc.address || '',
+                city: sc.city || '',
+                state: sc.state || '',
+                zip: sc.zip || '',
+                country: sc.country || '',
+                country_value: sc.country_value || 'us',
+            },
             column_mapping: { ...(job.column_mapping || {}) },
         });
         setFormError(''); setEditTarget(job); setShowModal(true);
@@ -385,6 +394,7 @@ function JobsTab() {
                 search_columns: form.search_columns, column_mapping: form.column_mapping,
                 schedule: form.schedule === 'custom' ? form.custom_cron : form.schedule,
                 is_active: form.is_active,
+                auto_merge: !!form.auto_merge,
                 max_calls_per_run: parseInt(form.max_calls_per_run) || 0,
             };
             if (!editTarget) { await api('jobs', { method: 'post', data: payload }); }
@@ -585,7 +595,7 @@ function JobsTab() {
                                 <Form.Group>
                                     <Form.Label>Table (Entity) <span className="text-danger">*</span></Form.Label>
                                     <Form.Select value={form.entity_id}
-                                        onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term:'',address:'',city:'',state:'',zip:'' }, column_mapping: {} }))}>
+                                        onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term:'', address:'', city:'', state:'', zip:'', country:'', country_value:'us' }, column_mapping: {} }))}>
                                         <option value="">— Select a table —</option>
                                         {entities.map(e => <option key={e.id} value={e.id}>{e.name} ({e.table_name})</option>)}
                                     </Form.Select>
@@ -617,6 +627,9 @@ function JobsTab() {
                                 <Form.Check type="switch" id="jobActive" className="mt-2" label="Enable auto-schedule"
                                     checked={form.is_active}
                                     onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+                                <Form.Check type="switch" id="jobAutoMerge" className="mt-2" label="Auto merge matched Yelp data"
+                                    checked={!!form.auto_merge}
+                                    onChange={e => setForm(f => ({ ...f, auto_merge: e.target.checked }))} />
 
                                 {/* Per-run call limit */}
                                 <hr className="my-2" />
@@ -641,6 +654,7 @@ function JobsTab() {
                                             { key: 'city',    label: 'City' },
                                             { key: 'state',   label: 'State / Province' },
                                             { key: 'zip',     label: 'Zip Code' },
+                                            { key: 'country', label: 'Country Column (optional)' },
                                         ].map(({ key, label }) => (
                                             <Col key={key} md={4}>
                                                 <Form.Label className="fs-sm mb-1">{label}</Form.Label>
@@ -654,6 +668,18 @@ function JobsTab() {
                                                 </Form.Select>
                                             </Col>
                                         ))}
+                                        <Col md={4}>
+                                            <Form.Label className="fs-sm mb-1">Country Value (manual)</Form.Label>
+                                            <Form.Control
+                                                size="sm"
+                                                value={form.search_columns.country_value || ''}
+                                                onChange={e => setForm(f => ({
+                                                    ...f,
+                                                    search_columns: { ...f.search_columns, country_value: e.target.value },
+                                                }))}
+                                                placeholder="us / usa / united states"
+                                            />
+                                        </Col>
                                     </Row>
                                 </Col>
                                 <Col xs={12}><hr className="my-1" /></Col>
