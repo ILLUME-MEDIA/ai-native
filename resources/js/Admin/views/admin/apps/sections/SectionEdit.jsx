@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import axios from 'axios';
 import SectionFields from './components/SectionFields';
 import SectionMcp from './components/SectionMcp';
+import SectionRelations from './components/SectionRelations';
 
 const SectionEdit = () => {
   const { id } = useParams();
@@ -152,6 +153,11 @@ const SectionEdit = () => {
                     </Nav.Link>
                   </Nav.Item>
                   <Nav.Item>
+                    <Nav.Link eventKey="relations">
+                      <Icon icon="arrows-join" className="me-1" /> Relations
+                    </Nav.Link>
+                  </Nav.Item>
+                  <Nav.Item>
                     <Nav.Link eventKey="mcp">
                       <Icon icon="shield-check" className="me-1" /> MCP Access
                     </Nav.Link>
@@ -227,6 +233,12 @@ const SectionEdit = () => {
                       <SectionFields
                         fields={form.fields}
                         onChange={(fields) => setForm((prev) => ({ ...prev, fields }))}
+                        entities={entities}
+                      />
+                    </Tab.Pane>
+                    <Tab.Pane eventKey="relations">
+                      <SectionRelations
+                        entityId={id}
                         entities={entities}
                       />
                     </Tab.Pane>

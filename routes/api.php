@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\SectionBuilder\EntityController;
 use App\Http\Controllers\SectionBuilder\FieldController;
 use App\Http\Controllers\SectionBuilder\CombinedEntityController;
+use App\Http\Controllers\SectionBuilder\SectionRelationController;
 use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
@@ -99,6 +100,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/section-builder/entities/{entity}/mcp', [EntityController::class, 'getMcpConfig'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.mcp');
+
+    // Section Relations CRUD
+    Route::get('/section-builder/entities/{entityId}/relations',         [SectionRelationController::class, 'index']);
+    Route::post('/section-builder/entities/{entityId}/relations',        [SectionRelationController::class, 'store']);
+    Route::patch('/section-builder/entities/{entityId}/relations/{id}',  [SectionRelationController::class, 'update']);
+    Route::delete('/section-builder/entities/{entityId}/relations/{id}', [SectionRelationController::class, 'destroy']);
 
     // Custom route binding: {entity} can be ID, slug, or table name - auto-creates if table exists
     Route::get('/section-builder/entities/{entity}/fields', [FieldController::class, 'index'])
