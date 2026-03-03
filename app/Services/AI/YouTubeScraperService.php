@@ -433,18 +433,18 @@ class YouTubeScraperService
                     }
                     $ytTags = $snippet['tags'] ?? [];
                     if (!empty($ytTags)) {
+                        // Store YouTube tags in metadata only — AI will generate clean single-word tags separately
                         $meta['youtube_tags'] = array_slice($ytTags, 0, 20);
-                        // Merge into tags column
-                        $existingTags = $dbVideo->tags ?? [];
-                        $update['tags'] = array_values(array_unique(array_merge($existingTags, array_slice($ytTags, 0, 20))));
                     }
                     $update['metadata'] = $meta;
 
                     $dbVideo->update($update);
 
                     // ✨ AUTO-GENERATE TAGS & GENRES using Mistral service
-                    // Only generate if not already generated or if tags/genres are empty
-                    if (empty($dbVideo->tags_generated_at) || empty($dbVideo->tags) || empty($dbVideo->genres)) {
+                    // Regenerate if not yet done, empty, or has dirty multi-word YouTube tags
+                    // Dirty = any tag with more than 1 word (includes 2-word YouTube tags like "life lessons")
+                    $hasDirtyTags = !empty($dbVideo->tags) && collect($dbVideo->tags)->contains(fn($t) => str_word_count($t) > 1 || strpos($t, ' ') !== false);
+                    if (empty($dbVideo->tags_generated_at) || empty($dbVideo->tags) || empty($dbVideo->genres) || $hasDirtyTags) {
                         try {
                             $title = $dbVideo->title;
                             $description = $update['description'] ?? $dbVideo->description ?? '';
@@ -453,14 +453,13 @@ class YouTubeScraperService
                             // Generate structured 3-tag system
                             $generatedTags = $this->generateTagsOnly($title, $description);
 
-                            // Generate 3-5 contextual genres
-                            $generatedGenres = $this->generateGenresOnly($title, $description, $channelName);
+                            // Generate 3-5 contextual genres (pass YouTube tags as context hints)
+                            $generatedGenres = $this->generateGenresOnly($title, $description, $channelName, $ytTags);
 
-                            // Merge with existing tags/genres
-                            $existingTags = $dbVideo->tags ?? [];
                             $existingGenres = $dbVideo->genres ?? [];
 
-                            $finalTags = array_values(array_unique(array_merge($existingTags, $generatedTags)));
+                            // AI tags fully replace existing (removes old YouTube multi-word junk), max 7
+                            $finalTags = array_values(array_slice($generatedTags, 0, 7));
                             $finalGenres = array_values(array_unique(array_merge($existingGenres, $generatedGenres)));
 
                             // Update video with AI-generated metadata
@@ -2080,12 +2079,15 @@ class YouTubeScraperService
             }
 
             if (!empty($tags) || !empty($genres)) {
-                $existingTags = $video->tags ?? [];
                 $existingGenres = $video->genres ?? [];
-                $newTags = array_values(array_unique(array_merge($existingTags, $tags)));
+                // AI tags replace existing; single-word only, max 7
+                $cleanTags = array_values(array_slice(
+                    array_filter($tags, fn($t) => str_word_count($t) === 1 && strpos($t, ' ') === false),
+                    0, 7
+                ));
                 $newGenres = array_values(array_unique(array_merge($existingGenres, $genres)));
                 $video->update([
-                    'tags' => $newTags,
+                    'tags' => $cleanTags,
                     'genres' => $newGenres,
                     'tags_generated_at' => now(),
                 ]);
@@ -2111,22 +2113,19 @@ class YouTubeScraperService
         }
 
         try {
-            $prompt = "Given the following YouTube video title and description, generate exactly 3 relevant tags for this video, separated by a vertical bar (|), following this structure:
-
-1. Content type (e.g., 'Music', 'Gaming', 'Education', 'Technology', 'Comedy', 'Entertainment', 'Cooking', 'Travel', 'Sports', 'Health', 'Beauty', 'DIY', 'Documentary', 'Review')
-2. Specific focus (e.g., 'Tutorial', 'Review', 'Gameplay', 'Interview', 'Recipe', 'Workout', 'Makeup', 'Crafting', 'Analysis')
-3. One-word summary (e.g., 'entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring')
+            $prompt = "Given the following YouTube video title and description, generate exactly 7 single-word tags for this video, separated by a vertical bar (|).
 
 Rules:
-- DO NOT use generic words like 'video', 'content', 'media', 'the', 'how to' as tags.
-- Each tag must be concise (1-3 words), descriptive, and relevant to the actual content.
-- Focus on what makes this video unique and searchable.
-- Output format: ContentType | Focus | OneWordSummary (no extra text, no numbers, no explanations)
+- EVERY tag must be a SINGLE word only (no spaces, no hyphens between words).
+- DO NOT use generic words like 'video', 'content', 'media', 'the'.
+- Tags should cover: content type, topic, format, mood, and audience.
+- Good examples: Music | Gaming | Education | Interview | Podcast | Comedy | Motivation | Fitness | Tutorial | Documentary | Spirituality | Leadership | Health | Sports | Entertainment
+- Bad examples: 'how to', 'life lessons', 'relationship advice', 'CEO podcast' (multi-word — NOT allowed)
 
 Title: {$title}
 Description: " . substr($description, 0, 500) . "
 
-IMPORTANT: Respond with ONLY the tags in the format \"Tag1 | Tag2 | Tag3\" - no explanations, no additional text, just the three tags separated by vertical bars.
+IMPORTANT: Respond with ONLY 7 single-word tags separated by | — no explanations, no numbers, no extra text.
 
 Tags:";
 
@@ -2150,18 +2149,21 @@ Tags:";
                 // Split on | and filter
                 $newTags = array_map('trim', explode('|', $cleanContent));
                 $newTags = array_filter($newTags, function($tag) {
-                    return strlen($tag) > 0 && strlen($tag) < 50 &&
+                    // Strictly single word only — no spaces allowed
+                    return strlen($tag) > 1 && strlen($tag) < 30 &&
+                           str_word_count($tag) === 1 &&
+                           strpos($tag, ' ') === false &&
                            !stripos($tag, 'generate') &&
                            !stripos($tag, 'title:') &&
                            !stripos($tag, 'description:');
                 });
 
-                // Validate: should be exactly 3 tags
-                if (count($newTags) === 3) {
-                    return array_values($newTags);
+                // Accept 1-7 clean tags; only fallback if nothing usable returned
+                if (count($newTags) >= 1) {
+                    return array_values(array_slice($newTags, 0, 7));
                 }
 
-                Log::warning("Invalid AI response for tags, using fallback", ['tags' => $newTags]);
+                Log::warning("No valid tags from AI response, using fallback", ['tags' => $newTags]);
             }
 
             // Fallback to structured extraction
@@ -2226,7 +2228,7 @@ Tags:";
         return $tagMap[$detectedType] ?? ['Entertainment', 'Media', 'Content'];
     }
 
-    public function generateGenresOnly(string $title, string $description = '', string $channelName = ''): array
+    public function generateGenresOnly(string $title, string $description = '', string $channelName = '', array $existingTags = []): array
     {
         if (empty($title)) {
             return [];
@@ -2239,10 +2241,14 @@ Tags:";
         }
 
         try {
+            $tagsContext = !empty($existingTags)
+                ? "\nYouTube tags (for context): " . implode(', ', array_slice($existingTags, 0, 15))
+                : '';
+
             $prompt = "Given a YouTube video with the following details:
 Title: {$title}
 Channel: {$channelName}
-Description: " . substr($description, 0, 500) . "
+Description: " . substr($description, 0, 500) . $tagsContext . "
 
 Please generate 3-5 relevant genres for this video content. Consider:
 1. Content type (Educational, Entertainment, Music, Gaming, Tech, etc.)
@@ -2411,17 +2417,18 @@ Return only the genres as a comma-separated list, without explanations or additi
             $existing = YoutubeVideo::where('video_id', $videoId)->first();
 
             if ($existing) {
-                // Merge YouTube's own tags into existing tags (don't overwrite AI-generated ones)
-                if (!empty($videoData['youtube_tags'])) {
-                    $existingTags = $existing->tags ?? [];
-                    $merged = array_values(array_unique(array_merge($existingTags, $videoData['youtube_tags'])));
-                    $payload['tags'] = $merged;
-                }
+                // Never write YouTube raw tags to tags column — AI enrichment handles that
                 $existing->update($payload);
             } else {
-                // New video — set YouTube tags as initial tags
+                // New video — seed with single-word YouTube tags (max 7) as placeholder until AI enrichment runs
                 if (!empty($videoData['youtube_tags'])) {
-                    $payload['tags'] = $videoData['youtube_tags'];
+                    $seedTags = array_values(array_slice(
+                        array_filter($videoData['youtube_tags'], fn($t) => str_word_count($t) === 1 && strpos($t, ' ') === false && strlen($t) > 1),
+                        0, 7
+                    ));
+                    if (!empty($seedTags)) {
+                        $payload['tags'] = $seedTags;
+                    }
                 }
                 YoutubeVideo::create(array_merge(['video_id' => $videoId], $payload));
             }

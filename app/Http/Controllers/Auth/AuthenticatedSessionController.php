@@ -23,7 +23,7 @@ class AuthenticatedSessionController extends Controller
     public function create(): Response|RedirectResponse
     {
         if (Auth::check()) {
-            return redirect('/admin/dashboard/ecommerce');
+            return Inertia::location('/admin/dashboard/ecommerce');
         }
 
         return Inertia::render('Auth/Login', [
@@ -64,6 +64,6 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerateToken();
 
-        return redirect('/');
+        return redirect()->route('login');
     }
 }

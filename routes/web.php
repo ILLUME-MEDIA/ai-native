@@ -186,9 +186,9 @@ Route::get('/storage/{path}', function ($path) {
 
 Route::get('/', function () {
     if (auth()->check()) {
-        return redirect('/admin/dashboard/ecommerce');
+        return Inertia::location('/admin/dashboard/ecommerce');
     }
-    return redirect()->route('login');
+    return Inertia::location(route('login'));
 });
 
 Route::get('/dashboard', function (Request $request) {
