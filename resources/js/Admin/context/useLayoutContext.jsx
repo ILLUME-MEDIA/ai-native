@@ -1,15 +1,15 @@
 import { getSystemTheme, toggleAttribute } from "@admin/utils/layout";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useSessionStorage } from "usehooks-ts";
+import { useLocalStorage } from "usehooks-ts";
+
 const debounce = (fn, delay) => {
   let timer;
   return (...args) => {
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      fn(...args);
-    }, delay);
+    timer = setTimeout(() => { fn(...args); }, delay);
   };
 };
+
 export const showBackdrop = () => {
   const htmlEl = document.documentElement;
   const backdropEl = document.createElement("div");
@@ -18,13 +18,10 @@ export const showBackdrop = () => {
   document.body.appendChild(backdropEl);
   document.body.style.overflow = "hidden";
   htmlEl.classList.add("sidebar-enable");
-  if (window.innerWidth > 767) {
-    document.body.style.paddingRight = "15px";
-  }
-  backdropEl.addEventListener("click", () => {
-    hideBackdrop();
-  });
+  if (window.innerWidth > 767) document.body.style.paddingRight = "15px";
+  backdropEl.addEventListener("click", () => { hideBackdrop(); });
 };
+
 export const hideBackdrop = () => {
   const htmlEl = document.documentElement;
   htmlEl.classList.remove("sidebar-enable");
@@ -35,6 +32,117 @@ export const hideBackdrop = () => {
     document.body.style.paddingRight = "";
   }
 };
+
+// ─── CSS Variable Helpers ────────────────────────────────────────────────────
+
+const hexToRgb = hex => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+    : null;
+};
+
+const CUSTOM_FONT_LINK_ID = "__design-system-font__";
+
+const loadGoogleFont = fontFamily => {
+  const el = document.getElementById(CUSTOM_FONT_LINK_ID);
+  if (el) el.remove();
+  const systemFonts = ["", "Nunito", "Arial", "Georgia", "Times New Roman",
+    "Courier New", "-apple-system", "system-ui", "inherit", "monospace"];
+  if (!fontFamily || systemFonts.includes(fontFamily)) return;
+  const link = document.createElement("link");
+  link.id = CUSTOM_FONT_LINK_ID;
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/ /g, "+")}:wght@300;400;500;600;700&display=swap`;
+  document.head.appendChild(link);
+};
+
+// Apply semantic colors — covers both --bs-* (Bootstrap) and --theme-* (skin) prefixes
+export const applyCustomColors = colors => {
+  const root = document.documentElement;
+  const COLOR_KEYS = ["primary", "secondary", "success", "danger", "warning", "info"];
+  COLOR_KEYS.forEach(key => {
+    const val = colors?.[key];
+    if (val) {
+      const rgb = hexToRgb(val);
+      root.style.setProperty(`--bs-${key}`, val);
+      if (rgb) root.style.setProperty(`--bs-${key}-rgb`, rgb);
+      root.style.setProperty(`--theme-${key}`, val);
+      if (rgb) root.style.setProperty(`--theme-${key}-rgb`, rgb);
+    } else {
+      [`--bs-${key}`, `--bs-${key}-rgb`, `--theme-${key}`, `--theme-${key}-rgb`]
+        .forEach(v => root.style.removeProperty(v));
+    }
+  });
+};
+
+// Apply typography, border-radius, shadows
+export const applyCustomStyles = styles => {
+  const root = document.documentElement;
+
+  // Font Family
+  if (styles?.fontFamily) {
+    loadGoogleFont(styles.fontFamily);
+    const stack = `"${styles.fontFamily}", sans-serif`;
+    root.style.setProperty("--bs-body-font-family", stack);
+    root.style.setProperty("--bs-font-sans-serif", stack);
+  } else {
+    root.style.removeProperty("--bs-body-font-family");
+    root.style.removeProperty("--bs-font-sans-serif");
+    loadGoogleFont("");
+  }
+
+  // Font Size (stored as px number)
+  if (styles?.fontSize) {
+    const px = `${styles.fontSize}px`;
+    root.style.setProperty("--bs-body-font-size", px);
+    root.style.setProperty("--theme-font-size-base", px);
+  } else {
+    root.style.removeProperty("--bs-body-font-size");
+    root.style.removeProperty("--theme-font-size-base");
+  }
+
+  // Line Height
+  if (styles?.lineHeight) {
+    root.style.setProperty("--bs-body-line-height", String(styles.lineHeight));
+  } else {
+    root.style.removeProperty("--bs-body-line-height");
+  }
+
+  // Border Radius (stored as rem number e.g. 0.3)
+  if (styles?.borderRadius !== undefined && styles.borderRadius !== null && styles.borderRadius !== "") {
+    const r = parseFloat(styles.borderRadius);
+    root.style.setProperty("--bs-border-radius",       `${r}rem`);
+    root.style.setProperty("--bs-border-radius-sm",    `${(r * 0.75).toFixed(3)}rem`);
+    root.style.setProperty("--bs-border-radius-lg",    `${(r * 1.5).toFixed(3)}rem`);
+    root.style.setProperty("--bs-border-radius-xl",    `${(r * 3).toFixed(3)}rem`);
+    root.style.setProperty("--bs-border-radius-2xl",   `${(r * 5).toFixed(3)}rem`);
+  } else {
+    ["--bs-border-radius", "--bs-border-radius-sm", "--bs-border-radius-lg",
+     "--bs-border-radius-xl", "--bs-border-radius-2xl"].forEach(v => root.style.removeProperty(v));
+  }
+
+  // Box Shadow preset
+  const shadowMap = {
+    none:    "none",
+    subtle:  "0 1px 3px rgba(0,0,0,0.08)",
+    default: "0px 1px 4px 0px rgba(130,143,163,0.15)",
+    medium:  "0 4px 14px rgba(0,0,0,0.12)",
+    bold:    "0 8px 30px rgba(0,0,0,0.18)",
+  };
+  const shadow = shadowMap[styles?.boxShadow];
+  if (shadow !== undefined) {
+    root.style.setProperty("--bs-box-shadow", shadow);
+    root.style.setProperty("--theme-box-shadow", shadow);
+    root.style.setProperty("--theme-theme-card-box-shadow", shadow);
+  } else {
+    ["--bs-box-shadow", "--theme-box-shadow", "--theme-theme-card-box-shadow"]
+      .forEach(v => root.style.removeProperty(v));
+  }
+};
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
 const INIT_STATE = {
   skin: "default",
   theme: "light",
@@ -45,9 +153,14 @@ const INIT_STATE = {
   topbarColor: "light",
   width: "fluid",
   position: "fixed",
-  dir: "ltr"
+  dir: "ltr",
+  customColors: {},
+  customStyles: {},
 };
-const ALLOWED_SKINS = ["default", "minimal", "modern", "material", "saas", "flat", "galaxy", "luxe", "retro", "neon", "pixel", "soft", "mono", "prism", "nova", "zen", "elegant", "vivid", "aurora", "crystal", "matrix", "orbit", "neo", "silver", "xenon"];
+
+const ALLOWED_SKINS = ["default", "minimal", "modern", "material", "saas", "flat", "galaxy",
+  "luxe", "retro", "neon", "pixel", "soft", "mono", "prism", "nova", "zen", "elegant",
+  "vivid", "aurora", "crystal", "matrix", "orbit", "neo", "silver", "xenon"];
 const ALLOWED_THEMES = ["light", "dark", "system"];
 const ALLOWED_ORIENTATIONS = ["vertical", "horizontal"];
 const ALLOWED_SIDENAV_SIZES = ["default", "compact", "condensed", "on-hover", "on-hover-active", "offcanvas"];
@@ -56,6 +169,7 @@ const ALLOWED_TOPBAR_COLORS = ["light", "dark", "gray", "gradient"];
 const ALLOWED_WIDTHS = ["fluid", "boxed"];
 const ALLOWED_POSITIONS = ["fixed", "scrollable"];
 const ALLOWED_DIRS = ["ltr", "rtl"];
+
 const shallowEqual = (a, b) => {
   if (a === b) return true;
   const aKeys = Object.keys(a || {});
@@ -63,41 +177,43 @@ const shallowEqual = (a, b) => {
   if (aKeys.length !== bKeys.length) return false;
   return aKeys.every(key => a[key] === b[key]);
 };
+
+const isPlainObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+
 const normalizeSettings = value => {
-  const next = {
-    ...INIT_STATE,
-    ...(value || {})
-  };
-  if (!ALLOWED_SKINS.includes(next.skin)) next.skin = INIT_STATE.skin;
-  if (!ALLOWED_THEMES.includes(next.theme)) next.theme = INIT_STATE.theme;
+  const next = { ...INIT_STATE, ...(value || {}) };
+  if (!ALLOWED_SKINS.includes(next.skin))               next.skin = INIT_STATE.skin;
+  if (!ALLOWED_THEMES.includes(next.theme))             next.theme = INIT_STATE.theme;
   if (!ALLOWED_ORIENTATIONS.includes(next.orientation)) next.orientation = INIT_STATE.orientation;
   if (!ALLOWED_SIDENAV_SIZES.includes(next.sidenavSize)) next.sidenavSize = INIT_STATE.sidenavSize;
   if (!ALLOWED_SIDENAV_COLORS.includes(next.sidenavColor)) next.sidenavColor = INIT_STATE.sidenavColor;
   if (!ALLOWED_TOPBAR_COLORS.includes(next.topbarColor)) next.topbarColor = INIT_STATE.topbarColor;
-  if (!ALLOWED_WIDTHS.includes(next.width)) next.width = INIT_STATE.width;
-  if (!ALLOWED_POSITIONS.includes(next.position)) next.position = INIT_STATE.position;
-  if (!ALLOWED_DIRS.includes(next.dir)) next.dir = INIT_STATE.dir;
-  if (typeof next.sidenavUser !== "boolean") next.sidenavUser = INIT_STATE.sidenavUser;
+  if (!ALLOWED_WIDTHS.includes(next.width))             next.width = INIT_STATE.width;
+  if (!ALLOWED_POSITIONS.includes(next.position))       next.position = INIT_STATE.position;
+  if (!ALLOWED_DIRS.includes(next.dir))                 next.dir = INIT_STATE.dir;
+  if (typeof next.sidenavUser !== "boolean")            next.sidenavUser = INIT_STATE.sidenavUser;
+  if (!isPlainObj(next.customColors))                   next.customColors = {};
+  if (!isPlainObj(next.customStyles))                   next.customStyles = {};
   return next;
 };
+
+// ─── Context ─────────────────────────────────────────────────────────────────
+
 const LayoutContext = createContext(undefined);
+
 export const useLayoutContext = () => {
   const context = useContext(LayoutContext);
-  if (!context) {
-    throw new Error("useLayoutContext can only be used within LayoutProvider");
-  }
+  if (!context) throw new Error("useLayoutContext can only be used within LayoutProvider");
   return context;
 };
-export const LayoutProvider = ({
-  children
-}) => {
-  const getInitialSettings = useMemo(() => () => normalizeSettings({
-    ...INIT_STATE
-  }), []);
-  const [settings, setSettings] = useSessionStorage("__THEME_CONFIG__", getInitialSettings);
+
+export const LayoutProvider = ({ children }) => {
+  const getInitialSettings = useMemo(() => () => normalizeSettings({ ...INIT_STATE }), []);
+  const [settings, setSettings] = useLocalStorage("__THEME_CONFIG__", getInitialSettings);
   const isResponsiveUpdateRef = useRef(false);
   const lastUserSidenavSizeRef = useRef(settings.sidenavSize);
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
+
   const applyToDom = useCallback(next => {
     if (!document.body) return;
     const theme = next.theme === "system" ? getSystemTheme() : (next.theme || "light");
@@ -111,36 +227,75 @@ export const LayoutProvider = ({
     toggleAttribute("data-sidenav-size", next.sidenavSize);
     toggleAttribute("data-layout-width", next.width);
     toggleAttribute("dir", next.dir);
+    applyCustomColors(next.customColors);
+    applyCustomStyles(next.customStyles);
   }, []);
 
   const updateSettings = useCallback(_newSettings => {
     if (_newSettings?.sidenavSize && !isResponsiveUpdateRef.current) {
       lastUserSidenavSizeRef.current = _newSettings.sidenavSize;
     }
-    setSettings(prevSettings => {
-      const next = normalizeSettings({ ...prevSettings, ..._newSettings });
+    setSettings(prev => {
+      const next = normalizeSettings({ ...prev, ..._newSettings });
       applyToDom(next);
       return next;
     });
-    if (isResponsiveUpdateRef.current) {
-      isResponsiveUpdateRef.current = false;
-    }
+    if (isResponsiveUpdateRef.current) isResponsiveUpdateRef.current = false;
   }, [setSettings, applyToDom]);
+
   const toggleCustomizer = useCallback(() => {
-    setIsCustomizerOpen(prevValue => !prevValue);
+    setIsCustomizerOpen(prev => !prev);
   }, []);
+
+  // Colors
+  const updateCustomColors = useCallback(newColors => {
+    setSettings(prev => {
+      const merged = { ...(prev.customColors || {}), ...newColors };
+      Object.keys(merged).forEach(k => { if (!merged[k]) delete merged[k]; });
+      applyCustomColors(merged);
+      return { ...prev, customColors: merged };
+    });
+  }, [setSettings]);
+
+  const resetCustomColors = useCallback(() => {
+    applyCustomColors({});
+    setSettings(prev => ({ ...prev, customColors: {} }));
+  }, [setSettings]);
+
+  // Typography / Shape / Shadow
+  const updateCustomStyles = useCallback(newStyles => {
+    setSettings(prev => {
+      const merged = { ...(prev.customStyles || {}), ...newStyles };
+      // Remove null/empty string values
+      Object.keys(merged).forEach(k => {
+        if (merged[k] === null || merged[k] === "") delete merged[k];
+      });
+      applyCustomStyles(merged);
+      return { ...prev, customStyles: merged };
+    });
+  }, [setSettings]);
+
+  const resetCustomStyles = useCallback(() => {
+    applyCustomStyles({});
+    setSettings(prev => ({ ...prev, customStyles: {} }));
+  }, [setSettings]);
+
+  // Full reset
   const reset = useCallback(() => {
     const defaults = normalizeSettings(INIT_STATE);
     applyToDom(defaults);
     setSettings(defaults);
   }, [setSettings, applyToDom]);
+
+  // Normalize stale localStorage values on mount
   useEffect(() => {
-    setSettings(prevSettings => {
-      const normalized = normalizeSettings(prevSettings);
-      return shallowEqual(prevSettings, normalized) ? prevSettings : normalized;
+    setSettings(prev => {
+      const normalized = normalizeSettings(prev);
+      return shallowEqual(prev, normalized) ? prev : normalized;
     });
   }, [setSettings]);
-  // Apply theme/layout attributes to <html> synchronously so theme is correct from first paint
+
+  // Apply ALL settings synchronously on first paint (avoids flash)
   const effectiveTheme = settings.theme === "system" ? getSystemTheme() : settings.theme;
   useLayoutEffect(() => {
     if (!document.body) return;
@@ -154,13 +309,15 @@ export const LayoutProvider = ({
     toggleAttribute("data-sidenav-size", settings.sidenavSize);
     toggleAttribute("data-layout-width", settings.width);
     toggleAttribute("dir", settings.dir);
+    applyCustomColors(settings.customColors);
+    applyCustomStyles(settings.customStyles);
   }, [settings, effectiveTheme]);
 
   useEffect(() => {
     if (!settings.sidenavSize.includes("on-hover")) hideBackdrop();
   }, [settings.sidenavSize]);
 
-  // When theme is "system", react to OS preference changes
+  // System theme: react to OS changes
   useEffect(() => {
     if (settings.theme !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -168,6 +325,8 @@ export const LayoutProvider = ({
     mq.addEventListener("change", handleChange);
     return () => mq.removeEventListener("change", handleChange);
   }, [settings.theme]);
+
+  // Responsive sidenav size
   useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
@@ -175,43 +334,33 @@ export const LayoutProvider = ({
         if (width <= 768) {
           if (settings.sidenavSize !== "offcanvas") {
             isResponsiveUpdateRef.current = true;
-            updateSettings({
-              sidenavSize: "offcanvas"
-            });
+            updateSettings({ sidenavSize: "offcanvas" });
           }
         } else if (width <= 1140) {
           const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
           const desired = ["default", "condensed"].includes(preferred) ? "condensed" : preferred;
           if (settings.sidenavSize !== desired) {
             isResponsiveUpdateRef.current = true;
-            updateSettings({
-              sidenavSize: desired
-            });
+            updateSettings({ sidenavSize: desired });
           }
         } else {
           const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
           if (settings.sidenavSize !== preferred) {
             isResponsiveUpdateRef.current = true;
-            updateSettings({
-              sidenavSize: preferred
-            });
+            updateSettings({ sidenavSize: preferred });
           }
         }
       } else if (settings.orientation === "horizontal") {
         if (width < 992) {
           if (settings.sidenavSize !== "offcanvas") {
             isResponsiveUpdateRef.current = true;
-            updateSettings({
-              sidenavSize: "offcanvas"
-            });
+            updateSettings({ sidenavSize: "offcanvas" });
           }
         } else {
           const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
           if (settings.sidenavSize !== preferred) {
             isResponsiveUpdateRef.current = true;
-            updateSettings({
-              sidenavSize: preferred
-            });
+            updateSettings({ sidenavSize: preferred });
           }
         }
       }
@@ -219,17 +368,23 @@ export const LayoutProvider = ({
     handleResize();
     const debouncedResize = debounce(handleResize, 200);
     window.addEventListener("resize", debouncedResize);
-    return () => {
-      window.removeEventListener("resize", debouncedResize);
-    };
+    return () => window.removeEventListener("resize", debouncedResize);
   }, [settings.orientation, settings.sidenavSize, updateSettings]);
-  return <LayoutContext.Provider value={useMemo(() => ({
-    ...settings,
-    updateSettings,
-    isCustomizerOpen,
-    toggleCustomizer,
-    reset
-  }), [settings, updateSettings, isCustomizerOpen, toggleCustomizer, reset])}>
+
+  return (
+    <LayoutContext.Provider value={useMemo(() => ({
+      ...settings,
+      updateSettings,
+      updateCustomColors,
+      resetCustomColors,
+      updateCustomStyles,
+      resetCustomStyles,
+      isCustomizerOpen,
+      toggleCustomizer,
+      reset,
+    }), [settings, updateSettings, updateCustomColors, resetCustomColors,
+        updateCustomStyles, resetCustomStyles, isCustomizerOpen, toggleCustomizer, reset])}>
       {children}
-    </LayoutContext.Provider>;
+    </LayoutContext.Provider>
+  );
 };

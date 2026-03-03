@@ -18,6 +18,9 @@ export const routes = [
   }, {
   element: <MainLayout />,
   children: [{
+    path: '/settings/design-system',
+    Component: lazy(() => import('@admin/views/admin/apps/design-system'))
+  }, {
     path: '/apps/api-keys',
     Component: lazy(() => import('@admin/views/admin/apps/api-keys'))
   }, {

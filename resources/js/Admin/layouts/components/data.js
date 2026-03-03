@@ -548,6 +548,11 @@ export const menuItems = [{
     slug: "pages:apps-api-keys",
     label: "App Secrets"
   }, {
+    url: "/settings/design-system",
+    icon: "palette",
+    slug: "pages:settings-design-system",
+    label: "Design System"
+  }, {
     url: "/apps/code-editor",
     icon: "code",
     slug: "pages:apps-code-editor",

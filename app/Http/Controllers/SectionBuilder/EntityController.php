@@ -20,13 +20,25 @@ class EntityController extends Controller
     {
         // Auto-sync: Check for missing tables and create entities
         $this->autoSyncMissingTables();
-        
-        return response()->json(
-            SectionEntity::query()
-                ->select(['id', 'name', 'table_name', 'slug'])
-                ->orderBy('name')
-                ->get()
-        );
+
+        $entities = SectionEntity::query()
+            ->select(['id', 'name', 'table_name', 'slug', 'mcp_enabled', 'source_type', 'is_system'])
+            ->orderBy('name')
+            ->get();
+
+        // Attach live record count from each table
+        foreach ($entities as $entity) {
+            $entity->total_rows = null;
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable($entity->table_name)) {
+                    $entity->total_rows = \Illuminate\Support\Facades\DB::table($entity->table_name)->count();
+                }
+            } catch (\Throwable) {
+                // Fail softly
+            }
+        }
+
+        return response()->json($entities);
     }
     
     /**
