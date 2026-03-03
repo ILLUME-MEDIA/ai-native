@@ -16,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('ai:duties:execute')->everyFiveMinutes()->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
+        // Ensure CORS headers are added before any other middleware can short-circuit the request.
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
+
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,

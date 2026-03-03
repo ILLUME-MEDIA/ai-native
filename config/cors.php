@@ -21,16 +21,22 @@ return [
 
     'allowed_origins' => array_filter(array_map(
         'trim',
-        explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,https://javed.io'))
+        explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4173,https://javed.io'))
     )),
 
-    'allowed_origins_patterns' => ['#^https://.*\.illumemedia\.app$#'],
+    // Regex patterns for dynamic origins (e.g. all *.illumemedia.app subdomains).
+    // Override via CORS_ALLOWED_ORIGIN_PATTERNS env (comma-separated regex list).
+    'allowed_origins_patterns' => array_filter(array_map(
+        'trim',
+        explode(',', env('CORS_ALLOWED_ORIGIN_PATTERNS', '#^https://[a-z0-9-]+\.illumemedia\.app$#'))
+    )),
 
     'allowed_headers' => ['*'],
 
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    // Cache preflight for 2 hours so browsers don't re-check on every request.
+    'max_age' => 7200,
 
     'supports_credentials' => false,
 
