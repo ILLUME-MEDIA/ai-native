@@ -42,10 +42,10 @@ class SectionRelationController extends Controller
         return response()->json($relation, 201);
     }
 
-    public function update(Request $request, $entityId, $relationId)
+    public function update(Request $request, $entityId, $id)
     {
         $entity   = SectionEntity::findOrFail($entityId);
-        $relation = SectionRelation::where('parent_entity_id', $entity->id)->findOrFail($relationId);
+        $relation = SectionRelation::where('parent_entity_id', $entity->id)->findOrFail($id);
 
         $data = $request->validate([
             'child_entity_id'  => ['sometimes', 'integer', 'exists:section_entities,id'],
@@ -62,10 +62,10 @@ class SectionRelationController extends Controller
         return response()->json($relation);
     }
 
-    public function destroy($entityId, $relationId)
+    public function destroy($entityId, $id)
     {
         $entity   = SectionEntity::findOrFail($entityId);
-        $relation = SectionRelation::where('parent_entity_id', $entity->id)->findOrFail($relationId);
+        $relation = SectionRelation::where('parent_entity_id', $entity->id)->findOrFail($id);
         $relation->delete();
 
         return response()->json(['message' => 'Deleted.']);
