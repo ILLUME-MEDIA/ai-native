@@ -45,6 +45,7 @@ class SectionBuilderController extends Controller
         return view('admin', [
             'initialProps' => [
                 'entities' => $entities,
+                'user'     => $request->user()?->only(['id', 'name', 'email']),
             ],
         ]);
     }

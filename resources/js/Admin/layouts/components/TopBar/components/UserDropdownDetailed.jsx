@@ -1,8 +1,8 @@
 import User1 from "@admin/assets/images/users/user-1.jpg";
 import Icon from "@admin/components/wrappers/Icon";
-import { META_DATA } from "@admin/config/constants";
 import { Dropdown, DropdownDivider, DropdownHeader, DropdownItem, DropdownMenu, DropdownToggle } from "react-bootstrap";
 import { Fragment, useRef } from "react";
+import { useInitialProps } from "@admin/context/InitialPropsContext";
 const menuItems = [{
   id: "profile",
   label: "Profile",
@@ -37,20 +37,22 @@ const menuItems = [{
   isSemibold: true
 }];
 const UserDropdown = () => {
+  const { user } = useInitialProps();
   const logoutFormRef = useRef(null);
   
   const handleLogout = (e) => {
     e.preventDefault();
-    // Submit logout form
-    if (logoutFormRef.current) {
-      logoutFormRef.current.submit();
-    }
+    // Read token fresh at submit time (meta tag may be stale after login session regeneration)
+    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    const input = logoutFormRef.current?.querySelector('[name="_token"]');
+    if (input) input.value = token;
+    logoutFormRef.current?.submit();
   };
 
   return <div id="user-dropdown-detailed" className="topbar-item nav-user">
     {/* Hidden logout form */}
     <form ref={logoutFormRef} method="POST" action="/logout" style={{ display: 'none' }}>
-      <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''} />
+      <input type="hidden" name="_token" value="" />
     </form>
     
     <Dropdown>
@@ -58,15 +60,15 @@ const UserDropdown = () => {
         <img src={User1} width={32} className="rounded-circle  me-lg-2 d-flex" alt="user-image" />
         <div className="d-lg-flex align-items-center gap-1 d-none">
           <span>
-            <h5 className="my-0 lh-1 pro-username">{META_DATA.username}</h5>
-            <span className="fs-xs lh-1">Admin Head</span>
+            <h5 className="my-0 lh-1 pro-username">{user?.name || 'Admin'}</h5>
+            <span className="fs-xs lh-1">{user?.email || ''}</span>
           </span>
           <Icon icon="chevron-down" className="align-middle" />
         </div>
       </DropdownToggle>
       <DropdownMenu className="dropdown-menu-end">
         <DropdownHeader className="noti-title">
-          <h6 className="text-overflow m-0">Welcome back 👋!</h6>
+          <h6 className="text-overflow m-0">Welcome, {user?.name?.split(' ')[0] || 'Admin'}!</h6>
         </DropdownHeader>
 
         {menuItems.map(item => <Fragment key={item.id}>

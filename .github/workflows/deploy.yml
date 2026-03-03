@@ -63,5 +63,11 @@ jobs:
 
       # 5️⃣ Run migrations & storage:link on the live server
       - name: Run migrations & storage:link
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
-          curl -sf "${{ secrets.APP_URL }}/run-migrations" | jq . || echo "Post-deploy hook failed (non-fatal)"
+          if [ -z "$APP_URL" ]; then
+            echo "⚠️  APP_URL secret is not set — skipping migrations (non-fatal)"
+            exit 0
+          fi
+          curl -sfL --max-time 120 "$APP_URL/run-migrations" | jq . || echo "⚠️  Post-deploy hook failed (non-fatal)"

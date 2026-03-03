@@ -44,13 +44,9 @@ class AuthenticatedSessionController extends Controller
 
         // Always redirect to admin dashboard - frontend will handle full page reload
         $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
-        
-        // For Inertia requests, return redirect header so frontend can do full page reload
-        if ($request->header('X-Inertia')) {
-            return redirect($redirectUrl);
-        }
-        
-        return redirect($redirectUrl);
+
+        // Force a full page reload so the meta CSRF token is refreshed after session regeneration.
+        return Inertia::location($redirectUrl);
     }
 
     /**
