@@ -623,10 +623,18 @@ class DynamicEntityService
                 continue;
             }
 
-            $lookup[$field->column_name] = DB::table($relatedTable)
-                ->whereIn('id', $fkValues)
-                ->get()
-                ->keyBy('id');
+            // Support matching on a custom column (e.g. 'name') instead of always 'id'.
+            // Set relation_display_column on the field to the column name in the related table.
+            $matchColumn = $field->relation_display_column ?: 'id';
+
+            $fetched = DB::table($relatedTable)
+                ->whereIn($matchColumn, $fkValues)
+                ->get();
+
+            // Apply one level of nested enrichment (e.g. accounts → uploads)
+            $fetchedArr  = $fetched->map(fn($r) => (array) $r)->values()->all();
+            $enrichedArr = $this->enrichRelatedRecordsArray($fetchedArr, $field->relatedEntity);
+            $lookup[$field->column_name] = collect($enrichedArr)->keyBy($matchColumn);
         }
 
         $records = $records->map(function ($record) use ($belongsToFields, $lookup) {
@@ -742,11 +750,19 @@ class DynamicEntityService
                     continue;
                 }
 
-                $related = DB::table($relatedTable)->find($fkValue);
-                $record->setAttribute(
-                    $field->column_name . '_relation',
-                    $related ? (array) $related : null
-                );
+                // Support matching on a custom column (e.g. 'name') instead of always 'id'.
+                $matchColumn = $field->relation_display_column ?: 'id';
+                $related = $matchColumn === 'id'
+                    ? DB::table($relatedTable)->find($fkValue)
+                    : DB::table($relatedTable)->where($matchColumn, $fkValue)->first();
+
+                if ($related) {
+                    // Apply one level of nested enrichment (e.g. accounts → uploads)
+                    $enriched = $this->enrichRelatedRecordsArray([(array) $related], $field->relatedEntity);
+                    $record->setAttribute($field->column_name . '_relation', $enriched[0] ?? null);
+                } else {
+                    $record->setAttribute($field->column_name . '_relation', null);
+                }
             }
         }
 
@@ -825,6 +841,134 @@ class DynamicEntityService
                 $record->setAttribute($field->column_name, $child ? (array) $child : null);
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Apply one level of enrichment to a plain-array list of related records.
+     *
+     * Used after a belongsTo fetch so that the related record itself gets its
+     * own nested relations attached. Example:
+     *   article.author (text) → accounts (belongsTo by name)
+     *   accounts.id → uploads (hasMany via section_relations, FK=recordNum)
+     *
+     * @param  array[]        $records       Array of plain arrays (from DB::table)
+     * @param  SectionEntity  $relatedEntity The entity that "owns" these records
+     * @return array[]
+     */
+    protected function enrichRelatedRecordsArray(array $records, SectionEntity $relatedEntity): array
+    {
+        if (empty($records)) {
+            return $records;
+        }
+
+        $relatedEntity->loadMissing('fields.relatedEntity');
+
+        // ── belongsTo fields on the related entity ────────────────────────
+        $belongsToFields = $relatedEntity->fields->filter(
+            fn($f) => $f->related_entity_id && $f->relatedEntity && $f->relation_type === 'belongsTo'
+        );
+
+        foreach ($belongsToFields as $field) {
+            $fkValues = collect($records)->pluck($field->column_name)->filter()->unique()->values()->all();
+            if (empty($fkValues)) {
+                continue;
+            }
+
+            $nestedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($nestedTable)) {
+                continue;
+            }
+
+            $matchCol    = $field->relation_display_column ?: 'id';
+            $nestedLookup = DB::table($nestedTable)
+                ->whereIn($matchCol, $fkValues)
+                ->get()
+                ->keyBy($matchCol);
+
+            $records = array_map(function ($record) use ($field, $nestedLookup) {
+                $fkValue = $record[$field->column_name] ?? null;
+                if ($fkValue !== null && isset($nestedLookup[$fkValue])) {
+                    $record[$field->column_name . '_relation'] = (array) $nestedLookup[$fkValue];
+                }
+                return $record;
+            }, $records);
+        }
+
+        // ── hasMany / hasOne via section_relations on the related entity ──
+        $sectionRelations = SectionRelation::where('parent_entity_id', $relatedEntity->id)
+            ->whereIn('relation_type', ['hasMany', 'hasOne'])
+            ->with('childEntity')
+            ->get();
+
+        foreach ($sectionRelations as $rel) {
+            if (! $rel->childEntity) {
+                continue;
+            }
+
+            $childTable = $rel->childEntity->table_name;
+            if (! Schema::hasTable($childTable)) {
+                continue;
+            }
+
+            $foreignKey    = $rel->foreign_key ?: Str::singular($relatedEntity->table_name) . '_id';
+            $localKey      = $rel->local_key   ?: 'id';
+            $localKeyLower = strtolower($localKey);
+
+            $localValues = collect($records)->map(function ($r) use ($localKeyLower) {
+                foreach ($r as $col => $val) {
+                    if (strtolower($col) === $localKeyLower) {
+                        return $val;
+                    }
+                }
+                return null;
+            })->filter()->unique()->values()->all();
+
+            if (empty($localValues)) {
+                continue;
+            }
+
+            $allChildren = DB::table($childTable)->whereIn($foreignKey, $localValues)->get();
+            $fkLower     = strtolower($foreignKey);
+
+            $childrenByKey = [];
+            foreach ($allChildren as $child) {
+                $childArr = (array) $child;
+                $fkValue  = null;
+                foreach ($childArr as $col => $val) {
+                    if (strtolower($col) === $fkLower) {
+                        $fkValue = $val;
+                        break;
+                    }
+                }
+                $childrenByKey[(string) ($fkValue ?? '')][] = $childArr;
+            }
+
+            $attrName = $rel->relation_type === 'hasMany'
+                ? Str::camel($childTable)
+                : Str::camel(Str::singular($childTable));
+
+            $records = array_map(
+                function ($record) use ($rel, $childrenByKey, $localKeyLower, $attrName) {
+                    $localVal = null;
+                    foreach ($record as $col => $val) {
+                        if (strtolower($col) === $localKeyLower) {
+                            $localVal = $val;
+                            break;
+                        }
+                    }
+                    $children = $childrenByKey[(string) ($localVal ?? '')] ?? [];
+                    $record[$attrName] = $rel->relation_type === 'hasMany'
+                        ? array_values($children)
+                        : ($children[0] ?? null);
+                    return $record;
+                },
+                $records
+            );
+        }
+
+        return $records;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
