@@ -189,8 +189,9 @@ class YelpController extends Controller
             'started_at' => now(),
         ]);
 
-        // Run after the HTTP response is sent — no queue worker required.
-        dispatch(function () use ($job, $log) {
+        // Run after HTTP response is sent, directly in the terminating phase
+        // (not via queue — works regardless of QUEUE_CONNECTION setting).
+        app()->terminating(function () use ($job, $log) {
             try {
                 (new YelpSyncService())->run($job, $log);
             } catch (\Throwable $e) {
@@ -200,7 +201,7 @@ class YelpController extends Controller
                     'completed_at'  => now(),
                 ]);
             }
-        })->afterResponse();
+        });
 
         return response()->json($log->fresh());
     }
@@ -561,6 +562,9 @@ class YelpController extends Controller
     /** Return all SectionEntities for the job creation dropdown */
     public function entities(): JsonResponse
     {
+        // Sync fields from DB schema so dropdowns always have options (cached 5 min)
+        (new \App\Services\SchemaSyncService())->syncIfStale();
+
         $entities = SectionEntity::select('id', 'name', 'table_name')
             ->with('fields:id,entity_id,column_name,label,type')
             ->get();

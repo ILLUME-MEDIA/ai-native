@@ -20,6 +20,10 @@ class YelpSyncService
 {
     public function run(YelpJob $job, YelpJobLog $log): void
     {
+        // Disable PHP execution timeout — syncs can take many minutes for large tables.
+        set_time_limit(0);
+        ignore_user_abort(true);
+
         $log->update(['status' => 'running', 'started_at' => now()]);
 
         YelpRowLog::whereHas('log', fn ($q) => $q->where('started_at', '<', now()->subDays(2)))->delete();
