@@ -595,7 +595,18 @@ function JobsTab() {
                                 <Form.Group>
                                     <Form.Label>Table (Entity) <span className="text-danger">*</span></Form.Label>
                                     <Form.Select value={form.entity_id}
-                                        onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term:'', address:'', city:'', state:'', zip:'', country:'', country_value:'us' }, column_mapping: {} }))}>
+                                        onChange={e => {
+                                            const next = e.target.value;
+                                            setForm(f => ({
+                                                ...f,
+                                                entity_id: next,
+                                                // Only reset mappings when the entity actually changes
+                                                ...(next !== f.entity_id ? {
+                                                    search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
+                                                    column_mapping: {},
+                                                } : {}),
+                                            }));
+                                        }}>
                                         <option value="">— Select a table —</option>
                                         {entities.map(e => <option key={e.id} value={e.id}>{e.name} ({e.table_name})</option>)}
                                     </Form.Select>
@@ -646,30 +657,41 @@ function JobsTab() {
                                 <Col xs={12}><hr className="my-1" /></Col>
                                 <Col xs={12}>
                                     <Form.Label className="fw-semibold">Search Columns</Form.Label>
-                                    <p className="text-muted fs-sm mb-2">Map your table columns to Yelp search. Business Name is required.</p>
+                                    <p className="text-muted fs-sm mb-2">
+                                        Map your table columns to Yelp search fields.{' '}
+                                        <strong className="text-danger">Business Name is required</strong> — rows without it will be skipped.
+                                    </p>
                                     <Row className="g-2">
                                         {[
-                                            { key: 'term',    label: 'Business Name *' },
-                                            { key: 'address', label: 'Street Address' },
-                                            { key: 'city',    label: 'City' },
-                                            { key: 'state',   label: 'State / Province' },
-                                            { key: 'zip',     label: 'Zip Code' },
-                                            { key: 'country', label: 'Country Column (optional)' },
-                                        ].map(({ key, label }) => (
+                                            { key: 'term',    label: 'Business Name', required: true },
+                                            { key: 'address', label: 'Street Address', required: false },
+                                            { key: 'city',    label: 'City', required: false },
+                                            { key: 'state',   label: 'State / Province', required: false },
+                                            { key: 'zip',     label: 'Zip Code', required: false },
+                                            { key: 'country', label: 'Country Column', required: false },
+                                        ].map(({ key, label, required }) => (
                                             <Col key={key} md={4}>
-                                                <Form.Label className="fs-sm mb-1">{label}</Form.Label>
+                                                <Form.Label className="fs-sm mb-1">
+                                                    {label}{required && <span className="text-danger ms-1">*</span>}
+                                                </Form.Label>
                                                 <Form.Select size="sm"
                                                     value={form.search_columns[key] || ''}
+                                                    isInvalid={required && !form.search_columns[key]}
                                                     onChange={e => setForm(f => ({ ...f, search_columns: { ...f.search_columns, [key]: e.target.value } }))}>
                                                     <option value="">— none —</option>
                                                     {selEnt.fields?.map(f => (
                                                         <option key={f.id} value={f.column_name}>{f.label} ({f.column_name})</option>
                                                     ))}
                                                 </Form.Select>
+                                                {required && !form.search_columns[key] && (
+                                                    <Form.Control.Feedback type="invalid">Required for Yelp search</Form.Control.Feedback>
+                                                )}
                                             </Col>
                                         ))}
                                         <Col md={4}>
-                                            <Form.Label className="fs-sm mb-1">Country Value (manual)</Form.Label>
+                                            <Form.Label className="fs-sm mb-1">
+                                                Country Value (manual)
+                                            </Form.Label>
                                             <Form.Control
                                                 size="sm"
                                                 value={form.search_columns.country_value || ''}
@@ -678,7 +700,13 @@ function JobsTab() {
                                                     search_columns: { ...f.search_columns, country_value: e.target.value },
                                                 }))}
                                                 placeholder="us / usa / united states"
+                                                disabled={!!form.search_columns.country}
                                             />
+                                            <Form.Text className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                                {form.search_columns.country
+                                                    ? 'Ignored — Country Column is mapped (column takes priority)'
+                                                    : 'Used when no Country Column is selected. Default: us'}
+                                            </Form.Text>
                                         </Col>
                                     </Row>
                                 </Col>
@@ -726,7 +754,7 @@ function JobsTab() {
                     <ModalFooter>
                         <button type="button" className="btn btn-light" onClick={() => setShowModal(false)}>Cancel</button>
                         <button type="submit" className="btn btn-primary"
-                            disabled={saving || !form.name || !form.entity_id || Object.keys(form.column_mapping).length === 0}>
+                            disabled={saving || !form.name || !form.entity_id || !form.search_columns?.term || Object.keys(form.column_mapping).length === 0}>
                             {saving ? <><Spinner animation="border" size="sm" className="me-1" />Saving…</> : 'Save Job'}
                         </button>
                     </ModalFooter>

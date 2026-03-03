@@ -146,6 +146,7 @@ class YelpController extends Controller
             'name'              => ['sometimes', 'string', 'max:255'],
             'entity_id'         => ['sometimes', 'integer', 'exists:section_entities,id'],
             'search_columns'    => ['sometimes', 'array'],
+            'search_columns.term' => ['sometimes', 'required_with:search_columns', 'string'],
             'search_columns.country' => ['sometimes', 'nullable', 'string'],
             'search_columns.country_value' => ['sometimes', 'nullable', 'string'],
             'column_mapping'    => ['sometimes', 'array'],

@@ -138,12 +138,15 @@ class YelpSyncService
                         $location = implode(', ', array_filter([$address, $city, $state, $zip]));
 
                         if (!$term) {
+                            $termCol = $searchCols['term'] ?? null;
                             $skipped++;
                             YelpRowLog::create([
                                 'log_id' => $log->id,
                                 'row_id' => $rowId,
                                 'status' => 'skipped',
-                                'error' => 'Search term column is empty or not mapped.',
+                                'error' => $termCol
+                                    ? "Business Name column \"{$termCol}\" is empty for this row. Edit the job and ensure the column has data."
+                                    : 'Business Name column is not mapped. Edit the job and select a column for "Business Name".',
                             ]);
                             $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                             continue;
@@ -406,17 +409,20 @@ class YelpSyncService
 
     protected function resolveCountry(array $row, array $searchCols): ?string
     {
+        // If a country COLUMN is explicitly mapped, use it exclusively (per-row filtering).
+        // The manual country_value is intentionally ignored when a column is mapped.
+        $countryCol = $searchCols['country'] ?? null;
+        if ($countryCol) {
+            return $this->colValue($row, $countryCol);
+        }
+
+        // No column mapped — fall back to the manual country_value (treats all rows the same).
         $manualCountry = trim((string) ($searchCols['country_value'] ?? ''));
         if ($manualCountry !== '') {
             return $manualCountry;
         }
 
-        $country = $this->colValue($row, $searchCols['country'] ?? null);
-
-        if ($country) {
-            return $country;
-        }
-
+        // Last resort: detect a well-known column name present in the row itself.
         foreach (['country', 'country_code', 'country_name'] as $fallback) {
             if (array_key_exists($fallback, $row) && trim((string) $row[$fallback]) !== '') {
                 return trim((string) $row[$fallback]);
