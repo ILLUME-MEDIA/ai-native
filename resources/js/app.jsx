@@ -5,15 +5,42 @@ import { createInertiaApp, router } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createRoot } from 'react-dom/client';
 
-// Inertia v2 does NOT auto-send CSRF tokens. Attach X-CSRF-TOKEN from the
-// meta tag on every non-GET request so Laravel's VerifyCsrfToken passes.
+const getCookieValue = (name) => {
+    const prefix = `${name}=`;
+    const cookie = document.cookie
+        .split(';')
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+
+    if (!cookie) {
+        return '';
+    }
+
+    try {
+        return decodeURIComponent(cookie.slice(prefix.length));
+    } catch {
+        return cookie.slice(prefix.length);
+    }
+};
+
+// Attach CSRF headers on non-GET visits. Prefer XSRF-TOKEN cookie (works well
+// behind proxies/CDNs), while keeping meta token as a fallback.
 router.on('before', (event) => {
     const method = event.detail.visit.method?.toUpperCase() ?? 'GET';
     if (method !== 'GET') {
-        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
-        if (token) {
-            event.detail.visit.headers = { ...event.detail.visit.headers, 'X-CSRF-TOKEN': token };
+        const metaToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+        const xsrfToken = getCookieValue('XSRF-TOKEN');
+        const headers = { ...event.detail.visit.headers };
+
+        if (metaToken) {
+            headers['X-CSRF-TOKEN'] = metaToken;
         }
+
+        if (xsrfToken) {
+            headers['X-XSRF-TOKEN'] = xsrfToken;
+        }
+
+        event.detail.visit.headers = headers;
     }
 });
 

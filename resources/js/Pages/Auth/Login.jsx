@@ -12,9 +12,10 @@ export default function Login({ status, canResetPassword }) {
     const submit = (e) => {
         e.preventDefault();
         setProcessing(true);
+        const loginUrl = route('login', {}, false);
         // Use Inertia router.post — CSRF handled automatically via XSRF-TOKEN cookie.
         // Inertia::location() in the controller triggers window.location = '/admin/...' (full page load).
-        router.post(route('login'), formData, {
+        router.post(loginUrl, formData, {
             onFinish: () => setProcessing(false),
         });
     };
