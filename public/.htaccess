@@ -22,10 +22,23 @@
     RewriteCond %{REQUEST_URI} ^/storage/
     RewriteRule ^ index.php [L]
 
+    # Handle CORS preflight OPTIONS requests directly (no PHP overhead)
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule .* - [R=204,L]
+
     # Send Requests To Front Controller
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
+</IfModule>
+
+# CORS Headers — allow any *.illumemedia.app origin
+<IfModule mod_headers.c>
+    SetEnvIf Origin "(https://[a-z0-9-]+\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    Header always set Access-Control-Allow-Origin "%{CORS_ALLOW_ORIGIN}e" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-Token, Accept" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Max-Age "7200" env=CORS_ALLOW_ORIGIN
 </IfModule>
 
 # Security Headers
