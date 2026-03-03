@@ -29,22 +29,28 @@ const EMPTY = {
 const SectionRelations = ({ entityId, entities = [] }) => {
     const [relations, setRelations]   = useState([]);
     const [loading, setLoading]       = useState(true);
+    const [error, setError]           = useState(null);
     const [showModal, setShowModal]   = useState(false);
     const [saving, setSaving]         = useState(false);
+    const [saveError, setSaveError]   = useState(null);
     const [editingId, setEditingId]   = useState(null);
     const [form, setForm]             = useState(EMPTY);
 
     const load = async () => {
         setLoading(true);
+        setError(null);
         try {
             const { data } = await axios.get(`/api/section-builder/entities/${entityId}/relations`);
-            setRelations(data);
+            setRelations(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error('SectionRelations load error:', err);
+            setError(err?.response?.data?.message || err.message || 'Failed to load relations');
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => { load(); }, [entityId]);
+    useEffect(() => { if (entityId) load(); }, [entityId]);
 
     const openAdd = () => {
         setEditingId(null);
@@ -67,6 +73,7 @@ const SectionRelations = ({ entityId, entities = [] }) => {
 
     const handleSave = async () => {
         setSaving(true);
+        setSaveError(null);
         try {
             const payload = {
                 ...form,
@@ -82,8 +89,11 @@ const SectionRelations = ({ entityId, entities = [] }) => {
                 await axios.post(`/api/section-builder/entities/${entityId}/relations`, payload);
             }
 
-            await load();
             setShowModal(false);
+            await load();
+        } catch (err) {
+            console.error('SectionRelations save error:', err);
+            setSaveError(err?.response?.data?.message || err.message || 'Save failed');
         } finally {
             setSaving(false);
         }
@@ -91,8 +101,13 @@ const SectionRelations = ({ entityId, entities = [] }) => {
 
     const handleDelete = async (id) => {
         if (!confirm('Delete this relation?')) return;
-        await axios.delete(`/api/section-builder/entities/${entityId}/relations/${id}`);
-        setRelations((prev) => prev.filter((r) => r.id !== id));
+        try {
+            await axios.delete(`/api/section-builder/entities/${entityId}/relations/${id}`);
+            setRelations((prev) => prev.filter((r) => r.id !== id));
+        } catch (err) {
+            console.error('SectionRelations delete error:', err);
+            alert(err?.response?.data?.message || 'Delete failed');
+        }
     };
 
     const set = (key, val) => setForm((prev) => ({ ...prev, [key]: val }));
@@ -117,14 +132,26 @@ const SectionRelations = ({ entityId, entities = [] }) => {
                     <h5 className="mb-0">Section Relations</h5>
                     <small className="text-muted">hasMany/hasOne appear in single-record API. Use Field-based relations for list API.</small>
                 </div>
-                <Button variant="primary" size="sm" onClick={openAdd}>
-                    <Icon icon="plus" className="me-1" /> Add Relation
-                </Button>
+                <div className="d-flex gap-2">
+                    <Button variant="light" size="sm" onClick={load} disabled={loading} title="Refresh">
+                        <Icon icon="refresh" />
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={openAdd}>
+                        <Icon icon="plus" className="me-1" /> Add Relation
+                    </Button>
+                </div>
             </div>
+
+            {error && (
+                <div className="alert alert-danger py-2 px-3 mb-3">
+                    <strong>Error:</strong> {error}
+                    <Button variant="link" size="sm" className="p-0 ms-2" onClick={load}>Retry</Button>
+                </div>
+            )}
 
             {loading ? (
                 <div className="text-center py-4"><Spinner size="sm" /></div>
-            ) : relations.length === 0 ? (
+            ) : relations.length === 0 && !error ? (
                 <div className="text-center py-4 text-muted">No relations yet. Click "Add Relation" to start.</div>
             ) : (
                 <Table className="table-centered table-nowrap mb-0" hover>
@@ -175,11 +202,16 @@ const SectionRelations = ({ entityId, entities = [] }) => {
             )}
 
             {/* Add / Edit Modal */}
-            <Modal show={showModal} onHide={() => setShowModal(false)} centered>
+            <Modal show={showModal} onHide={() => { setShowModal(false); setSaveError(null); }} centered>
                 <Modal.Header closeButton>
                     <Modal.Title>{editingId ? 'Edit Relation' : 'Add Relation'}</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>
+                    {saveError && (
+                        <div className="alert alert-danger py-2 px-3 mb-3">
+                            <strong>Error:</strong> {saveError}
+                        </div>
+                    )}
                     <Row>
                         {/* Relation Type */}
                         <Col md={12}>
