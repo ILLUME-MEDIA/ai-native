@@ -559,15 +559,43 @@ class YelpController extends Controller
         return response()->json(YelpService::availableFields());
     }
 
-    /** Return all SectionEntities for the job creation dropdown */
+    /** Return all SectionEntities with their columns (always fresh from DB schema). */
     public function entities(): JsonResponse
     {
-        // Sync fields from DB schema so dropdowns always have options (cached 5 min)
-        (new \App\Services\SchemaSyncService())->syncIfStale();
+        $entities = SectionEntity::select('id', 'name', 'table_name')->get();
 
-        $entities = SectionEntity::select('id', 'name', 'table_name')
-            ->with('fields:id,entity_id,column_name,label,type')
-            ->get();
-        return response()->json($entities);
+        if ($entities->isEmpty()) {
+            return response()->json([]);
+        }
+
+        $db     = DB::connection()->getDatabaseName();
+        $tables = $entities->pluck('table_name')->toArray();
+        $in     = implode(',', array_fill(0, count($tables), '?'));
+
+        $rows = DB::select(
+            "SELECT table_name, column_name
+             FROM information_schema.columns
+             WHERE table_schema = ? AND table_name IN ({$in})
+             ORDER BY table_name, ordinal_position",
+            array_merge([$db], $tables)
+        );
+
+        $byTable = collect($rows)->groupBy(
+            fn ($c) => strtolower($c->table_name ?? $c->TABLE_NAME ?? '')
+        );
+
+        $result = $entities->map(function ($entity) use ($byTable) {
+            $cols   = $byTable->get(strtolower($entity->table_name), collect());
+            $fields = $cols->values()->map(fn ($c) => [
+                'id'          => null,
+                'entity_id'   => $entity->id,
+                'column_name' => $c->column_name ?? $c->COLUMN_NAME,
+                'label'       => ucwords(str_replace('_', ' ', $c->column_name ?? $c->COLUMN_NAME)),
+                'type'        => 'text',
+            ]);
+            return array_merge($entity->toArray(), ['fields' => $fields]);
+        });
+
+        return response()->json($result);
     }
 }

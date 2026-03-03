@@ -185,12 +185,10 @@ Route::get('/storage/{path}', function ($path) {
 })->where('path', '.*')->name('storage.serve');
 
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
-        'phpVersion' => PHP_VERSION,
-    ]);
+    if (auth()->check()) {
+        return redirect('/admin/dashboard/ecommerce');
+    }
+    return redirect()->route('login');
 });
 
 Route::get('/dashboard', function (Request $request) {

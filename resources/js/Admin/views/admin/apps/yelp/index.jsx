@@ -680,7 +680,7 @@ function JobsTab() {
                                                     onChange={e => setForm(f => ({ ...f, search_columns: { ...f.search_columns, [key]: e.target.value } }))}>
                                                     <option value="">— none —</option>
                                                     {selEnt.fields?.map(f => (
-                                                        <option key={f.id} value={f.column_name}>{f.label} ({f.column_name})</option>
+                                                        <option key={f.column_name} value={f.column_name}>{f.label} ({f.column_name})</option>
                                                     ))}
                                                 </Form.Select>
                                                 {required && !form.search_columns[key] && (
