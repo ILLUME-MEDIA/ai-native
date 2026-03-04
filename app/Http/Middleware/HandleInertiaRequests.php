@@ -34,6 +34,8 @@ class HandleInertiaRequests extends Middleware
             'auth' => [
                 'user' => $request->user(),
             ],
+            // Explicitly share CSRF token with frontend
+            'csrf_token' => $request->session()->token(),
         ];
     }
 }

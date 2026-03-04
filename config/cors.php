@@ -28,7 +28,7 @@ return [
     // Override via CORS_ALLOWED_ORIGIN_PATTERNS env (comma-separated regex list).
     'allowed_origins_patterns' => array_filter(array_map(
         'trim',
-        explode(',', env('CORS_ALLOWED_ORIGIN_PATTERNS', '#^https://[a-z0-9-]+\.illumemedia\.app$#'))
+        explode(',', env('CORS_ALLOWED_ORIGIN_PATTERNS', '#^https://([a-z0-9-]+\.)?illumemedia\.app$#,#^http://localhost(:[0-9]+)?$#'))
     )),
 
     'allowed_headers' => ['*'],
