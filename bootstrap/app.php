@@ -16,6 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('ai:duties:execute')->everyFiveMinutes()->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
+        // Trust all proxies — cPanel/Apache terminates HTTPS and forwards as HTTP internally.
+        // Without this, Laravel sees wrong scheme → session domain mismatch → 419 CSRF errors.
+        $middleware->trustProxies(at: '*');
+
         // Ensure CORS headers are added before any other middleware can short-circuit the request.
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
 

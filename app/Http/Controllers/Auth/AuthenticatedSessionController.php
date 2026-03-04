@@ -29,28 +29,23 @@ class AuthenticatedSessionController extends Controller
         return Inertia::render('Auth/Login', [
             'canResetPassword' => Route::has('password.request'),
             'status' => session('status'),
-            'csrf_token' => csrf_token(),
         ]);
     }
 
     /**
      * Handle an incoming authentication request.
      */
-    public function store(LoginRequest $request): RedirectResponse
+    public function store(LoginRequest $request): Response|RedirectResponse
     {
         $request->authenticate();
 
         $request->session()->regenerate();
 
-        // Always redirect to admin dashboard - frontend will handle full page reload
         $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
-        
-        // For Inertia requests, return redirect header so frontend can do full page reload
-        if ($request->header('X-Inertia')) {
-            return redirect($redirectUrl);
-        }
-        
-        return redirect($redirectUrl);
+
+        // Inertia::location() forces a full browser page reload instead of an XHR redirect.
+        // This ensures a fresh session cookie + CSRF token after login on cPanel/proxy setups.
+        return Inertia::location($redirectUrl);
     }
 
     /**
