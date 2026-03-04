@@ -19,10 +19,13 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => array_filter(array_map(
-        'trim',
-        explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4173,https://javed.io'))
-    )),
+    'allowed_origins' => array_merge(
+        ['http://localhost:3000'],  // Local frontend
+        array_filter(array_map(
+            'trim',
+            explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4173,https://javed.io,https://development.illumemedia.app'))
+        ))
+    ),
 
     // Regex patterns for dynamic origins (e.g. all *.illumemedia.app subdomains).
     // Override via CORS_ALLOWED_ORIGIN_PATTERNS env (comma-separated regex list).

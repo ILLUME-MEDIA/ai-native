@@ -24,6 +24,12 @@ const COLOR_DEFS = [
   { key: 'info',      label: 'Info',      desc: 'Informational messages, hints',       def: '#299cdb' },
 ];
 
+const STRUCTURAL_COLOR_DEFS = [
+  { key: 'sidenavBg', label: 'Sidebar BG',  desc: 'Sidebar panel background',  def: '#1e1f27', icon: 'ri-sidebar-fill' },
+  { key: 'topbarBg',  label: 'Topbar BG',   desc: 'Top navigation background',  def: '#ffffff', icon: 'ri-layout-top-fill' },
+  { key: 'bodyBg',    label: 'Page BG',     desc: 'Main content area background', def: '#f6f7fb', icon: 'ri-layout-fill' },
+];
+
 const FONT_OPTIONS = [
   { name: 'Nunito',            tag: 'default' },
   { name: 'Inter',             tag: 'google' },
@@ -123,6 +129,67 @@ const ColorsTab = () => {
                       const v = e.target.value;
                       if (v === '' || /^#[0-9a-fA-F]{0,6}$/.test(v))
                         updateCustomColors({ [key]: v.length === 7 ? v : (v.length < 7 ? '' : v) });
+                    }}
+                  />
+                  {val && (
+                    <button className="btn btn-outline-secondary" type="button"
+                      onClick={() => updateCustomColors({ [key]: '' })}>×</button>
+                  )}
+                </div>
+                {!val && <div className="text-muted mt-1" style={{ fontSize: 10 }}>Using skin default</div>}
+              </div>
+            </Col>
+          );
+        })}
+      </Row>
+
+      {/* Structural Colors */}
+      <hr className="my-4" />
+      <div className="d-flex justify-content-between align-items-start mb-3">
+        <div>
+          <h6 className="fw-bold mb-1">Structural Colors</h6>
+          <p className="text-muted small mb-0">
+            Override sidebar, topbar and page background colors individually. Works on top of any active skin.
+          </p>
+        </div>
+      </div>
+      <Row className="g-3 mb-4">
+        {STRUCTURAL_COLOR_DEFS.map(({ key, label, desc, def, icon }) => {
+          const val = customColors?.[key] || '';
+          return (
+            <Col md={4} key={key}>
+              <div className="border rounded p-3 h-100">
+                <div className="d-flex align-items-center gap-2 mb-2">
+                  <div className="rounded border flex-shrink-0 d-flex align-items-center justify-content-center" style={{
+                    width: 30, height: 30,
+                    backgroundColor: val || def,
+                    transition: 'background-color 0.2s',
+                  }}>
+                    <i className={`${icon} text-white`} style={{ fontSize: 12, opacity: 0.9 }} />
+                  </div>
+                  <div>
+                    <div className="fw-semibold" style={{ fontSize: 13 }}>{label}</div>
+                    <div className="text-muted" style={{ fontSize: 11 }}>{desc}</div>
+                  </div>
+                </div>
+                <div className="input-group input-group-sm">
+                  <input
+                    type="color"
+                    className="form-control form-control-color border-end-0"
+                    style={{ maxWidth: 38, padding: '2px 3px', cursor: 'pointer' }}
+                    value={val || def}
+                    onChange={e => updateCustomColors({ [key]: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    className="form-control font-monospace"
+                    placeholder={def}
+                    value={val}
+                    maxLength={7}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v === '' || /^#[0-9a-fA-F]{0,6}$/.test(v))
+                        updateCustomColors({ [key]: v.length === 7 ? v : '' });
                     }}
                   />
                   {val && (

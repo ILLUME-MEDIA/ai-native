@@ -48,12 +48,16 @@ class YelpSyncService
             return;
         }
 
-        $searchCols = $job->search_columns ?? [];
-        $columnMap = $job->column_mapping ?? [];
-        $mode = $job->mode ?? 'smart';
-        $autoMerge = (bool) ($job->auto_merge ?? false);
+        $searchCols   = $job->search_columns ?? [];
+        $columnMap    = $job->column_mapping ?? [];
+        $mode         = $job->mode ?? 'smart';
+        $autoMerge    = (bool) ($job->auto_merge ?? false);
         $resumeFromId = (int) ($job->last_processed_id ?? 0);
-        $maxCalls = (int) ($job->max_calls_per_run ?? 0);
+        $maxCalls     = (int) ($job->max_calls_per_run ?? 0);
+
+        // Fetch reviews only when that field is mapped (costs +1 API call per row)
+        $fetchReviews = array_key_exists('recent_reviews_json', $columnMap);
+        $callsPerRow  = $fetchReviews ? 4 : 3;
 
         $this->ensureYelpVerifiedColumn($entity, $tableName);
 
@@ -102,7 +106,9 @@ class YelpSyncService
                 &$newColumnsAdded,
                 &$account,
                 &$stopped,
-                &$limitHit
+                &$limitHit,
+                $fetchReviews,
+                $callsPerRow
             ) {
                 foreach ($rows as $row) {
                     if ($log->isStopRequested()) {
@@ -110,8 +116,8 @@ class YelpSyncService
                         return false;
                     }
 
-                    // Search + details + menu (best-effort) can use up to 3 calls per row.
-                    if ($maxCalls > 0 && ($callsMade + 3) > $maxCalls) {
+                    // search + details + menu [+ reviews] = 3 or 4 calls per row.
+                    if ($maxCalls > 0 && ($callsMade + $callsPerRow) > $maxCalls) {
                         $limitHit = true;
                         return false;
                     }
@@ -228,7 +234,15 @@ class YelpSyncService
                         }
 
                         $permanentlyClosed = (bool) ($details['is_closed'] ?? false);
-                        $extracted = $yelp->extractFields($details);
+
+                        $reviewsPayload = null;
+                        if ($fetchReviews) {
+                            $reviewsPayload = $yelp->getBusinessReviews($details['id']);
+                            $account->incrementUsage();
+                            $callsMade++;
+                        }
+
+                        $extracted = $yelp->extractFields($details, $reviewsPayload);
 
                         if ($permanentlyClosed) {
                             $this->updatePermanentlyClosedColumn(
@@ -372,10 +386,12 @@ class YelpSyncService
                     } catch (\Throwable $e) {
                         $failed++;
                         YelpRowLog::create([
-                            'log_id' => $log->id,
-                            'row_id' => $rowId,
-                            'status' => 'failed',
-                            'error' => $e->getMessage(),
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'search_term'     => isset($term) ? $term : null,
+                            'search_location' => isset($location) && $location !== '' ? $location : null,
+                            'status'          => 'failed',
+                            'error'           => $e->getMessage(),
                         ]);
                         $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                     }
@@ -789,12 +805,20 @@ class YelpSyncService
             ?? ['label' => ucwords(str_replace('_', ' ', $dbColumn)), 'type' => 'string'];
         $colType = $fieldInfo['type'];
 
-        Schema::table($tableName, function (Blueprint $table) use ($dbColumn, $colType) {
-            match ($colType) {
-                'boolean' => $table->boolean($dbColumn)->nullable()->after('id'),
-                'integer' => $table->unsignedInteger($dbColumn)->nullable()->after('id'),
-                'decimal' => $table->decimal($dbColumn, 10, 7)->nullable()->after('id'),
-                default => $table->string($dbColumn)->nullable()->after('id'),
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("SET SESSION sql_mode = ''");
+        }
+
+        // JSON fields need TEXT, not VARCHAR(191)
+        $isJsonCol = str_ends_with($dbColumn, '_json') || $colType === 'text';
+
+        Schema::table($tableName, function (Blueprint $table) use ($dbColumn, $colType, $isJsonCol) {
+            match (true) {
+                $colType === 'boolean' => $table->boolean($dbColumn)->nullable()->after('id'),
+                $colType === 'integer' => $table->unsignedInteger($dbColumn)->nullable()->after('id'),
+                $colType === 'decimal' => $table->decimal($dbColumn, 10, 7)->nullable()->after('id'),
+                $isJsonCol            => $table->text($dbColumn)->nullable()->after('id'),
+                default               => $table->string($dbColumn)->nullable()->after('id'),
             };
         });
 

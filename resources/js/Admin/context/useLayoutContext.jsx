@@ -58,8 +58,11 @@ const loadGoogleFont = fontFamily => {
 };
 
 // Apply semantic colors — covers both --bs-* (Bootstrap) and --theme-* (skin) prefixes
+// Also handles structural colors: sidenavBg, topbarBg, bodyBg
 export const applyCustomColors = colors => {
   const root = document.documentElement;
+
+  // Semantic colors
   const COLOR_KEYS = ["primary", "secondary", "success", "danger", "warning", "info"];
   COLOR_KEYS.forEach(key => {
     const val = colors?.[key];
@@ -74,6 +77,26 @@ export const applyCustomColors = colors => {
         .forEach(v => root.style.removeProperty(v));
     }
   });
+
+  // Structural colors
+  if (colors?.sidenavBg) {
+    root.style.setProperty("--theme-sidenav-bg", colors.sidenavBg);
+  } else {
+    root.style.removeProperty("--theme-sidenav-bg");
+  }
+  if (colors?.topbarBg) {
+    root.style.setProperty("--theme-topbar-bg", colors.topbarBg);
+  } else {
+    root.style.removeProperty("--theme-topbar-bg");
+  }
+  if (colors?.bodyBg) {
+    const rgb = hexToRgb(colors.bodyBg);
+    root.style.setProperty("--bs-body-bg", colors.bodyBg);
+    if (rgb) root.style.setProperty("--bs-body-bg-rgb", rgb);
+  } else {
+    root.style.removeProperty("--bs-body-bg");
+    root.style.removeProperty("--bs-body-bg-rgb");
+  }
 };
 
 // Apply typography, border-radius, shadows
@@ -210,13 +233,18 @@ export const useLayoutContext = () => {
 export const LayoutProvider = ({ children }) => {
   const getInitialSettings = useMemo(() => () => normalizeSettings({ ...INIT_STATE }), []);
   const [settings, setSettings] = useLocalStorage("__THEME_CONFIG__", getInitialSettings);
-  const isResponsiveUpdateRef = useRef(false);
-  const lastUserSidenavSizeRef = useRef(settings.sidenavSize);
+  // responsiveSidenavSize: transient override for small screens — never persisted to localStorage
+  const [responsiveSidenavSize, setResponsiveSidenavSize] = useState(null);
+  const responsiveSidenavSizeRef = useRef(null);
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
 
-  const applyToDom = useCallback(next => {
+  // Effective size = responsive override (if active) ?? user's saved preference
+  const effectiveSidenavSize = responsiveSidenavSize ?? settings.sidenavSize;
+
+  const applyToDom = useCallback((next, overrideSize) => {
     if (!document.body) return;
     const theme = next.theme === "system" ? getSystemTheme() : (next.theme || "light");
+    const sizeToApply = overrideSize ?? responsiveSidenavSizeRef.current ?? next.sidenavSize;
     toggleAttribute("data-layout", next.orientation === "horizontal" ? "topnav" : "");
     toggleAttribute("data-sidenav-user", String(next.sidenavUser));
     toggleAttribute("data-layout-position", next.position);
@@ -224,7 +252,7 @@ export const LayoutProvider = ({ children }) => {
     toggleAttribute("data-menu-color", next.sidenavColor);
     toggleAttribute("data-bs-theme", theme);
     toggleAttribute("data-skin", next.skin);
-    toggleAttribute("data-sidenav-size", next.sidenavSize);
+    toggleAttribute("data-sidenav-size", sizeToApply);
     toggleAttribute("data-layout-width", next.width);
     toggleAttribute("dir", next.dir);
     applyCustomColors(next.customColors);
@@ -232,15 +260,11 @@ export const LayoutProvider = ({ children }) => {
   }, []);
 
   const updateSettings = useCallback(_newSettings => {
-    if (_newSettings?.sidenavSize && !isResponsiveUpdateRef.current) {
-      lastUserSidenavSizeRef.current = _newSettings.sidenavSize;
-    }
     setSettings(prev => {
       const next = normalizeSettings({ ...prev, ..._newSettings });
       applyToDom(next);
       return next;
     });
-    if (isResponsiveUpdateRef.current) isResponsiveUpdateRef.current = false;
   }, [setSettings, applyToDom]);
 
   const toggleCustomizer = useCallback(() => {
@@ -306,16 +330,16 @@ export const LayoutProvider = ({ children }) => {
     toggleAttribute("data-menu-color", settings.sidenavColor);
     toggleAttribute("data-bs-theme", effectiveTheme);
     toggleAttribute("data-skin", settings.skin);
-    toggleAttribute("data-sidenav-size", settings.sidenavSize);
+    toggleAttribute("data-sidenav-size", effectiveSidenavSize);
     toggleAttribute("data-layout-width", settings.width);
     toggleAttribute("dir", settings.dir);
     applyCustomColors(settings.customColors);
     applyCustomStyles(settings.customStyles);
-  }, [settings, effectiveTheme]);
+  }, [settings, effectiveTheme, effectiveSidenavSize]);
 
   useEffect(() => {
-    if (!settings.sidenavSize.includes("on-hover")) hideBackdrop();
-  }, [settings.sidenavSize]);
+    if (!effectiveSidenavSize.includes("on-hover")) hideBackdrop();
+  }, [effectiveSidenavSize]);
 
   // System theme: react to OS changes
   useEffect(() => {
@@ -326,54 +350,30 @@ export const LayoutProvider = ({ children }) => {
     return () => mq.removeEventListener("change", handleChange);
   }, [settings.theme]);
 
-  // Responsive sidenav size
+  // Responsive sidenav: only force "offcanvas" on mobile — never overwrite user's saved preference
   useEffect(() => {
     const handleResize = () => {
-      const width = window.innerWidth;
-      if (settings.orientation === "vertical") {
-        if (width <= 768) {
-          if (settings.sidenavSize !== "offcanvas") {
-            isResponsiveUpdateRef.current = true;
-            updateSettings({ sidenavSize: "offcanvas" });
-          }
-        } else if (width <= 1140) {
-          const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
-          const desired = ["default", "condensed"].includes(preferred) ? "condensed" : preferred;
-          if (settings.sidenavSize !== desired) {
-            isResponsiveUpdateRef.current = true;
-            updateSettings({ sidenavSize: desired });
-          }
-        } else {
-          const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
-          if (settings.sidenavSize !== preferred) {
-            isResponsiveUpdateRef.current = true;
-            updateSettings({ sidenavSize: preferred });
-          }
-        }
-      } else if (settings.orientation === "horizontal") {
-        if (width < 992) {
-          if (settings.sidenavSize !== "offcanvas") {
-            isResponsiveUpdateRef.current = true;
-            updateSettings({ sidenavSize: "offcanvas" });
-          }
-        } else {
-          const preferred = lastUserSidenavSizeRef.current || INIT_STATE.sidenavSize;
-          if (settings.sidenavSize !== preferred) {
-            isResponsiveUpdateRef.current = true;
-            updateSettings({ sidenavSize: preferred });
-          }
-        }
+      const w = window.innerWidth;
+      const isMobile = settings.orientation === "vertical" ? w <= 768 : w < 992;
+      const next = isMobile ? "offcanvas" : null;
+      if (next !== responsiveSidenavSizeRef.current) {
+        responsiveSidenavSizeRef.current = next;
+        setResponsiveSidenavSize(next);
+        // Immediately update DOM attribute without touching localStorage
+        toggleAttribute("data-sidenav-size", next ?? settings.sidenavSize);
+        if (!next || !next.includes("on-hover")) hideBackdrop();
       }
     };
     handleResize();
     const debouncedResize = debounce(handleResize, 200);
     window.addEventListener("resize", debouncedResize);
     return () => window.removeEventListener("resize", debouncedResize);
-  }, [settings.orientation, settings.sidenavSize, updateSettings]);
+  }, [settings.orientation, settings.sidenavSize]);
 
   return (
     <LayoutContext.Provider value={useMemo(() => ({
       ...settings,
+      sidenavSize: effectiveSidenavSize, // expose effective (responsive-aware) size
       updateSettings,
       updateCustomColors,
       resetCustomColors,
@@ -382,7 +382,7 @@ export const LayoutProvider = ({ children }) => {
       isCustomizerOpen,
       toggleCustomizer,
       reset,
-    }), [settings, updateSettings, updateCustomColors, resetCustomColors,
+    }), [settings, effectiveSidenavSize, updateSettings, updateCustomColors, resetCustomColors,
         updateCustomStyles, resetCustomStyles, isCustomizerOpen, toggleCustomizer, reset])}>
       {children}
     </LayoutContext.Provider>
