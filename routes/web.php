@@ -138,6 +138,14 @@ Route::get('/run-migrations', function () {
             }
         }
 
+        // Clear OPcache so newly deployed PHP files take effect immediately.
+        $opcacheCleared = function_exists('opcache_reset') ? opcache_reset() : false;
+
+        // Clear Laravel config/route/view caches.
+        Artisan::call('config:clear');
+        Artisan::call('route:clear');
+        Artisan::call('view:clear');
+
         return response()->json([
             'message' => 'Migrations + Seeders completed.',
             'migrate_output' => $allOutput,
@@ -148,6 +156,7 @@ Route::get('/run-migrations', function () {
             'storage_link_output' => $storageLinkOutput,
             'seeders' => $seederOutput,
             'seeder_errors' => $seederErrors,
+            'opcache_reset' => $opcacheCleared,
         ]);
     } catch (\Throwable $e) {
         $code = method_exists($e, 'getCode') ? $e->getCode() : 0;
