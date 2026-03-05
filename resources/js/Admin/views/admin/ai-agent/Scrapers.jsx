@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, InputGroup, Tabs, Tab, ListGroup } from 'react-bootstrap';
+import { useNavigate } from 'react-router';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
@@ -111,6 +112,7 @@ const VideoThumb = ({ video }) => {
 };
 
 const Scrapers = () => {
+    const navigate = useNavigate();
     /* ─── Playlists & Platforms state ─── */
     const [playlists, setPlaylists] = useState([]);
     const [platforms, setPlatforms] = useState([]);
@@ -1019,6 +1021,7 @@ const Scrapers = () => {
     return (
         <>
             <PageBreadcrumb title="YouTube Scrapers" subtitle="Global AI System" />
+
             <Row>
                 {/* ─── Playlists Card ─── */}
                 <Col md={12}>
@@ -1026,6 +1029,9 @@ const Scrapers = () => {
                         <Card.Header className="d-flex justify-content-between align-items-center">
                             <Card.Title as="h5">Monitored Playlists</Card.Title>
                             <div className="d-flex gap-2">
+                                <Button variant="soft-secondary" size="sm" onClick={() => navigate('/ai/platform-genres')}>
+                                    <Icon icon="tags" className="icon-xs me-1" /> Platform Genres
+                                </Button>
                                 <Button variant="soft-danger" size="sm" onClick={() => { setYtSearchQuery(''); setYtSearchResults([]); setSelectedYtItems(new Set()); setShowYtSearchModal(true); }}>
                                     <Icon icon="search" className="icon-xs me-1" /> YouTube Search
                                 </Button>

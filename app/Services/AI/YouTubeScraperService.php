@@ -2016,7 +2016,7 @@ class YouTubeScraperService
     /**
      * Call Mistral API for chat completion (no default model in config; use mistral-small for tags/genres).
      */
-    protected function callMistral(string $userMessage, string $model = 'mistral-small'): ?string
+    protected function callMistral(string $userMessage, string $model = 'mistral-small', string $systemMessage = '', float $temperature = 0.7): ?string
     {
         $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
         if (empty($key)) {
@@ -2024,17 +2024,22 @@ class YouTubeScraperService
         }
 
         // Strip invalid UTF-8 bytes (e.g. from YouTube titles/descriptions) to prevent json_encode failure
-        $userMessage = (string) iconv('UTF-8', 'UTF-8//IGNORE', $userMessage);
+        $userMessage   = (string) iconv('UTF-8', 'UTF-8//IGNORE', $userMessage);
+        $systemMessage = (string) iconv('UTF-8', 'UTF-8//IGNORE', $systemMessage);
+
+        $messages = [];
+        if (!empty($systemMessage)) {
+            $messages[] = ['role' => 'system', 'content' => $systemMessage];
+        }
+        $messages[] = ['role' => 'user', 'content' => $userMessage];
 
         $response = Http::withHeaders([
             'Content-Type' => 'application/json',
             'Authorization' => 'Bearer ' . trim($key),
         ])->post('https://api.mistral.ai/v1/chat/completions', [
-            'model' => $model,
-            'messages' => [
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-            'temperature' => 0.7,
+            'model'       => $model,
+            'messages'    => $messages,
+            'temperature' => $temperature,
         ]);
 
         if (!$response->successful()) {
@@ -2102,7 +2107,7 @@ class YouTubeScraperService
 
     public function generateTagsOnly(string $title, string $description = ''): array
     {
-        if (empty($title) && empty($description)) {
+        if (empty($title)) {
             return [];
         }
 
@@ -2112,61 +2117,70 @@ class YouTubeScraperService
             return $this->extractStructuredTags($title, $description);
         }
 
+        // Words that are too generic to be useful as tags
+        $commonBanned = [
+            'video', 'videos', 'content', 'media', 'show', 'entertainment', 'general',
+            'channel', 'watch', 'new', 'best', 'top', 'great', 'good', 'amazing', 'awesome',
+            'latest', 'today', 'now', 'free', 'online', 'full', 'live', 'real', 'true',
+            'original', 'official', 'the', 'and', 'for', 'with', 'from', 'this', 'that',
+            'etc', 'more', 'other', 'some', 'any', 'all', 'very', 'just', 'also', 'only',
+            'your', 'our', 'their', 'its', 'his', 'her', 'about', 'into', 'over', 'after',
+            'generate', 'title', 'description', 'tags', 'tag', 'response', 'example',
+            'here', 'below', 'above', 'please', 'note', 'important',
+        ];
+
         try {
-            $prompt = "Given the following YouTube video title and description, generate exactly 7 single-word tags for this video, separated by a vertical bar (|).
+            $systemMessage = "You are a precise content tagging assistant. Your ONLY job is to output exactly 7 single-word tags separated by | with zero additional text. No explanations. No punctuation. No numbering. No 'etc'. Just 7 words separated by |.";
+
+            $userMessage = "Video title: \"{$title}\"
+
+Output 7 single-word tags that describe this specific video's topic, niche, and theme. Base tags ONLY on the title words and their meaning.
 
 Rules:
-- EVERY tag must be a SINGLE word only (no spaces, no hyphens between words).
-- DO NOT use generic words like 'video', 'content', 'media', 'the'.
-- Tags should cover: content type, topic, format, mood, and audience.
-- Good examples: Music | Gaming | Education | Interview | Podcast | Comedy | Motivation | Fitness | Tutorial | Documentary | Spirituality | Leadership | Health | Sports | Entertainment
-- Bad examples: 'how to', 'life lessons', 'relationship advice', 'CEO podcast' (multi-word — NOT allowed)
+- Single words only — no spaces, no hyphens, no commas
+- Must be SPECIFIC to this content (not generic filler words)
+- Never output: video, content, media, show, entertainment, general, etc, more, other, watch, channel
+- Extract meaning from the actual title words
 
-Title: {$title}
-Description: " . substr($description, 0, 500) . "
+Output format (exactly this, nothing else):
+Word1 | Word2 | Word3 | Word4 | Word5 | Word6 | Word7";
 
-IMPORTANT: Respond with ONLY 7 single-word tags separated by | — no explanations, no numbers, no extra text.
+            $content = $this->callMistral($userMessage, 'mistral-large-latest', $systemMessage, 0.2);
 
-Tags:";
-
-            $content = $this->callMistral($prompt, 'mistral-large-latest');
             if ($content) {
                 $cleanContent = trim($content);
 
-                // Remove any prompt text that might be included
-                if (stripos($cleanContent, 'Title:') !== false || stripos($cleanContent, 'Description:') !== false) {
-                    $tagsIndex = strripos($cleanContent, 'Tags:');
-                    if ($tagsIndex !== false) {
-                        $cleanContent = trim(substr($cleanContent, $tagsIndex + 5));
+                // Strip any lines that look like explanations (keep only first line with |)
+                $lines = explode("\n", $cleanContent);
+                foreach ($lines as $line) {
+                    if (strpos($line, '|') !== false) {
+                        $cleanContent = $line;
+                        break;
                     }
                 }
 
-                // Remove any explanatory text after newline
-                if (strpos($cleanContent, "\n") !== false) {
-                    $cleanContent = trim(explode("\n", $cleanContent)[0]);
-                }
-
-                // Split on | and filter
                 $newTags = array_map('trim', explode('|', $cleanContent));
-                $newTags = array_filter($newTags, function($tag) {
-                    // Strictly single word only — no spaces allowed
-                    return strlen($tag) > 1 && strlen($tag) < 30 &&
-                           str_word_count($tag) === 1 &&
-                           strpos($tag, ' ') === false &&
-                           !stripos($tag, 'generate') &&
-                           !stripos($tag, 'title:') &&
-                           !stripos($tag, 'description:');
+                $newTags = array_filter($newTags, function($tag) use ($commonBanned) {
+                    $tagLower = strtolower(trim($tag));
+                    // Must be single word, reasonable length, not banned, not a number
+                    return strlen($tag) > 1
+                        && strlen($tag) < 30
+                        && str_word_count($tag) === 1
+                        && strpos($tag, ' ') === false
+                        && !is_numeric($tag)
+                        && !in_array($tagLower, $commonBanned)
+                        && preg_match('/^[a-zA-Z\x{0080}-\x{FFFF}]+$/u', $tag);
                 });
 
-                // Accept 1-7 clean tags; only fallback if nothing usable returned
+                $newTags = array_values(array_slice($newTags, 0, 7));
+
                 if (count($newTags) >= 1) {
-                    return array_values(array_slice($newTags, 0, 7));
+                    return $newTags;
                 }
 
-                Log::warning("No valid tags from AI response, using fallback", ['tags' => $newTags]);
+                Log::warning("No valid tags from AI response, using title-based fallback", ['raw' => $content]);
             }
 
-            // Fallback to structured extraction
             return $this->extractStructuredTags($title, $description);
         } catch (\Exception $e) {
             Log::error("Error generating tags: " . $e->getMessage());
@@ -2260,7 +2274,7 @@ Common genres include: Education, Entertainment, Music, Gaming, Technology, Come
 
 Return only the genres as a comma-separated list, without explanations or additional text. Maximum 5 genres.";
 
-            $content = $this->callMistral($prompt, 'mistral-large-latest');
+            $content = $this->callMistral($prompt, 'mistral-large-latest', '', 0.3);
             if ($content) {
                 $genres = array_map('trim', explode(',', $content));
                 $genres = array_filter($genres, function($genre) {

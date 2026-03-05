@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\EnrichPlaylistJob;
 use App\Models\AiDuty;
 use App\Models\AiPlatform;
+use App\Models\PlatformGenre;
 use App\Models\YoutubePlaylist;
 use App\Models\YoutubeVideo;
 use App\Models\YoutubePlatformPush;
@@ -808,12 +809,13 @@ IMPORTANT:
      */
     public function getPlatformGenres()
     {
-        $platformGenres = config('platform_genres');
+        $rows = PlatformGenre::orderBy('sort_order')->orderBy('platform_name')->get();
+        $platformGenres = $rows->pluck('genres', 'platform_name')->toArray();
 
         return response()->json([
-            'status' => 'success',
+            'status'    => 'success',
             'platforms' => array_keys($platformGenres),
-            'genres' => $platformGenres,
+            'genres'    => $platformGenres,
         ]);
     }
 
