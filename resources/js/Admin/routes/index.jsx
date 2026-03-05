@@ -333,6 +333,12 @@ export const routes = [
     path: '/apps/yelp',
     Component: lazy(() => import('@admin/views/admin/apps/yelp'))
   }, {
+    path: '/apps/cal',
+    Component: lazy(() => import('@admin/views/admin/apps/cal'))
+  }, {
+    path: '/apps/kanban',
+    Component: lazy(() => import('@admin/views/admin/apps/kanban'))
+  }, {
     path: '/apps/otp-auth',
     Component: lazy(() => import('@admin/views/admin/apps/otp-auth'))
   }, {
@@ -344,6 +350,9 @@ export const routes = [
   }, {
     path: '/ai/platforms',
     Component: lazy(() => import('@admin/views/admin/ai-agent/Platforms'))
+  }, {
+    path: '/ai/platform-genres',
+    Component: lazy(() => import('@admin/views/admin/ai-agent/PlatformGenres'))
   }, {
     path: '/ai/chat',
     Component: lazy(() => import('@admin/views/admin/ai-agent/Chat'))

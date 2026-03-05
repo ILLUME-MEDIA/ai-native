@@ -28,6 +28,7 @@ function getPageNumbers(pageIndex, pageCount) {
 }
 
 const TablePagination = ({
+  // direct props
   totalItems,
   start,
   end,
@@ -40,16 +41,40 @@ const TablePagination = ({
   setPageIndex,
   nextPage,
   canNextPage,
-  // per-page
   perPage,
   onPerPageChange,
   perPageOptions = [15, 25, 50, 100],
+  // tanstack table instance shortcut
+  table,
+  className = '',
 }) => {
+  // Allow passing a tanstack `table` instance directly
+  if (table) {
+    const state      = table.getState().pagination;
+    const filtered   = table.getFilteredRowModel().rows.length;
+    const _start     = filtered === 0 ? 0 : state.pageIndex * state.pageSize + 1;
+    const _end       = Math.min((state.pageIndex + 1) * state.pageSize, filtered);
+    totalItems       = filtered;
+    start            = _start;
+    end              = _end;
+    showInfo         = true;
+    previousPage     = () => table.previousPage();
+    canPreviousPage  = table.getCanPreviousPage();
+    pageCount        = table.getPageCount();
+    pageIndex        = state.pageIndex;
+    setPageIndex     = (p) => table.setPageIndex(p);
+    nextPage         = () => table.nextPage();
+    canNextPage      = table.getCanNextPage();
+    perPage          = state.pageSize;
+    onPerPageChange  = (n) => table.setPageSize(n);
+  }
+
   const pages = getPageNumbers(pageIndex, pageCount);
 
   return (
-    <Row className={clsx('align-items-center text-center text-sm-start g-2',
-      showInfo ? 'justify-content-between' : 'justify-content-end')}>
+    <Row className={clsx('align-items-center text-center text-sm-start g-2 px-3 py-2',
+      showInfo ? 'justify-content-between' : 'justify-content-end',
+      className)}>
 
       {showInfo && (
         <Col sm="auto">

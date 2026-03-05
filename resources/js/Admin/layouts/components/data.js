@@ -583,6 +583,16 @@ export const menuItems = [{
     slug: "pages:yelp",
     label: "Yelp Integration"
   }, {
+    icon: "calendar-event",
+    url: "/apps/cal",
+    slug: "pages:cal",
+    label: "Cal.com Meetings"
+  }, {
+    icon: "layout-kanban",
+    url: "/apps/kanban",
+    slug: "pages:kanban",
+    label: "Kanban Board"
+  }, {
     icon: "mail-check",
     url: "/apps/otp-auth",
     slug: "pages:otp-auth",

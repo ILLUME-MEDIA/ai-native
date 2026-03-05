@@ -40,6 +40,13 @@ use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
 use App\Http\Controllers\Admin\AppSecretsController;
+use App\Http\Controllers\Admin\Cal\CalPlatformsController;
+use App\Http\Controllers\Admin\Cal\CalMeetingsController;
+use App\Http\Controllers\Admin\KanbanController;
+use App\Http\Controllers\Admin\OpenorgUsersController;
+use App\Http\Controllers\Admin\PlatformUsersController;
+use App\Http\Controllers\Admin\PlatformGenresController;
+use App\Http\Controllers\Webhook\CalWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -52,6 +59,80 @@ use Illuminate\Support\Facades\Route;
 | be assigned to the "api" middleware group. Make something great!
 |
 */
+
+// ── Cal.com Webhooks (public — no auth, signature verified in controller) ──────
+Route::post('/webhooks/cal/{slug}', [CalWebhookController::class, 'handle'])
+    ->middleware('throttle:120,1');
+
+// ── Cal.com Integration ────────────────────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('admin/cal')->group(function () {
+    // Platforms
+    Route::get('platforms',                          [CalPlatformsController::class, 'index']);
+    Route::post('platforms',                         [CalPlatformsController::class, 'store']);
+    Route::put('platforms/{calPlatform}',            [CalPlatformsController::class, 'update']);
+    Route::delete('platforms/{calPlatform}',         [CalPlatformsController::class, 'destroy']);
+    Route::post('platforms/{calPlatform}/reveal-key',[CalPlatformsController::class, 'revealApiKey']);
+    Route::post('platforms/{calPlatform}/sync',      [CalPlatformsController::class, 'sync']);
+    Route::post('platforms/{calPlatform}/test',      [CalPlatformsController::class, 'testConnection']);
+    // Meetings
+    Route::get('meetings',                           [CalMeetingsController::class, 'index']);
+    Route::post('meetings',                          [CalMeetingsController::class, 'store']);
+    Route::put('meetings/{calMeeting}',              [CalMeetingsController::class, 'update']);
+    Route::delete('meetings/{calMeeting}',           [CalMeetingsController::class, 'destroy']);
+    Route::post('meetings/{calMeeting}/cancel',      [CalMeetingsController::class, 'cancelViaApi']);
+});
+
+// ── Platform Genres ────────────────────────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('admin/platform-genres')->group(function () {
+    Route::get('/',                                    [PlatformGenresController::class, 'index']);
+    Route::post('/',                                   [PlatformGenresController::class, 'store']);
+    Route::post('/reorder',                            [PlatformGenresController::class, 'reorder']);
+    Route::put('/{platformGenre}',                     [PlatformGenresController::class, 'update']);
+    Route::delete('/{platformGenre}',                  [PlatformGenresController::class, 'destroy']);
+    Route::post('/{platformGenre}/genres',             [PlatformGenresController::class, 'addGenre']);
+    Route::delete('/{platformGenre}/genres',           [PlatformGenresController::class, 'removeGenre']);
+});
+
+// ── OpenOrg Users (legacy — platform-scoped, openorg_users table only) ────────
+Route::middleware('auth:sanctum')->prefix('admin/openorg-users')->group(function () {
+    Route::get('/',                        [OpenorgUsersController::class, 'index']);
+    Route::post('/',                       [OpenorgUsersController::class, 'store']);
+    Route::put('/{openorgUser}',           [OpenorgUsersController::class, 'update']);
+    Route::delete('/{openorgUser}',        [OpenorgUsersController::class, 'destroy']);
+});
+
+// ── Platform Users (dynamic — uses each platform's configured users table) ─────
+// Works with openorg_users (default) OR any Section Builder entity table.
+// Usage: GET  /api/admin/platforms/{platform}/users
+//        POST /api/admin/platforms/{platform}/users
+//        PUT  /api/admin/platforms/{platform}/users/{userId}
+//        DELETE /api/admin/platforms/{platform}/users/{userId}
+Route::middleware('auth:sanctum')->prefix('admin/platforms/{platform}')->group(function () {
+    Route::get('users',           [PlatformUsersController::class, 'index']);
+    Route::post('users',          [PlatformUsersController::class, 'store']);
+    Route::put('users/{userId}',  [PlatformUsersController::class, 'update']);
+    Route::delete('users/{userId}',[PlatformUsersController::class, 'destroy']);
+});
+
+// ── Kanban ─────────────────────────────────────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('admin/kanban')->group(function () {
+    // Boards
+    Route::get('boards',                             [KanbanController::class, 'boardsIndex']);
+    Route::post('boards',                            [KanbanController::class, 'boardsStore']);
+    Route::get('boards/{board}',                     [KanbanController::class, 'boardsShow']);
+    Route::put('boards/{board}',                     [KanbanController::class, 'boardsUpdate']);
+    Route::delete('boards/{board}',                  [KanbanController::class, 'boardsDestroy']);
+    Route::post('boards/{board}/columns',            [KanbanController::class, 'columnsStore']);
+    Route::post('boards/{board}/columns/reorder',    [KanbanController::class, 'columnsReorder']);
+    // Columns
+    Route::put('columns/{column}',                   [KanbanController::class, 'columnsUpdate']);
+    Route::delete('columns/{column}',                [KanbanController::class, 'columnsDestroy']);
+    // Cards
+    Route::post('columns/{column}/cards',            [KanbanController::class, 'cardsStore']);
+    Route::put('cards/{card}',                       [KanbanController::class, 'cardsUpdate']);
+    Route::delete('cards/{card}',                    [KanbanController::class, 'cardsDestroy']);
+    Route::patch('cards/{card}/move',                [KanbanController::class, 'cardsMove']);
+});
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
 Route::middleware('auth:sanctum')->prefix('admin/app-secrets')->group(function () {

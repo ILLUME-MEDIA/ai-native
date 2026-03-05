@@ -394,6 +394,47 @@ tags:
       5. Pick up: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "picked_up" }`
       6. Deliver: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "delivered" }`
 
+  - name: Cal.com
+    description: |
+      **Cal.com Integration** — multi-platform booking management.
+      Each platform has its own encrypted API key, webhook secret, and slug.
+
+      ### Webhook Setup
+      1. Create a platform and copy the `webhook_url`
+      2. Paste it into your Cal.com dashboard → Webhooks → Add Webhook
+      3. Set the webhook secret — must match the platform's `webhook_secret`
+      4. Events handled: BOOKING_CREATED, BOOKING_CONFIRMED, BOOKING_RESCHEDULED, BOOKING_CANCELLED, MEETING_ENDED
+
+      ### Sync
+      Use `POST /api/admin/cal/platforms/{id}/sync` to pull existing bookings from Cal.com API.
+
+  - name: OpenOrg Users
+    description: |
+      **Platform User Directory** — manage users per Cal.com platform.
+
+      Users are scoped to a `cal_platform_id` (e.g., "openorg", "xdstudio").
+      Once added, users can be assigned to meetings and kanban cards.
+      Email must be unique within a platform.
+
+  - name: Kanban
+    description: |
+      **Kanban Board** — multi-board task management with drag-and-drop.
+
+      ### Drag and Drop
+      When a card is dragged to a different column the frontend calls:
+      `PATCH /api/admin/kanban/cards/{id}/move` with `{ column_id, position }`
+
+      The frontend applies an optimistic update immediately and rolls back on error.
+
+      ### Platform Link
+      A board can be linked to a `cal_platform_id`. When a meeting is created for
+      that platform, a **read-only meeting card** is auto-created in the board's first column.
+      Meeting cards can only be moved between columns (drag & drop). Edit is disabled.
+
+      ### Board structure
+      Board → Columns (ordered by position) → Cards (ordered by position)
+      Creating a board auto-creates 4 default columns: To Do, In Progress, Review, Done.
+
 paths:
 
   # ── AUTH ───────────────────────────────────────────────────────────────────
@@ -5954,6 +5995,634 @@ paths:
 
 # ── COMPONENTS ────────────────────────────────────────────────────────────────
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Cal.com Integration
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  /api/webhooks/cal/{slug}:
+    post:
+      tags: [Cal.com]
+      summary: Receive Cal.com webhook event
+      description: |
+        Public — no auth required. Signature verified via HMAC-SHA256 using the
+        platform webhook_secret (`X-Cal-Signature-256` header).
+        Handles: BOOKING_CREATED, BOOKING_CONFIRMED, BOOKING_RESCHEDULED,
+        BOOKING_CANCELLED, MEETING_ENDED.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, example: my-platform }
+        - name: X-Cal-Signature-256
+          in: header
+          required: true
+          schema: { type: string }
+          description: HMAC-SHA256 of raw request body with webhook_secret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                triggerEvent: { type: string, example: BOOKING_CREATED }
+                payload:
+                  type: object
+                  properties:
+                    uid: { type: string }
+                    title: { type: string }
+                    startTime: { type: string, format: date-time }
+                    endTime: { type: string, format: date-time }
+                    status: { type: string }
+                    attendees:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          email: { type: string }
+                          timeZone: { type: string }
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "401":
+          description: Invalid signature
+
+  /api/admin/cal/platforms:
+    get:
+      tags: [Cal.com]
+      summary: List Cal.com platforms
+      security: [{ sanctumCookie: [] }]
+      responses:
+        "200":
+          description: Array of platforms
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CalPlatform" }
+    post:
+      tags: [Cal.com]
+      summary: Create a Cal.com platform
+      security: [{ sanctumCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalPlatformInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalPlatform" }
+
+  /api/admin/cal/platforms/{id}:
+    put:
+      tags: [Cal.com]
+      summary: Update a Cal.com platform
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalPlatformInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalPlatform" }
+    delete:
+      tags: [Cal.com]
+      summary: Delete a platform and all its meetings
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /api/admin/cal/platforms/{id}/reveal-key:
+    post:
+      tags: [Cal.com]
+      summary: Reveal plain API key
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Plain key returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key: { type: string }
+
+  /api/admin/cal/platforms/{id}/sync:
+    post:
+      tags: [Cal.com]
+      summary: Sync bookings from Cal.com into local meetings table
+      description: Fetches up to 100 bookings and upserts them via booking_uid.
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  synced: { type: integer, example: 12 }
+
+  /api/admin/cal/platforms/{id}/test:
+    post:
+      tags: [Cal.com]
+      summary: Test Cal.com API connection
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+
+  /api/admin/cal/meetings:
+    get:
+      tags: [Cal.com]
+      summary: List meetings with optional filters (server-side paginated)
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: platform_id
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string, enum: [upcoming, completed, cancelled, rescheduled] }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search attendee name, email, or title
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+          description: Page number (1-based)
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 15, maximum: 100 }
+          description: Items per page
+      responses:
+        "200":
+          description: Paginated meetings (Laravel paginator format)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CalMeeting" }
+                  total: { type: integer }
+                  per_page: { type: integer }
+                  current_page: { type: integer }
+                  last_page: { type: integer }
+    post:
+      tags: [Cal.com]
+      summary: Create a meeting manually
+      security: [{ sanctumCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalMeetingInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalMeeting" }
+
+  /api/admin/cal/meetings/{id}:
+    put:
+      tags: [Cal.com]
+      summary: Update a meeting
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalMeetingInput" }
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags: [Cal.com]
+      summary: Delete a meeting
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /api/admin/cal/meetings/{id}/cancel:
+    post:
+      tags: [Cal.com]
+      summary: Cancel a meeting via Cal.com API
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, example: Client request }
+      responses:
+        "200":
+          description: Cancellation result
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # OpenOrg Users
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  /api/admin/openorg-users:
+    get:
+      tags: [OpenOrg Users]
+      summary: List platform users
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: platform_id
+          in: query
+          schema: { type: integer }
+          description: Filter by Cal.com platform
+        - name: active_only
+          in: query
+          schema: { type: boolean }
+          description: Return only active users
+      responses:
+        "200":
+          description: Array of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OpenorgUser" }
+    post:
+      tags: [OpenOrg Users]
+      summary: Create a user for a platform
+      security: [{ sanctumCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenorgUserInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpenorgUser" }
+        "422":
+          description: Validation error or duplicate email in platform
+
+  /api/admin/openorg-users/{id}:
+    put:
+      tags: [OpenOrg Users]
+      summary: Update a user
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenorgUserInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpenorgUser" }
+    delete:
+      tags: [OpenOrg Users]
+      summary: Delete a user
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Kanban
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  /api/admin/kanban/boards:
+    get:
+      tags: [Kanban]
+      summary: List all boards (optionally filtered by platform)
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: platform_id
+          in: query
+          schema: { type: integer }
+          description: Filter boards linked to a specific Cal.com platform
+      responses:
+        "200":
+          description: Array of boards
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/KanbanBoard" }
+    post:
+      tags: [Kanban]
+      summary: Create a board (auto-creates 4 default columns)
+      security: [{ sanctumCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanBoardInput" }
+      responses:
+        "201":
+          description: Board created with default columns
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KanbanBoard" }
+
+  /api/admin/kanban/boards/{id}:
+    get:
+      tags: [Kanban]
+      summary: Get board with all columns and cards
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Board with nested columns and cards
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KanbanBoardFull" }
+    put:
+      tags: [Kanban]
+      summary: Update a board
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanBoardInput" }
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags: [Kanban]
+      summary: Delete a board (cascades columns and cards)
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /api/admin/kanban/boards/{id}/columns:
+    post:
+      tags: [Kanban]
+      summary: Add a column to a board
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanColumnInput" }
+      responses:
+        "201":
+          description: Column created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KanbanColumn" }
+
+  /api/admin/kanban/boards/{id}/columns/reorder:
+    post:
+      tags: [Kanban]
+      summary: Reorder columns within a board
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [columns]
+              properties:
+                columns:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      position: { type: integer }
+              example:
+                columns: [{ id: 1, position: 0 }, { id: 2, position: 1 }, { id: 3, position: 2 }]
+      responses:
+        "200":
+          description: Reordered
+
+  /api/admin/kanban/columns/{id}:
+    put:
+      tags: [Kanban]
+      summary: Update a column
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanColumnInput" }
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags: [Kanban]
+      summary: Delete a column and all its cards
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /api/admin/kanban/columns/{id}/cards:
+    post:
+      tags: [Kanban]
+      summary: Create a card in a column
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanCardInput" }
+      responses:
+        "201":
+          description: Card created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KanbanCard" }
+
+  /api/admin/kanban/cards/{id}:
+    put:
+      tags: [Kanban]
+      summary: Update a card
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KanbanCardInput" }
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags: [Kanban]
+      summary: Delete a card
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /api/admin/kanban/cards/{id}/move:
+    patch:
+      tags: [Kanban]
+      summary: Move a card to another column (drag and drop)
+      description: |
+        Called when the user drags a card to a different column.
+        The frontend performs an optimistic UI update immediately, then calls
+        this endpoint to persist. On failure the frontend reloads the board.
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [column_id]
+              properties:
+                column_id:
+                  type: integer
+                  description: Target column ID
+                position:
+                  type: integer
+                  description: Zero-based index in the target column
+              example:
+                column_id: 3
+                position: 1
+      responses:
+        "200":
+          description: Card moved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KanbanCard" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -7457,3 +8126,205 @@ components:
           type: integer
         per_page:
           type: integer
+
+    # ── Cal.com Schemas ────────────────────────────────────────────────────────
+
+    CalPlatform:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, example: My Cal Platform }
+        slug: { type: string, example: my-cal-platform }
+        api_key_masked: { type: string, example: "************ab12" }
+        webhook_secret_masked: { type: string, example: "************xy99" }
+        webhook_url: { type: string, example: "https://myapp.com/api/webhooks/cal/my-cal-platform" }
+        base_url: { type: string, example: "https://api.cal.com/v2" }
+        color: { type: string, example: "#6366f1" }
+        settings: { type: object, nullable: true }
+        is_active: { type: boolean }
+        meetings_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    CalPlatformInput:
+      type: object
+      required: [name, slug, base_url]
+      properties:
+        name: { type: string, example: My Cal Platform }
+        slug: { type: string, example: my-cal-platform }
+        api_key: { type: string, example: "cal_live_xxxx" }
+        webhook_secret: { type: string, example: "whsec_xxxx" }
+        base_url: { type: string, example: "https://api.cal.com/v2" }
+        color: { type: string, example: "#6366f1" }
+        is_active: { type: boolean, default: true }
+
+    CalMeeting:
+      type: object
+      properties:
+        id: { type: integer }
+        cal_platform_id: { type: integer }
+        openorg_user_id: { type: integer, nullable: true, description: "Linked OpenOrg user" }
+        booking_uid: { type: string, nullable: true }
+        event_type_id: { type: string, nullable: true }
+        title: { type: string, example: 30 Min Consultation }
+        description: { type: string, nullable: true }
+        attendee_name: { type: string, nullable: true }
+        attendee_email: { type: string, nullable: true }
+        attendee_timezone: { type: string, nullable: true }
+        start_time: { type: string, format: date-time, nullable: true }
+        end_time: { type: string, format: date-time, nullable: true }
+        status:
+          type: string
+          enum: [upcoming, completed, cancelled, rescheduled]
+        meeting_url: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CalMeetingInput:
+      type: object
+      required: [cal_platform_id, title, attendee_name, attendee_email, start_time, end_time]
+      properties:
+        cal_platform_id: { type: integer }
+        openorg_user_id: { type: integer, nullable: true, description: "Assign to an OpenOrg user from this platform" }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        attendee_name: { type: string }
+        attendee_email: { type: string, format: email }
+        attendee_timezone: { type: string, nullable: true }
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [upcoming, completed, cancelled, rescheduled]
+          default: upcoming
+        meeting_url: { type: string, nullable: true }
+
+    # ── Kanban Schemas ─────────────────────────────────────────────────────────
+
+    KanbanBoard:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Sprint Board }
+        description: { type: string, nullable: true }
+        color: { type: string, example: "#6366f1" }
+        is_active: { type: boolean }
+        cal_platform_id: { type: integer, nullable: true, description: "Linked Cal.com platform — meetings auto-create cards" }
+        cards_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    KanbanBoardFull:
+      allOf:
+        - $ref: "#/components/schemas/KanbanBoard"
+        - type: object
+          properties:
+            columns:
+              type: array
+              items: { $ref: "#/components/schemas/KanbanColumnFull" }
+
+    KanbanBoardInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: Sprint Board }
+        description: { type: string, nullable: true }
+        color: { type: string, example: "#6366f1" }
+        is_active: { type: boolean, default: true }
+        cal_platform_id: { type: integer, nullable: true, description: "Link to a Cal.com platform. New meetings for this platform auto-create kanban cards." }
+
+    KanbanColumn:
+      type: object
+      properties:
+        id: { type: integer }
+        kanban_board_id: { type: integer }
+        name: { type: string, example: In Progress }
+        color: { type: string, example: "#0ea5e9" }
+        wip_limit: { type: integer, nullable: true }
+        position: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    KanbanColumnFull:
+      allOf:
+        - $ref: "#/components/schemas/KanbanColumn"
+        - type: object
+          properties:
+            cards:
+              type: array
+              items: { $ref: "#/components/schemas/KanbanCard" }
+
+    KanbanColumnInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: In Review }
+        color: { type: string, example: "#f59e0b" }
+        wip_limit: { type: integer, nullable: true, example: 5 }
+
+    OpenorgUser:
+      type: object
+      properties:
+        id: { type: integer }
+        cal_platform_id: { type: integer }
+        platform_name: { type: string, nullable: true }
+        name: { type: string, example: John Doe }
+        email: { type: string, format: email, example: john@example.com }
+        phone: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    OpenorgUserInput:
+      type: object
+      required: [cal_platform_id, name, email]
+      properties:
+        cal_platform_id: { type: integer, description: "Platform this user belongs to" }
+        name: { type: string, example: John Doe }
+        email: { type: string, format: email, example: john@example.com }
+        phone: { type: string, nullable: true }
+        is_active: { type: boolean, default: true }
+
+    KanbanCard:
+      type: object
+      properties:
+        id: { type: integer }
+        column_id: { type: integer }
+        board_id: { type: integer }
+        title: { type: string, example: Fix login bug }
+        description: { type: string, nullable: true }
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        due_date: { type: string, format: date, nullable: true }
+        assignee: { type: string, nullable: true, description: "Free-text assignee (used when no platform user)" }
+        openorg_user_id: { type: integer, nullable: true, description: "Linked OpenOrg platform user" }
+        openorg_user:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            email: { type: string }
+        source_meeting_id: { type: integer, nullable: true, description: "Set if card was auto-created from a Cal.com meeting" }
+        is_meeting_card: { type: boolean, description: "If true, card is read-only — only drag & drop allowed" }
+        labels:
+          type: array
+          items: { type: string }
+          nullable: true
+        position: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    KanbanCardInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, example: Fix login bug }
+        description: { type: string, nullable: true }
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+          default: medium
+        due_date: { type: string, format: date, nullable: true, example: "2026-03-20" }
+        assignee: { type: string, nullable: true, example: John Doe, description: "Free-text (used when board has no platform link)" }
+        openorg_user_id: { type: integer, nullable: true, description: "Assign to a platform user (preferred over free-text assignee)" }
+        labels:
+          type: array
+          items: { type: string }
+          example: [backend, urgent-fix]
+
