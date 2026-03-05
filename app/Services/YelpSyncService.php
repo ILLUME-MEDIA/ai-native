@@ -357,6 +357,7 @@ class YelpSyncService
                         if ($autoMerge && !empty($updates)) {
                             $updates['yelp_verified'] = 1;
                             DB::table($tableName)->where('id', $rowId)->update($updates);
+                            $this->mergeMenuItems($diff, $businessId);
                             $diff->update([
                                 'merge_status' => 'merged',
                                 'merge_note' => 'Auto-merged during sync run.',
@@ -628,6 +629,66 @@ class YelpSyncService
                 'source_type'      => $item['source_type'] ?? 'details_fallback',
                 'raw_payload'      => $item['raw_payload'] ?? null,
             ]);
+        }
+    }
+
+    protected function mergeMenuItems(YelpMatchDiff $diff, ?int $businessId): void
+    {
+        if (!$businessId) {
+            return;
+        }
+
+        if (!Schema::hasTable('menu_items') || !Schema::hasTable('menu_categories')) {
+            return;
+        }
+
+        if (!DB::table('businesses')->where('id', $businessId)->exists()) {
+            return;
+        }
+
+        $menuRows = YelpMatchMenuItem::where('match_diff_id', $diff->id)->orderBy('sort_order')->get();
+        if ($menuRows->isEmpty()) {
+            return;
+        }
+
+        $hasYelpMenuItemId  = Schema::hasColumn('menu_items', 'yelp_menu_item_id');
+        $hasYelpBusinessId  = Schema::hasColumn('menu_items', 'yelp_business_id');
+        $hasYelpSyncedAt    = Schema::hasColumn('menu_items', 'yelp_synced_at');
+
+        foreach ($menuRows as $menuRow) {
+            $categoryName = trim((string) ($menuRow->category ?: 'Yelp Imported'));
+            $category = \App\Models\MenuCategory::firstOrCreate(
+                ['business_id' => $businessId, 'name' => $categoryName],
+                ['description' => 'Imported from Yelp', 'sort_order' => 0, 'is_active' => true]
+            );
+
+            $payload = [
+                'business_id'      => $businessId,
+                'menu_category_id' => $category->id,
+                'name'             => $menuRow->name,
+                'description'      => $menuRow->description,
+                'price'            => $menuRow->price ?? 0,
+                'image'            => $menuRow->image,
+                'is_available'     => $menuRow->is_available,
+            ];
+
+            if ($hasYelpBusinessId)  $payload['yelp_business_id']   = $menuRow->yelp_business_id;
+            if ($hasYelpMenuItemId)  $payload['yelp_menu_item_id']   = $menuRow->yelp_menu_item_id;
+            if ($hasYelpSyncedAt)    $payload['yelp_synced_at']       = now();
+
+            $existingQuery = \App\Models\MenuItem::where('business_id', $businessId);
+            if ($menuRow->yelp_menu_item_id && $hasYelpMenuItemId) {
+                $existingQuery->where('yelp_menu_item_id', $menuRow->yelp_menu_item_id);
+            } else {
+                $existingQuery->where('name', $menuRow->name)->where('menu_category_id', $category->id);
+            }
+
+            $existing = $existingQuery->first();
+            if ($existing) {
+                $existing->update($payload);
+            } else {
+                \App\Models\MenuItem::create($payload);
+            }
         }
     }
 

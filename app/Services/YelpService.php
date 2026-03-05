@@ -181,7 +181,7 @@ class YelpService
             // Real-time open status (null when Yelp doesn't provide hours)
             'is_open_now'         => isset($hours['is_open_now']) ? (bool) $hours['is_open_now'] : null,
             'is_claimed'          => isset($details['is_claimed']) ? (bool) $details['is_claimed'] : null,
-            'yelp_url'            => $details['url']          ?? null,
+            'yelp_url'            => isset($details['url']) ? explode('?', $details['url'])[0] : null,
             'image_url'           => $details['image_url']    ?? null,
             'price'               => $details['price']        ?? null,
             'categories'          => $cats ? implode(', ', array_column($cats, 'title')) : null,
@@ -299,8 +299,8 @@ class YelpService
             'permanently_closed'  => ['label' => 'Permanently Closed',             'type' => 'boolean'],
             'is_open_now'         => ['label' => 'Open Right Now (real-time)',      'type' => 'boolean'],
             'is_claimed'          => ['label' => 'Claimed on Yelp',                'type' => 'boolean'],
-            'yelp_url'            => ['label' => 'Yelp URL',                       'type' => 'string'],
-            'image_url'           => ['label' => 'Main Image URL (Yelp)',           'type' => 'string'],
+            'yelp_url'            => ['label' => 'Yelp URL',                       'type' => 'text'],
+            'image_url'           => ['label' => 'Main Image URL (Yelp)',           'type' => 'text'],
             'price'               => ['label' => 'Price ($–$$$$)',                 'type' => 'string'],
             'categories'          => ['label' => 'Categories',                     'type' => 'string'],
             // ── Location ──────────────────────────────────────────────────────
@@ -311,9 +311,9 @@ class YelpService
             'latitude'            => ['label' => 'Latitude',                       'type' => 'decimal'],
             'longitude'           => ['label' => 'Longitude',                      'type' => 'decimal'],
             // ── Photos ────────────────────────────────────────────────────────
-            'photo_url'           => ['label' => 'Photo 1 URL',                    'type' => 'string'],
-            'photo_url_2'         => ['label' => 'Photo 2 URL',                    'type' => 'string'],
-            'photo_url_3'         => ['label' => 'Photo 3 URL',                    'type' => 'string'],
+            'photo_url'           => ['label' => 'Photo 1 URL',                    'type' => 'text'],
+            'photo_url_2'         => ['label' => 'Photo 2 URL',                    'type' => 'text'],
+            'photo_url_3'         => ['label' => 'Photo 3 URL',                    'type' => 'text'],
             'photos_json'         => ['label' => 'All Photos (JSON array)',        'type' => 'text'],
             // ── Business capabilities ─────────────────────────────────────────
             'transactions'        => ['label' => 'Transactions (delivery, pickup…)', 'type' => 'string'],
