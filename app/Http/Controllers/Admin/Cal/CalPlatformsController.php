@@ -26,9 +26,10 @@ class CalPlatformsController extends Controller
             'base_url'        => 'nullable|url|max:255',
             'webhook_secret'  => 'nullable|string',
             'color'           => 'nullable|string|max:20',
-            'settings'        => 'nullable|array',
-            'is_active'       => 'boolean',
-            'users_entity_id' => 'nullable|exists:section_entities,id',
+            'settings'           => 'nullable|array',
+            'is_active'          => 'boolean',
+            'users_entity_id'    => 'nullable|exists:section_entities,id',
+            'auto_create_users'  => 'boolean',
         ]);
 
         if (empty($data['slug'])) {
@@ -48,9 +49,10 @@ class CalPlatformsController extends Controller
             'base_url'        => 'nullable|url|max:255',
             'webhook_secret'  => 'nullable|string',
             'color'           => 'nullable|string|max:20',
-            'settings'        => 'nullable|array',
-            'is_active'       => 'boolean',
-            'users_entity_id' => 'nullable|exists:section_entities,id',
+            'settings'          => 'nullable|array',
+            'is_active'         => 'boolean',
+            'users_entity_id'   => 'nullable|exists:section_entities,id',
+            'auto_create_users' => 'boolean',
         ]);
 
         // Empty string = clear
@@ -115,6 +117,7 @@ class CalPlatformsController extends Controller
             'is_active'              => $p->is_active,
             'users_entity_id'        => $p->users_entity_id,
             'users_table'            => $p->getUsersTable(),
+            'auto_create_users'      => $p->auto_create_users,
             'meetings_count'         => $p->meetings()->count(),
             'created_at'             => $p->created_at,
         ];

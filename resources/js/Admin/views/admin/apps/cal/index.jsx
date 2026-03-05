@@ -31,7 +31,7 @@ const StatusBadge = ({ status }) => {
 };
 
 // ── Platforms Tab ─────────────────────────────────────────────────────────────
-const PLATFORM_INIT = { name: '', slug: '', api_key: '', webhook_secret: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true };
+const PLATFORM_INIT = { name: '', slug: '', api_key: '', webhook_secret: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true, auto_create_users: false };
 
 const toSlug = (str) => str.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
 
@@ -293,9 +293,13 @@ function PlatformsTab() {
                                 </div>
                             </FormGroup>
                         </Col>
-                        <Col md={12}>
-                            <Form.Check type="switch" id="platform-active" label="Active" checked={!!form.is_active}
+                        <Col md={12} className="d-flex gap-4">
+                            <Form.Check type="switch" id="platform-active" label="Active"
+                                checked={!!form.is_active}
                                 onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} />
+                            <Form.Check type="switch" id="platform-auto-users" label="Auto-create users on booking"
+                                checked={!!form.auto_create_users}
+                                onChange={e => setForm(p => ({ ...p, auto_create_users: e.target.checked }))} />
                         </Col>
                     </Row>
                 </ModalBody>

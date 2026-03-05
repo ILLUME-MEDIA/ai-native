@@ -10,16 +10,17 @@ class CalPlatform extends Model
 {
     protected $fillable = [
         'name', 'slug', 'api_key', 'base_url', 'webhook_secret',
-        'color', 'settings', 'is_active', 'users_entity_id',
+        'color', 'settings', 'is_active', 'users_entity_id', 'auto_create_users',
     ];
 
     protected $hidden = ['api_key', 'webhook_secret'];
 
     protected $casts = [
-        'api_key'        => 'encrypted',
-        'webhook_secret' => 'encrypted',
-        'settings'       => 'array',
-        'is_active'      => 'boolean',
+        'api_key'             => 'encrypted',
+        'webhook_secret'      => 'encrypted',
+        'settings'            => 'array',
+        'is_active'           => 'boolean',
+        'auto_create_users'   => 'boolean',
     ];
 
     public function meetings(): HasMany
