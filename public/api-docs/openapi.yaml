@@ -408,6 +408,18 @@ tags:
       ### Sync
       Use `POST /api/admin/cal/platforms/{id}/sync` to pull existing bookings from Cal.com API.
 
+  - name: Platform User Auth
+    description: |
+      **Public-facing user API per Cal platform.**
+
+      Each Cal platform has its own user API namespace based on its slug.
+      No admin auth required — throttled public endpoints.
+
+      - GET  /api/cal/{slug}/users/{email} — get user by email
+      - POST /api/cal/{slug}/users — create/find user + return encrypted auth token
+
+      Token is identical to OTP auth token (same format, same middleware).
+
   - name: OpenOrg Users
     description: |
       **Platform User Directory** — manage users per Cal.com platform.
@@ -6286,6 +6298,82 @@ paths:
         "200":
           description: Cancellation result
 
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Platform User Auth (Public API - per Cal platform)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  /api/cal/{slug}/users/{email}:
+    get:
+      tags: [Platform User Auth]
+      summary: Get user profile by email
+      description: Look up a user in the platform users table by email. Public — no auth required.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+          example: openorg
+        - name: email
+          in: path
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/PlatformUserProfile" }
+                  source: { type: string, example: openorg_users }
+        "404":
+          description: Platform or user not found
+
+  /api/cal/{slug}/users:
+    post:
+      tags: [Platform User Auth]
+      summary: Create or find user and return auth token
+      description: |
+        Creates a new user (or finds existing) in the platform users table.
+        Returns an encrypted auth token identical to OTP auth format.
+        Token payload: { email, table, id, exp, type: "otp_auth" }
+        Use as Bearer token on protected routes.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+          example: openorg
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name:     { type: string, example: Ali Khan }
+                email:    { type: string, format: email, example: ali@openorg.com }
+                phone:    { type: string, nullable: true }
+                metadata: { type: object, nullable: true, example: { company: OpenOrg } }
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformUserAuthResponse" }
+        "200":
+          description: User found (existing record)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformUserAuthResponse" }
+        "404":
+          description: Platform not found or inactive
+        "422":
+          description: Validation error
+
   # ─────────────────────────────────────────────────────────────────────────────
   # OpenOrg Users
   # ─────────────────────────────────────────────────────────────────────────────
@@ -8257,6 +8345,28 @@ components:
         name: { type: string, example: In Review }
         color: { type: string, example: "#f59e0b" }
         wip_limit: { type: integer, nullable: true, example: 5 }
+
+    PlatformUserProfile:
+      type: object
+      properties:
+        id:              { type: integer }
+        cal_platform_id: { type: integer }
+        name:            { type: string }
+        email:           { type: string, format: email }
+        phone:           { type: string, nullable: true }
+        is_active:       { type: boolean }
+        metadata:        { type: object, nullable: true }
+        user_source:     { type: string, example: openorg_users }
+        created_at:      { type: string, format: date-time }
+
+    PlatformUserAuthResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        status:  { type: string, enum: [found, created] }
+        token:   { type: string, description: Encrypted auth token - same format as OTP auth }
+        user:    { $ref: "#/components/schemas/PlatformUserProfile" }
+        source:  { type: string, example: openorg_users }
 
     OpenorgUser:
       type: object

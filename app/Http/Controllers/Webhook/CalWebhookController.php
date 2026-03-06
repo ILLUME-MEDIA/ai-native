@@ -71,12 +71,20 @@ class CalWebhookController extends Controller
         $attendeeName  = $attendee['name'] ?? null;
         $attendeeEmail = $attendee['email'] ?? null;
 
-        // ── Auto-create user if platform has this enabled ──────────────────────
+        // ── Find existing user by email (no auto-create — use POST /api/cal/{slug}/{table}/users) ──
         $userId     = null;
         $userSource = null;
 
-        if ($attendeeEmail && $platform->auto_create_users) {
-            [$userId, $userSource] = $this->resolveOrCreateUser($platform, $attendeeName, $attendeeEmail);
+        if ($attendeeEmail) {
+            $table    = $platform->getUsersTable();
+            $existing = \Illuminate\Support\Facades\DB::table($table)
+                ->where('cal_platform_id', $platform->id)
+                ->where('email', strtolower(trim($attendeeEmail)))
+                ->first();
+            if ($existing) {
+                $userId     = $existing->id;
+                $userSource = $table;
+            }
         }
 
         // ── Upsert the meeting ─────────────────────────────────────────────────
@@ -107,38 +115,6 @@ class CalWebhookController extends Controller
         if ($isNew) {
             $this->createKanbanCard($meeting, $platform, $userId, $userSource);
         }
-    }
-
-    /**
-     * Find existing user by email in the platform's users table,
-     * or create a new one with name + email from the booking.
-     * Returns [$userId, $userSource].
-     */
-    private function resolveOrCreateUser(CalPlatform $platform, ?string $name, string $email): array
-    {
-        $table = $platform->getUsersTable();
-
-        $existing = DB::table($table)
-            ->where('cal_platform_id', $platform->id)
-            ->where('email', $email)
-            ->first();
-
-        if ($existing) {
-            return [$existing->id, $table];
-        }
-
-        $id = DB::table($table)->insertGetId([
-            'cal_platform_id' => $platform->id,
-            'name'            => $name ?? $email,
-            'email'           => $email,
-            'is_active'       => true,
-            'created_at'      => now(),
-            'updated_at'      => now(),
-        ]);
-
-        Log::info("Cal webhook: auto-created user [{$email}] in [{$table}] for platform [{$platform->slug}]");
-
-        return [$id, $table];
     }
 
     private function createKanbanCard(CalMeeting $meeting, CalPlatform $platform, ?int $userId, ?string $userSource): void

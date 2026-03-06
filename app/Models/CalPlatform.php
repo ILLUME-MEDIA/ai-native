@@ -10,17 +10,16 @@ class CalPlatform extends Model
 {
     protected $fillable = [
         'name', 'slug', 'api_key', 'base_url', 'webhook_secret',
-        'color', 'settings', 'is_active', 'users_entity_id', 'auto_create_users',
+        'color', 'settings', 'is_active', 'users_entity_id',
     ];
 
     protected $hidden = ['api_key', 'webhook_secret'];
 
     protected $casts = [
-        'api_key'             => 'encrypted',
-        'webhook_secret'      => 'encrypted',
-        'settings'            => 'array',
-        'is_active'           => 'boolean',
-        'auto_create_users'   => 'boolean',
+        'api_key'        => 'encrypted',
+        'webhook_secret' => 'encrypted',
+        'settings'       => 'array',
+        'is_active'      => 'boolean',
     ];
 
     public function meetings(): HasMany
@@ -39,8 +38,8 @@ class CalPlatform extends Model
     }
 
     /**
-     * Returns the DB table name to use for this platform's users.
-     * If a Section Builder entity is linked, use its table; otherwise openorg_users.
+     * Returns the DB table name for this platform's users.
+     * Uses Section Builder entity table if configured, otherwise openorg_users.
      */
     public function getUsersTable(): string
     {
@@ -82,7 +81,6 @@ class CalPlatform extends Model
         return str_repeat('*', max(8, $len - 4)) . substr($plain, -4);
     }
 
-    /** Full webhook URL for this platform (to copy into Cal.com dashboard). */
     public function getWebhookUrl(): string
     {
         return url("/api/webhooks/cal/{$this->slug}");

@@ -31,7 +31,7 @@ const StatusBadge = ({ status }) => {
 };
 
 // ── Platforms Tab ─────────────────────────────────────────────────────────────
-const PLATFORM_INIT = { name: '', slug: '', api_key: '', webhook_secret: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true, auto_create_users: false };
+const PLATFORM_INIT = { name: '', slug: '', api_key: '', webhook_secret: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true };
 
 const toSlug = (str) => str.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
 
@@ -293,13 +293,10 @@ function PlatformsTab() {
                                 </div>
                             </FormGroup>
                         </Col>
-                        <Col md={12} className="d-flex gap-4">
+                        <Col md={12}>
                             <Form.Check type="switch" id="platform-active" label="Active"
                                 checked={!!form.is_active}
                                 onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} />
-                            <Form.Check type="switch" id="platform-auto-users" label="Auto-create users on booking"
-                                checked={!!form.auto_create_users}
-                                onChange={e => setForm(p => ({ ...p, auto_create_users: e.target.checked }))} />
                         </Col>
                     </Row>
                 </ModalBody>
@@ -665,212 +662,6 @@ function MeetingsTab({ platforms }) {
     );
 }
 
-// ── Users Tab ─────────────────────────────────────────────────────────────────
-const USER_INIT = { cal_platform_id: '', name: '', email: '', phone: '', is_active: true };
-
-function UsersTab({ platforms }) {
-    const [users, setUsers]         = useState([]);
-    const [loading, setLoading]     = useState(true);
-    const [filterPlatform, setFilterPlatform] = useState('');
-    const [showModal, setShowModal] = useState(false);
-    const [showDelete, setShowDelete] = useState(false);
-    const [editing, setEditing]     = useState(null);
-    const [form, setForm]           = useState(USER_INIT);
-    const [saving, setSaving]       = useState(false);
-    const [formError, setFormError] = useState('');
-
-    const load = useCallback(async (pid = filterPlatform) => {
-        setLoading(true);
-        try {
-            let users;
-            if (pid) {
-                const { data } = await axios.get(`/api/admin/platforms/${pid}/users`);
-                users = data.data ?? data;
-            } else {
-                const { data } = await axios.get('/api/admin/openorg-users');
-                users = data;
-            }
-            setUsers(users);
-        } catch { /* ignore */ }
-        finally { setLoading(false); }
-    }, [filterPlatform]);
-
-    useEffect(() => { load(); }, [load]);
-
-    const openCreate = () => {
-        setForm({ ...USER_INIT, cal_platform_id: filterPlatform || platforms[0]?.id || '' });
-        setEditing(null); setFormError(''); setShowModal(true);
-    };
-    const openEdit   = (u) => { setForm(u); setEditing(u); setFormError(''); setShowModal(true); };
-    const openDelete = (u) => { setEditing(u); setShowDelete(true); };
-
-    const save = async () => {
-        setSaving(true); setFormError('');
-        try {
-            const pid = form.cal_platform_id;
-            if (editing) await axios.put(`/api/admin/platforms/${pid}/users/${editing.id}`, form);
-            else         await axios.post(`/api/admin/platforms/${pid}/users`, form);
-            setShowModal(false); load();
-        } catch (e) {
-            setFormError(e.response?.data?.message || Object.values(e.response?.data?.errors ?? {}).flat().join(' ') || 'Save failed.');
-        } finally { setSaving(false); }
-    };
-
-    const destroy = async () => {
-        await axios.delete(`/api/admin/platforms/${editing.cal_platform_id}/users/${editing.id}`);
-        setShowDelete(false); load();
-    };
-
-    const columns = [
-        columnHelper.accessor('platform_name', {
-            header: 'Platform',
-            cell: ({ row }) => {
-                const p = platforms.find(p => +p.id === +row.original.cal_platform_id);
-                return (
-                    <div className="d-flex align-items-center gap-2">
-                        {p && <span className="rounded-circle d-inline-block" style={{ width: 8, height: 8, background: p.color }} />}
-                        <span className="small">{row.original.platform_name ?? '—'}</span>
-                    </div>
-                );
-            },
-        }),
-        columnHelper.accessor('name', {
-            header: 'Name',
-            cell: ({ row }) => (
-                <div>
-                    <div className="fw-semibold">{row.original.name}</div>
-                    <small className="text-muted">{row.original.email}</small>
-                </div>
-            ),
-        }),
-        columnHelper.accessor('phone', {
-            header: 'Phone',
-            cell: ({ getValue }) => getValue() || <span className="text-muted">—</span>,
-        }),
-        columnHelper.accessor('is_active', {
-            header: 'Status',
-            cell: ({ getValue }) => (
-                <span className={`badge badge-label ${getValue() ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}`}>
-                    {getValue() ? 'Active' : 'Inactive'}
-                </span>
-            ),
-        }),
-        columnHelper.display({
-            id: 'actions',
-            header: 'Actions',
-            cell: ({ row }) => (
-                <div className="d-flex gap-1">
-                    <Button size="sm" variant="light" onClick={() => openEdit(row.original)}>
-                        <Icon icon="edit" />
-                    </Button>
-                    <Button size="sm" variant="outline-danger" onClick={() => openDelete(row.original)}>
-                        <Icon icon="trash" />
-                    </Button>
-                </div>
-            ),
-        }),
-    ];
-
-    const table = useReactTable({
-        data: users,
-        columns,
-        getCoreRowModel: getCoreRowModel(),
-        getSortedRowModel: getSortedRowModel(),
-        getFilteredRowModel: getFilteredRowModel(),
-        getPaginationRowModel: getPaginationRowModel(),
-        initialState: { pagination: { pageSize: 15 } },
-    });
-
-    return (
-        <>
-            <Card>
-                <CardHeader>
-                    <Row className="g-2 align-items-center">
-                        <Col md={4}>
-                            <FormSelect size="sm" value={filterPlatform} onChange={e => { setFilterPlatform(e.target.value); load(e.target.value); }}>
-                                <option value="">All Platforms</option>
-                                {platforms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </FormSelect>
-                        </Col>
-                        <Col md="auto" className="ms-auto">
-                            <small className="text-muted me-2">{users.length} user(s)</small>
-                            <Button size="sm" variant="primary" onClick={openCreate}>
-                                <Icon icon="plus" className="me-1" />Add User
-                            </Button>
-                        </Col>
-                    </Row>
-                </CardHeader>
-                <CardBody className="p-0">
-                    {loading ? (
-                        <div className="text-center py-5"><Spinner animation="border" variant="primary" /></div>
-                    ) : (
-                        <>
-                            <DataTable table={table} emptyMessage="No users found. Add users to link them with meetings and kanban cards." />
-                            <TablePagination table={table} />
-                        </>
-                    )}
-                </CardBody>
-            </Card>
-
-            <Modal show={showModal} onHide={() => setShowModal(false)} centered>
-                <ModalHeader closeButton>
-                    <ModalTitle>{editing ? 'Edit User' : 'Add User'}</ModalTitle>
-                </ModalHeader>
-                <ModalBody>
-                    {formError && <Alert variant="danger" className="py-2">{formError}</Alert>}
-                    <Row className="g-3">
-                        <Col md={12}>
-                            <FormGroup>
-                                <FormLabel>Platform <span className="text-danger">*</span></FormLabel>
-                                <FormSelect value={form.cal_platform_id} onChange={e => setForm(p => ({ ...p, cal_platform_id: e.target.value }))} disabled={!!editing}>
-                                    <option value="">Select platform…</option>
-                                    {platforms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                </FormSelect>
-                            </FormGroup>
-                        </Col>
-                        <Col md={6}>
-                            <FormGroup>
-                                <FormLabel>Name <span className="text-danger">*</span></FormLabel>
-                                <FormControl value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="John Doe" autoFocus />
-                            </FormGroup>
-                        </Col>
-                        <Col md={6}>
-                            <FormGroup>
-                                <FormLabel>Email <span className="text-danger">*</span></FormLabel>
-                                <FormControl type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="john@example.com" />
-                            </FormGroup>
-                        </Col>
-                        <Col md={6}>
-                            <FormGroup>
-                                <FormLabel>Phone</FormLabel>
-                                <FormControl value={form.phone ?? ''} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="+1 555 0000" />
-                            </FormGroup>
-                        </Col>
-                        <Col md={6} className="d-flex align-items-end pb-1">
-                            <Form.Check type="switch" id="user-active" label="Active" checked={!!form.is_active}
-                                onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} />
-                        </Col>
-                    </Row>
-                </ModalBody>
-                <ModalFooter>
-                    <Button variant="light" onClick={() => setShowModal(false)}>Cancel</Button>
-                    <Button variant="primary" onClick={save} disabled={saving}>
-                        {saving ? <Spinner size="sm" animation="border" className="me-1" /> : null}Save
-                    </Button>
-                </ModalFooter>
-            </Modal>
-
-            <DeleteConfirmationModal
-                show={showDelete}
-                onHide={() => setShowDelete(false)}
-                onConfirm={destroy}
-                itemName="user"
-            >
-                Delete user <strong>{editing?.name}</strong>?
-            </DeleteConfirmationModal>
-        </>
-    );
-}
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function CalPage() {
@@ -892,11 +683,6 @@ export default function CalPage() {
                         </Nav.Link>
                     </Nav.Item>
                     <Nav.Item>
-                        <Nav.Link eventKey="users">
-                            <Icon icon="users" className="me-1" />Users
-                        </Nav.Link>
-                    </Nav.Item>
-                    <Nav.Item>
                         <Nav.Link eventKey="meetings">
                             <Icon icon="calendar-event" className="me-1" />Meetings
                         </Nav.Link>
@@ -906,9 +692,6 @@ export default function CalPage() {
                 <Tab.Content>
                     <Tab.Pane eventKey="platforms">
                         <PlatformsTab />
-                    </Tab.Pane>
-                    <Tab.Pane eventKey="users">
-                        <UsersTab platforms={platforms} />
                     </Tab.Pane>
                     <Tab.Pane eventKey="meetings">
                         <MeetingsTab platforms={platforms} />

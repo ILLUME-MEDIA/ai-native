@@ -26,10 +26,9 @@ class CalPlatformsController extends Controller
             'base_url'        => 'nullable|url|max:255',
             'webhook_secret'  => 'nullable|string',
             'color'           => 'nullable|string|max:20',
-            'settings'           => 'nullable|array',
-            'is_active'          => 'boolean',
-            'users_entity_id'    => 'nullable|exists:section_entities,id',
-            'auto_create_users'  => 'boolean',
+            'settings'        => 'nullable|array',
+            'is_active'       => 'boolean',
+            'users_entity_id' => 'nullable|exists:section_entities,id',
         ]);
 
         if (empty($data['slug'])) {
@@ -49,13 +48,11 @@ class CalPlatformsController extends Controller
             'base_url'        => 'nullable|url|max:255',
             'webhook_secret'  => 'nullable|string',
             'color'           => 'nullable|string|max:20',
-            'settings'          => 'nullable|array',
-            'is_active'         => 'boolean',
-            'users_entity_id'   => 'nullable|exists:section_entities,id',
-            'auto_create_users' => 'boolean',
+            'settings'        => 'nullable|array',
+            'is_active'       => 'boolean',
+            'users_entity_id' => 'nullable|exists:section_entities,id',
         ]);
 
-        // Empty string = clear
         foreach (['api_key', 'webhook_secret'] as $field) {
             if (array_key_exists($field, $data) && $data[$field] === '') {
                 $data[$field] = null;
@@ -105,21 +102,20 @@ class CalPlatformsController extends Controller
     private function format(CalPlatform $p): array
     {
         return [
-            'id'                     => $p->id,
-            'name'                   => $p->name,
-            'slug'                   => $p->slug,
-            'api_key_masked'         => $p->getMaskedApiKey(),
-            'webhook_secret_masked'  => $p->getMaskedWebhookSecret(),
-            'webhook_url'            => $p->getWebhookUrl(),
-            'base_url'               => $p->base_url,
-            'color'                  => $p->color,
-            'settings'               => $p->settings,
-            'is_active'              => $p->is_active,
-            'users_entity_id'        => $p->users_entity_id,
-            'users_table'            => $p->getUsersTable(),
-            'auto_create_users'      => $p->auto_create_users,
-            'meetings_count'         => $p->meetings()->count(),
-            'created_at'             => $p->created_at,
+            'id'                    => $p->id,
+            'name'                  => $p->name,
+            'slug'                  => $p->slug,
+            'api_key_masked'        => $p->getMaskedApiKey(),
+            'webhook_secret_masked' => $p->getMaskedWebhookSecret(),
+            'webhook_url'           => $p->getWebhookUrl(),
+            'base_url'              => $p->base_url,
+            'color'                 => $p->color,
+            'settings'              => $p->settings,
+            'is_active'             => $p->is_active,
+            'users_entity_id'       => $p->users_entity_id,
+            'users_table'           => $p->getUsersTable(),
+            'meetings_count'        => $p->meetings()->count(),
+            'created_at'            => $p->created_at,
         ];
     }
 }
