@@ -127,8 +127,10 @@ info:
     Use your `SITE_API_KEY` from `.env`.
 
 servers:
-  - url: http://127.0.0.1:8000/api
+  - url: http://127.0.0.1:8000
     description: Local development
+  - url: https://development.illumemedia.app
+    description: Staging
 
 security:
   - bearerAuth: []
@@ -412,13 +414,15 @@ tags:
     description: |
       **Public-facing user API per Cal platform.**
 
-      Each Cal platform has its own user API namespace based on its slug.
-      No admin auth required — throttled public endpoints.
+      Each Cal platform + user table has its own scoped namespace.
+      Requires SITE_API_KEY as Bearer token. Throttled: 60 req/min.
 
-      - GET  /api/cal/{slug}/users/{email} — get user by email
-      - POST /api/cal/{slug}/users — create/find user + return encrypted auth token
+      - GET  /api/cal/{slug}/{table}/users?email= — get user by email
+      - POST /api/cal/{slug}/{table}/users — create/find user + return encrypted auth token
+      - GET  /api/cal/{slug}/{table}/meetings — list meetings (token optional for user filter)
 
       Token is identical to OTP auth token (same format, same middleware).
+      {table} = DB table name, e.g. openorg_users or se_xdstudio_users.
 
   - name: OpenOrg Users
     description: |
@@ -6303,21 +6307,29 @@ paths:
   # Platform User Auth (Public API - per Cal platform)
   # ─────────────────────────────────────────────────────────────────────────────
 
-  /api/cal/{slug}/users/{email}:
+  /api/cal/{slug}/{table}/users:
     get:
       tags: [Platform User Auth]
       summary: Get user profile by email
-      description: Look up a user in the platform users table by email. Public — no auth required.
+      description: Look up a user in the platform's user table by email. Requires SITE_API_KEY.
+      security: [{ siteApiKey: [] }]
       parameters:
         - name: slug
           in: path
           required: true
           schema: { type: string }
           example: openorg
-        - name: email
+        - name: table
           in: path
           required: true
+          schema: { type: string }
+          example: openorg_users
+          description: DB table name (openorg_users or any registered Section Builder entity table)
+        - name: email
+          in: query
+          required: true
           schema: { type: string, format: email }
+          example: ali@openorg.com
       responses:
         "200":
           description: User found
@@ -6326,26 +6338,34 @@ paths:
               schema:
                 type: object
                 properties:
-                  user: { $ref: "#/components/schemas/PlatformUserProfile" }
-                  source: { type: string, example: openorg_users }
+                  user:     { $ref: "#/components/schemas/PlatformUserProfile" }
+                  platform: { type: string, example: openorg }
+                  table:    { type: string, example: openorg_users }
         "404":
           description: Platform or user not found
-
-  /api/cal/{slug}/users:
+        "403":
+          description: Table not registered as a user table
     post:
       tags: [Platform User Auth]
       summary: Create or find user and return auth token
       description: |
-        Creates a new user (or finds existing) in the platform users table.
+        Creates a new user (or finds existing) in the platform's user table.
         Returns an encrypted auth token identical to OTP auth format.
         Token payload: { email, table, id, exp, type: "otp_auth" }
-        Use as Bearer token on protected routes.
+        Use as Bearer token on GET /meetings endpoint to filter by user.
+      security: [{ siteApiKey: [] }]
       parameters:
         - name: slug
           in: path
           required: true
           schema: { type: string }
           example: openorg
+        - name: table
+          in: path
+          required: true
+          schema: { type: string }
+          example: openorg_users
+          description: DB table name (openorg_users or any registered Section Builder entity table)
       requestBody:
         required: true
         content:
@@ -6369,10 +6389,53 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformUserAuthResponse" }
+        "403":
+          description: Table not registered as a user table
         "404":
           description: Platform not found or inactive
         "422":
           description: Validation error
+
+  /api/cal/{slug}/{table}/meetings:
+    get:
+      tags: [Platform User Auth]
+      summary: List meetings for a platform (public calendar or user-filtered)
+      description: |
+        Without Bearer token: returns all meetings for the platform (public calendar).
+        With Bearer token (from POST /users): returns only that user's meetings.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+          example: openorg
+        - name: table
+          in: path
+          required: true
+          schema: { type: string }
+          example: openorg_users
+        - name: status
+          in: query
+          schema: { type: string, enum: [upcoming, completed, cancelled, rescheduled] }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 15, maximum: 100 }
+      security: [{ otpBearerAuth: [] }]
+      responses:
+        "200":
+          description: Paginated meetings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CalMeeting" }
+                  total:        { type: integer }
+                  current_page: { type: integer }
+                  last_page:    { type: integer }
+                  user_id:      { type: integer, nullable: true }
 
   # ─────────────────────────────────────────────────────────────────────────────
   # OpenOrg Users
@@ -6725,6 +6788,13 @@ components:
       description: |
         Site API key (`SITE_API_KEY` from .env).
         Use this for public endpoints like `POST /api/register-business`.
+    sanctumCookie:
+      type: http
+      scheme: bearer
+      bearerFormat: SanctumToken
+      description: |
+        Laravel Sanctum token for admin SPA routes.
+        Get it via `POST /api/auth/token` or session cookie after admin login.
     otpBearerAuth:
       type: http
       scheme: bearer
@@ -8192,11 +8262,19 @@ components:
                 type: string
                 nullable: true
         business:
+          type: object
           nullable: true
-          $ref: "#/components/schemas/Business"
+          properties:
+            id:   { type: integer }
+            name: { type: string }
+            slug: { type: string }
         order:
+          type: object
           nullable: true
-          $ref: "#/components/schemas/Order"
+          properties:
+            id:     { type: integer }
+            status: { type: string }
+            total:  { type: number }
         created_at:
           type: string
           format: date-time

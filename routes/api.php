@@ -758,10 +758,8 @@ Route::post('/auth/token', function (\Illuminate\Http\Request $request) {
 // {table} = exact DB table name (openorg_users, se_xdstudio_users, etc.)
 // GET  /api/cal/{slug}/{table}/users?email=...  → get user profile by email
 // POST /api/cal/{slug}/{table}/users            → create/find user + return token
-Route::prefix('cal/{slug}/{table}')->middleware('throttle:60,1')->group(function () {
-    Route::get('users',  [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'show']);
-    Route::post('users', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'store']);
+Route::prefix('cal/{slug}/{table}')->middleware(['site.api.key', 'throttle:60,1'])->group(function () {
+    Route::get('users',    [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'show']);
+    Route::post('users',   [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'store']);
+    Route::get('meetings', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'meetings']);
 });
-
-// Add meetings route to Platform User Auth group
-Route::get('cal/{slug}/{table}/meetings', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'meetings'])->middleware('throttle:60,1');
