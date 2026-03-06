@@ -81,7 +81,12 @@ class CalPlatformsController extends Controller
         $result  = $service->syncBookings();
 
         if (isset($result['error'])) {
-            return response()->json(['message' => 'Cal.com API error', 'detail' => $result['error']], 422);
+            return response()->json([
+                'message'    => 'Cal.com API error',
+                'detail'     => $result['error'],
+                'http_status'=> $result['status'] ?? null,
+                'base_url'   => $calPlatform->base_url,
+            ], 422);
         }
 
         return response()->json($result);
