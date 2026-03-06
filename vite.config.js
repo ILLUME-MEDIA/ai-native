@@ -40,8 +40,7 @@ export default defineConfig({
     },
     // Build tuning to reduce memory pressure
     build: {
-        // Use terser for minification instead of esbuild (more stable on big bundles)
-        minify: 'terser',
+        minify: 'esbuild',
         // Reasonable target so esbuild/terser don't over‑optimize for cutting‑edge syntax
         target: 'es2018',
         rollupOptions: {

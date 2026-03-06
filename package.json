@@ -3,7 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "node --max-old-space-size=8192 node_modules/vite/bin/vite.js build",
+        "build": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js build",
         "dev": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js",
         "format": "prettier --write './resources/js/Admin/**/*.{js,jsx,ts,tsx}'"
     },
