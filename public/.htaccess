@@ -32,13 +32,15 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# CORS Headers — allowed origins
+# CORS Headers â€” allowed origins
 <IfModule mod_headers.c>
     SetEnvIf Origin "(https?://localhost(:[0-9]+)?)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://magazine\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://development\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://discovery\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://magazine\.muzzhub\.com)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://javed\.io)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://openorg\.us)" CORS_ALLOW_ORIGIN=$1
     Header always set Access-Control-Allow-Origin "%{CORS_ALLOW_ORIGIN}e" env=CORS_ALLOW_ORIGIN
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ALLOW_ORIGIN
     Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-Token, Accept" env=CORS_ALLOW_ORIGIN
