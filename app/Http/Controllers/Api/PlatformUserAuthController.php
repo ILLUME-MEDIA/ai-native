@@ -92,54 +92,40 @@ class PlatformUserAuthController extends Controller
             ->first();
 
         if ($existing) {
-            $user    = (array) $existing;
-            $updates = [];
-
-            if (! empty($data['name']) && $data['name'] !== $existing->name) {
-                $updates['name'] = $data['name'];
-            }
-            if (isset($data['phone']) && $data['phone'] !== ($existing->phone ?? null)) {
-                $updates['phone'] = $data['phone'];
-            }
-            if (! empty($updates)) {
-                $updates['updated_at'] = now();
-                DB::table($table)->where('id', $existing->id)->update($updates);
-                $user = array_merge($user, $updates);
-            }
-
-            Log::info("PlatformUserAuth [{$slug}/{$table}]: found [{$email}]");
-            $isNew = false;
-        } else {
-            // Create new user
-            $insert = [
-                'cal_platform_id' => $platform->id,
-                'name'            => $data['name'],
-                'email'           => $email,
-                'phone'           => $data['phone'] ?? null,
-                'is_active'       => true,
-                'created_at'      => now(),
-                'updated_at'      => now(),
-            ];
-
-            if (! empty($data['metadata']) && Schema::hasColumn($table, 'metadata')) {
-                $insert['metadata'] = json_encode($data['metadata']);
-            }
-
-            $id   = DB::table($table)->insertGetId($insert);
-            $user = (array) DB::table($table)->find($id);
-            $isNew = true;
-
-            Log::info("PlatformUserAuth [{$slug}/{$table}]: created [{$email}]");
+            return response()->json([
+                'message' => 'User with this email already exists.',
+                'user'    => $this->formatUser((array) $existing),
+            ], 409);
         }
+
+        // Create new user
+        $insert = [
+            'cal_platform_id' => $platform->id,
+            'name'            => $data['name'],
+            'email'           => $email,
+            'phone'           => $data['phone'] ?? null,
+            'is_active'       => true,
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ];
+
+        if (! empty($data['metadata']) && Schema::hasColumn($table, 'metadata')) {
+            $insert['metadata'] = json_encode($data['metadata']);
+        }
+
+        $id  = DB::table($table)->insertGetId($insert);
+        $user = (array) DB::table($table)->find($id);
+
+        Log::info("PlatformUserAuth [{$slug}/{$table}]: created [{$email}]");
 
         return response()->json([
             'success'  => true,
-            'status'   => $isNew ? 'created' : 'found',
+            'status'   => 'created',
             'token'    => $this->buildToken($email, $table, $user),
             'user'     => $this->formatUser($user),
             'platform' => $platform->slug,
             'table'    => $table,
-        ], $isNew ? 201 : 200);
+        ], 201);
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
