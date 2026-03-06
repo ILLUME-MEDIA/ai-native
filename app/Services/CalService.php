@@ -70,18 +70,37 @@ class CalService
      */
     public function syncBookings(): array
     {
-        $result = $this->getBookings(['take' => 100]);
+        // v2 uses 'limit', v1 uses 'take' — send both so either version works
+        $result = $this->getBookings(['limit' => 250, 'take' => 250]);
 
         if (isset($result['error'])) {
             return $result;
         }
 
-        // Cal.com v2 returns { data: [...] }, v1 returns { bookings: [...] }
-        $bookings = $result['data'] ?? $result['bookings'] ?? [];
+        // Cal.com v2: { status, data: [...] }  or  { status, data: { bookings: [...] } }
+        // Cal.com v1: { bookings: [...] }
+        $data     = $result['data'] ?? null;
+        $bookings = [];
+
+        if (is_array($data)) {
+            // v2 nested: data.bookings
+            if (isset($data['bookings']) && is_array($data['bookings'])) {
+                $bookings = $data['bookings'];
+            }
+            // v2 flat: data is directly the array
+            elseif (array_is_list($data)) {
+                $bookings = $data;
+            }
+        }
+
+        // v1 fallback
+        if (empty($bookings)) {
+            $bookings = $result['bookings'] ?? [];
+        }
 
         if (empty($bookings)) {
-            Log::info("CalService sync [{$this->platform->slug}]: API returned 0 bookings. Response keys: " . implode(',', array_keys($result)));
-            return ['synced' => 0, 'debug' => array_keys($result)];
+            Log::info("CalService sync [{$this->platform->slug}]: 0 bookings. Keys: " . implode(',', array_keys($result)));
+            return ['synced' => 0, 'debug' => array_keys($result), 'raw_data_type' => gettype($data)];
         }
 
         $table   = $this->platform->getUsersTable();
