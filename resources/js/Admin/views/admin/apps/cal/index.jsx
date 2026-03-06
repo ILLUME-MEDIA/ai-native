@@ -62,7 +62,7 @@ function PlatformsTab() {
     useEffect(() => { load(); }, [load]);
 
     const openCreate = () => { setForm(PLATFORM_INIT); setEditing(null); setFormError(''); setSlugEdited(false); setShowModal(true); };
-    const openEdit   = (p)  => { setForm({ ...p, api_key: '' }); setEditing(p); setFormError(''); setSlugEdited(true); setShowModal(true); };
+    const openEdit   = (p)  => { setForm({ ...p, api_key: '', webhook_secret: '', _api_key_masked: p.api_key_masked, _webhook_secret_masked: p.webhook_secret_masked, _revealed_key: revealedKeys[p.id] || null }); setEditing(p); setFormError(''); setSlugEdited(true); setShowModal(true); };
     const openDelete = (p)  => { setEditing(p); setShowDelete(true); };
 
     const save = async () => {
@@ -263,7 +263,21 @@ function PlatformsTab() {
                         <Col md={6}>
                             <FormGroup>
                                 <FormLabel>API Key {editing && <small className="text-muted">(blank = keep existing)</small>}</FormLabel>
-                                <FormControl type="password" value={form.api_key} onChange={e => setForm(p => ({ ...p, api_key: e.target.value }))} placeholder="cal_live_..." />
+                                {editing && !form.api_key && (
+                                    <div className="d-flex gap-2 align-items-center mb-1">
+                                        <code className="text-muted small flex-grow-1">
+                                            {form._revealed_key ?? form._api_key_masked ?? '••••••••'}
+                                        </code>
+                                        {!form._revealed_key && (
+                                            <Button size="sm" variant="link" className="p-0 text-primary" onClick={async () => {
+                                                const { data } = await api(`platforms/${editing.id}/reveal-key`, { method: 'POST' });
+                                                setRevealedKeys(prev => ({ ...prev, [editing.id]: data.api_key }));
+                                                setForm(p => ({ ...p, _revealed_key: data.api_key }));
+                                            }}>Reveal</Button>
+                                        )}
+                                    </div>
+                                )}
+                                <FormControl type="password" value={form.api_key} onChange={e => setForm(p => ({ ...p, api_key: e.target.value }))} placeholder={editing ? 'New key (leave blank to keep current)' : 'cal_live_...'} />
                             </FormGroup>
                         </Col>
                         <Col md={6}>
@@ -275,7 +289,12 @@ function PlatformsTab() {
                                         : <small className="text-muted ms-1">(from Cal.com webhook settings)</small>
                                     }
                                 </FormLabel>
-                                <FormControl type="password" value={form.webhook_secret ?? ''} onChange={e => setForm(p => ({ ...p, webhook_secret: e.target.value }))} placeholder="whsec_..." />
+                                {editing && !form.webhook_secret && form._webhook_secret_masked && (
+                                    <div className="mb-1">
+                                        <code className="text-muted small">{form._webhook_secret_masked}</code>
+                                    </div>
+                                )}
+                                <FormControl type="password" value={form.webhook_secret ?? ''} onChange={e => setForm(p => ({ ...p, webhook_secret: e.target.value }))} placeholder={editing ? 'New secret (leave blank to keep)' : 'whsec_...'} />
                             </FormGroup>
                         </Col>
                         <Col md={8}>
