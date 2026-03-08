@@ -66,41 +66,55 @@ class CalService
     }
 
     /**
+     * Extract bookings array from a Cal.com API response.
+     * Handles v2 flat (data=[...]), v2 nested (data.bookings=[...]), v1 (bookings=[...]).
+     */
+    private function extractBookings(array $result): array
+    {
+        $data = $result['data'] ?? null;
+        if (is_array($data)) {
+            if (isset($data['bookings']) && is_array($data['bookings'])) {
+                return $data['bookings'];
+            }
+            if (array_is_list($data)) {
+                return $data;
+            }
+        }
+        return $result['bookings'] ?? [];
+    }
+
+    /**
      * Sync Cal.com bookings → cal_meetings + link users + create kanban cards.
+     * Paginates automatically — Cal.com v2 max limit is 100 per request.
      */
     public function syncBookings(): array
     {
-        // v2 uses 'limit', v1 uses 'take' — send both so either version works
-        $result = $this->getBookings(['limit' => 250, 'take' => 250]);
+        $allBookings = [];
+        $cursor      = null;
 
-        if (isset($result['error'])) {
-            return $result;
-        }
-
-        // Cal.com v2: { status, data: [...] }  or  { status, data: { bookings: [...] } }
-        // Cal.com v1: { bookings: [...] }
-        $data     = $result['data'] ?? null;
-        $bookings = [];
-
-        if (is_array($data)) {
-            // v2 nested: data.bookings
-            if (isset($data['bookings']) && is_array($data['bookings'])) {
-                $bookings = $data['bookings'];
+        do {
+            $params = ['limit' => 100, 'take' => 100]; // v2 uses limit, v1 uses take
+            if ($cursor) {
+                $params['cursor'] = $cursor;
             }
-            // v2 flat: data is directly the array
-            elseif (array_is_list($data)) {
-                $bookings = $data;
-            }
-        }
 
-        // v1 fallback
-        if (empty($bookings)) {
-            $bookings = $result['bookings'] ?? [];
-        }
+            $result = $this->getBookings($params);
+
+            if (isset($result['error'])) {
+                return $result;
+            }
+
+            $page        = $this->extractBookings($result);
+            $cursor      = $result['data']['nextCursor'] ?? $result['nextCursor'] ?? null;
+            $allBookings = array_merge($allBookings, $page);
+
+        } while (!empty($page) && count($page) >= 100 && $cursor);
+
+        $bookings = $allBookings;
 
         if (empty($bookings)) {
-            Log::info("CalService sync [{$this->platform->slug}]: 0 bookings. Keys: " . implode(',', array_keys($result)));
-            return ['synced' => 0, 'debug' => array_keys($result), 'raw_data_type' => gettype($data)];
+            Log::info("CalService sync [{$this->platform->slug}]: 0 bookings.");
+            return ['synced' => 0, 'kanban_cards_created' => 0];
         }
 
         $table   = $this->platform->getUsersTable();
