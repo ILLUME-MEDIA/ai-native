@@ -136,6 +136,10 @@ function KanbanCard({ card, index, onEdit, onDelete }) {
 // Override: show actions always on small screens
 function KanbanCardWrapper({ card, index, onEdit, onDelete }) {
     const isOverdue = card.due_date && new Date(card.due_date) < new Date();
+    const isMeeting = card.is_meeting_card;
+    const meetingUrl = card.metadata?.meeting_url;
+    const attendeeEmail = card.metadata?.attendee_email;
+
     return (
         <Draggable draggableId={String(card.id)} index={index}>
             {(provided, snapshot) => (
@@ -143,11 +147,21 @@ function KanbanCardWrapper({ card, index, onEdit, onDelete }) {
                     ref={provided.innerRef}
                     {...provided.draggableProps}
                     {...provided.dragHandleProps}
-                    className={`bg-white rounded-lg border shadow-sm p-3 mb-2 select-none transition-all group ${
+                    className={`rounded-lg border shadow-sm p-3 mb-2 select-none transition-all group ${
+                        isMeeting ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-200'
+                    } ${
                         snapshot.isDragging
                             ? 'shadow-xl ring-2 ring-indigo-400 rotate-1 scale-105'
-                            : 'hover:shadow-md border-gray-200 cursor-grab active:cursor-grabbing'
+                            : 'hover:shadow-md cursor-grab active:cursor-grabbing'
                     }`}>
+
+                    {/* Meeting badge */}
+                    {isMeeting && (
+                        <div className="flex items-center gap-1 mb-2">
+                            <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">📅 Cal Meeting</span>
+                        </div>
+                    )}
+
                     {card.labels?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mb-2">
                             {card.labels.map((l, i) => (
@@ -155,10 +169,29 @@ function KanbanCardWrapper({ card, index, onEdit, onDelete }) {
                             ))}
                         </div>
                     )}
+
                     <p className="text-sm font-medium text-gray-900 mb-1 leading-tight">{card.title}</p>
+
                     {card.description && (
                         <p className="text-xs text-gray-500 mb-2 line-clamp-2">{card.description}</p>
                     )}
+
+                    {/* Meeting-specific info */}
+                    {isMeeting && (
+                        <div className="mb-2 space-y-1">
+                            {attendeeEmail && (
+                                <p className="text-xs text-indigo-600 truncate" title={attendeeEmail}>✉️ {attendeeEmail}</p>
+                            )}
+                            {meetingUrl && (
+                                <a href={meetingUrl} target="_blank" rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    className="text-xs text-indigo-500 hover:text-indigo-700 hover:underline truncate block">
+                                    🔗 Join Meeting
+                                </a>
+                            )}
+                        </div>
+                    )}
+
                     <div className="flex items-center justify-between flex-wrap gap-1">
                         <PriorityBadge p={card.priority} />
                         <div className="flex items-center gap-2">
@@ -172,11 +205,16 @@ function KanbanCardWrapper({ card, index, onEdit, onDelete }) {
                             )}
                         </div>
                     </div>
+
                     <div className="flex gap-2 mt-2 pt-2 border-t border-gray-100">
-                        <button onClick={() => onEdit(card)}
-                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Edit</button>
+                        {isMeeting ? (
+                            <span className="text-xs text-gray-400 italic">Read-only (drag to move)</span>
+                        ) : (
+                            <button onClick={() => onEdit(card)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Edit</button>
+                        )}
                         <button onClick={() => onDelete(card)}
-                            className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                            className="text-xs text-red-500 hover:text-red-700 font-medium ml-auto">Delete</button>
                     </div>
                 </div>
             )}

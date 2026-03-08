@@ -128,6 +128,9 @@ class CalWebhookController extends Controller
         $firstColumn = $board->columns()->orderBy('position')->first();
         if (! $firstColumn) return;
 
+        // Don't duplicate if card already exists for this meeting
+        if (KanbanCard::where('source_meeting_id', $meeting->id)->exists()) return;
+
         $maxPos = KanbanCard::where('column_id', $firstColumn->id)->max('position') ?? -1;
 
         KanbanCard::create([

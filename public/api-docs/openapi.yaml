@@ -401,14 +401,37 @@ tags:
       **Cal.com Integration** — multi-platform booking management.
       Each platform has its own encrypted API key, webhook secret, and slug.
 
-      ### Webhook Setup
-      1. Create a platform and copy the `webhook_url`
-      2. Paste it into your Cal.com dashboard → Webhooks → Add Webhook
-      3. Set the webhook secret — must match the platform's `webhook_secret`
-      4. Events handled: BOOKING_CREATED, BOOKING_CONFIRMED, BOOKING_RESCHEDULED, BOOKING_CANCELLED, MEETING_ENDED
+      ### Complete Flow
 
-      ### Sync
-      Use `POST /api/admin/cal/platforms/{id}/sync` to pull existing bookings from Cal.com API.
+      **Real-time (Webhook):**
+      1. Someone books a meeting via a Cal.com URL
+      2. Cal.com sends a webhook to `POST /api/webhooks/cal/{slug}`
+      3. Webhook is verified with HMAC-SHA256 signature (`X-Cal-Signature-256` header)
+      4. Meeting is upserted into `cal_meetings`
+      5. Attendee email is matched against the platform's users table (passive — no auto-create)
+      6. If a Kanban board is linked to this platform, a **read-only meeting card** is auto-created in the board's first column
+
+      **Manual Sync:**
+      Use `POST /api/admin/cal/platforms/{id}/sync` to pull all existing bookings from Cal.com API (max 100 per page, cursor-paginated). Same upsert + Kanban card logic applies.
+
+      ### Webhook Setup
+      1. Create a platform via `POST /api/admin/cal/platforms`
+      2. Copy the `webhook_url` from the platform response
+      3. In Cal.com dashboard → Settings → Webhooks → Add Webhook, paste the URL
+      4. Set a webhook secret and save it in the platform's `webhook_secret` field
+      5. Events handled: BOOKING_CREATED, BOOKING_CONFIRMED, BOOKING_RESCHEDULED, BOOKING_CANCELLED, MEETING_ENDED
+
+      ### User Linking
+      When a booking arrives, the attendee email is compared against the platform's users table.
+      If a match is found, `openorg_user_id` and `user_source` are set on the meeting and Kanban card.
+      No user is auto-created — use `POST /api/cal/{slug}/{table}/users` to pre-register users.
+
+      ### Kanban Integration
+      Link a Kanban board to a Cal platform via `cal_platform_id` on the board.
+      Every new booking auto-creates a card in the board's first column with:
+      - `is_meeting_card: true` (read-only — edit blocked, drag & drop allowed)
+      - `source_meeting_id` — links back to the `cal_meetings` record
+      - `metadata.meeting_url`, `metadata.attendee_email`, `metadata.start_time`
 
   - name: Platform User Auth
     description: |
@@ -436,20 +459,30 @@ tags:
     description: |
       **Kanban Board** — multi-board task management with drag-and-drop.
 
+      ### Board Structure
+      Board → Columns (ordered by `position`) → Cards (ordered by `position`)
+      Creating a board auto-creates 4 default columns: To Do, In Progress, Review, Done.
+
       ### Drag and Drop
       When a card is dragged to a different column the frontend calls:
       `PATCH /api/admin/kanban/cards/{id}/move` with `{ column_id, position }`
-
       The frontend applies an optimistic update immediately and rolls back on error.
 
-      ### Platform Link
-      A board can be linked to a `cal_platform_id`. When a meeting is created for
-      that platform, a **read-only meeting card** is auto-created in the board's first column.
-      Meeting cards can only be moved between columns (drag & drop). Edit is disabled.
+      ### Cal.com Meeting Cards
+      Link a board to a Cal.com platform via `cal_platform_id`. When a booking arrives
+      (via webhook or sync), a **read-only meeting card** is auto-created in the first column.
 
-      ### Board structure
-      Board → Columns (ordered by position) → Cards (ordered by position)
-      Creating a board auto-creates 4 default columns: To Do, In Progress, Review, Done.
+      Meeting cards (`is_meeting_card: true`):
+      - Show a "📅 Cal Meeting" badge and attendee email/meeting URL in the UI
+      - Cannot be edited (PUT returns 422) — only drag & drop between columns is allowed
+      - Are linked to their source meeting via `source_meeting_id`
+      - Have `metadata.meeting_url`, `metadata.attendee_email`, `metadata.start_time`, `metadata.end_time`
+      - Are deduplicated — only one card per meeting is ever created
+
+      ### User Assignment
+      Cards have `openorg_user_id` + `user_source` (the DB table name).
+      Meeting cards inherit these from the booking attendee email match.
+      Manual cards can set `openorg_user_id` directly.
 
 paths:
 
