@@ -84,8 +84,9 @@ class CalService
     }
 
     /**
-     * Sync Cal.com bookings → cal_meetings + link users + create kanban cards.
-     * Paginates automatically — Cal.com v2 max limit is 100 per request.
+     * Sync Cal.com bookings → cal_meetings + link users + create/move kanban cards.
+     * - New meetings: card created in column matching its status.
+     * - Existing meetings whose status changed: card is moved to the matching column.
      */
     public function syncBookings(): array
     {
@@ -93,16 +94,11 @@ class CalService
         $cursor      = null;
 
         do {
-            $params = ['limit' => 100, 'take' => 100]; // v2 uses limit, v1 uses take
-            if ($cursor) {
-                $params['cursor'] = $cursor;
-            }
+            $params = ['limit' => 100, 'take' => 100];
+            if ($cursor) $params['cursor'] = $cursor;
 
             $result = $this->getBookings($params);
-
-            if (isset($result['error'])) {
-                return $result;
-            }
+            if (isset($result['error'])) return $result;
 
             $page        = $this->extractBookings($result);
             $cursor      = $result['data']['nextCursor'] ?? $result['nextCursor'] ?? null;
@@ -110,44 +106,31 @@ class CalService
 
         } while (!empty($page) && count($page) >= 100 && $cursor);
 
-        $bookings = $allBookings;
-
-        if (empty($bookings)) {
-            Log::info("CalService sync [{$this->platform->slug}]: 0 bookings.");
-            return ['synced' => 0, 'kanban_cards_created' => 0];
+        if (empty($allBookings)) {
+            return ['synced' => 0, 'kanban_cards_created' => 0, 'kanban_cards_moved' => 0];
         }
 
-        $table   = $this->platform->getUsersTable();
-        $synced  = 0;
-        $created = 0;
+        $table        = $this->platform->getUsersTable();
+        $synced       = 0;
+        $cardsCreated = 0;
+        $cardsMoved   = 0;
 
-        foreach ($bookings as $booking) {
+        $board = KanbanBoard::where('cal_platform_id', $this->platform->id)->orderBy('id')->first();
+
+        foreach ($allBookings as $booking) {
             $uid       = $booking['uid'] ?? null;
             $startTime = $booking['startTime'] ?? null;
-
             if (empty($startTime)) continue;
 
             $attendees     = $booking['attendees'] ?? [];
             $attendee      = $attendees[0] ?? [];
             $attendeeEmail = $attendee['email'] ?? null;
             $attendeeName  = $attendee['name']  ?? null;
+            $status        = strtolower($booking['status'] ?? 'upcoming');
 
-            // ── Link to existing user (passive — no auto-create) ──────────────
-            $userId     = null;
-            $userSource = null;
-            if ($attendeeEmail) {
-                $user = DB::table($table)
-                    ->where('cal_platform_id', $this->platform->id)
-                    ->where('email', strtolower(trim($attendeeEmail)))
-                    ->first();
-                if ($user) {
-                    $userId     = $user->id;
-                    $userSource = $table;
-                }
-            }
+            [$userId, $userSource] = $this->findUser($attendeeEmail, $table);
 
-            // ── Upsert meeting ───────────────────────────────────────────────
-            $isNew   = ! CalMeeting::where('booking_uid', $uid)
+            $isNew = ! CalMeeting::where('booking_uid', $uid)
                 ->where('cal_platform_id', $this->platform->id)
                 ->exists();
 
@@ -162,7 +145,7 @@ class CalService
                     'attendee_timezone' => $attendee['timeZone'] ?? null,
                     'start_time'        => $startTime,
                     'end_time'          => $booking['endTime'] ?? null,
-                    'status'            => strtolower($booking['status'] ?? 'upcoming'),
+                    'status'            => $status,
                     'meeting_url'       => $booking['videoCallData']['url'] ?? null,
                     'openorg_user_id'   => $userId,
                     'user_source'       => $userSource,
@@ -171,35 +154,37 @@ class CalService
             );
             $synced++;
 
-            // ── Create kanban card for new meetings only ──────────────────────
+            if (!$board) continue;
+
             if ($isNew) {
-                $this->createKanbanCard($meeting, $userId, $userSource);
-                $created++;
+                if ($this->createKanbanCard($meeting, $board, $userId, $userSource)) $cardsCreated++;
+            } else {
+                if ($this->moveKanbanCardToStatus($meeting, $board, $status)) $cardsMoved++;
             }
         }
 
-        return ['synced' => $synced, 'kanban_cards_created' => $created];
+        return [
+            'synced'               => $synced,
+            'kanban_cards_created' => $cardsCreated,
+            'kanban_cards_moved'   => $cardsMoved,
+        ];
     }
 
-    private function createKanbanCard(CalMeeting $meeting, ?int $userId, ?string $userSource): void
+    /**
+     * Create a kanban card in the column matching the meeting's status.
+     * Returns true if created, false if skipped (duplicate / no board).
+     */
+    public function createKanbanCard(CalMeeting $meeting, KanbanBoard $board, ?int $userId, ?string $userSource): bool
     {
-        $board = KanbanBoard::where('cal_platform_id', $this->platform->id)
-            ->orderBy('id')
-            ->first();
+        if (KanbanCard::where('source_meeting_id', $meeting->id)->exists()) return false;
 
-        if (! $board) return;
+        $column = $board->findColumnByStatus($meeting->status ?? 'upcoming');
+        if (!$column) return false;
 
-        $firstColumn = $board->columns()->orderBy('position')->first();
-        if (! $firstColumn) return;
-
-        // Don't duplicate — check if card already exists for this meeting
-        $exists = KanbanCard::where('source_meeting_id', $meeting->id)->exists();
-        if ($exists) return;
-
-        $maxPos = KanbanCard::where('column_id', $firstColumn->id)->max('position') ?? -1;
+        $maxPos = KanbanCard::where('column_id', $column->id)->max('position') ?? -1;
 
         KanbanCard::create([
-            'column_id'         => $firstColumn->id,
+            'column_id'         => $column->id,
             'board_id'          => $board->id,
             'title'             => $meeting->title,
             'description'       => $meeting->description,
@@ -218,5 +203,45 @@ class CalService
                 'end_time'       => $meeting->end_time?->toIso8601String(),
             ],
         ]);
+
+        return true;
+    }
+
+    /**
+     * Move an existing kanban card to the column matching the new meeting status.
+     * Returns true if moved, false if no card or already in correct column.
+     */
+    public function moveKanbanCardToStatus(CalMeeting $meeting, KanbanBoard $board, string $status): bool
+    {
+        $card = KanbanCard::where('source_meeting_id', $meeting->id)->first();
+        if (!$card) return false;
+
+        $targetColumn = $board->findColumnByStatus($status);
+        if (!$targetColumn || $card->column_id === $targetColumn->id) return false;
+
+        $maxPos = KanbanCard::where('column_id', $targetColumn->id)->max('position') ?? -1;
+        $card->update([
+            'column_id' => $targetColumn->id,
+            'board_id'  => $board->id,
+            'position'  => $maxPos + 1,
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Find a user by email in the platform's configured users table.
+     * Returns [userId, tableName] or [null, null].
+     */
+    private function findUser(?string $email, string $table): array
+    {
+        if (!$email) return [null, null];
+
+        $user = DB::table($table)
+            ->where('cal_platform_id', $this->platform->id)
+            ->where('email', strtolower(trim($email)))
+            ->first();
+
+        return $user ? [$user->id, $table] : [null, null];
     }
 }

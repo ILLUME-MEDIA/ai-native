@@ -409,29 +409,46 @@ tags:
       3. Webhook is verified with HMAC-SHA256 signature (`X-Cal-Signature-256` header)
       4. Meeting is upserted into `cal_meetings`
       5. Attendee email is matched against the platform's users table (passive — no auto-create)
-      6. If a Kanban board is linked to this platform, a **read-only meeting card** is auto-created in the board's first column
+      6. A Kanban card is auto-created in the column matching the meeting's status
 
       **Manual Sync:**
-      Use `POST /api/admin/cal/platforms/{id}/sync` to pull all existing bookings from Cal.com API (max 100 per page, cursor-paginated). Same upsert + Kanban card logic applies.
+      Use `POST /api/admin/cal/platforms/{id}/sync` to pull all existing bookings from Cal.com API
+      (max 100 per page, cursor-paginated). Same upsert + Kanban card logic applies.
+      - New meetings → card created in column matching status
+      - Existing meetings whose status changed → card is moved to the matching column
+
+      **Status → Kanban Column mapping:**
+      - `upcoming` / `confirmed` / `rescheduled` → "To Do"
+      - `cancelled` → "Cancelled"
+      - `completed` → "Done"
+      (Fallback: first column for active statuses, last column for terminal statuses)
 
       ### Webhook Setup
-      1. Create a platform via `POST /api/admin/cal/platforms`
-      2. Copy the `webhook_url` from the platform response
+      1. Create a platform via `POST /api/admin/cal/platforms` (a Kanban board is auto-created with it)
+      2. Copy the `webhook_url` from the platform response (also shown in the admin UI)
       3. In Cal.com dashboard → Settings → Webhooks → Add Webhook, paste the URL
       4. Set a webhook secret and save it in the platform's `webhook_secret` field
       5. Events handled: BOOKING_CREATED, BOOKING_CONFIRMED, BOOKING_RESCHEDULED, BOOKING_CANCELLED, MEETING_ENDED
+      6. When status changes via webhook, the Kanban card is automatically moved to the correct column
+
+      ### Auto-created Kanban Board
+      Creating a Cal platform (`POST /api/admin/cal/platforms`) automatically creates a linked Kanban board
+      with 5 columns: **To Do, In Progress, Review, Done, Cancelled**.
+      The `kanban_board` field in the platform response shows the linked board id + name.
 
       ### User Linking
-      When a booking arrives, the attendee email is compared against the platform's users table.
+      When a booking arrives, the attendee email is compared against the platform's configured users table
+      (`users_table` field in platform response, defaults to `openorg_users`).
       If a match is found, `openorg_user_id` and `user_source` are set on the meeting and Kanban card.
       No user is auto-created — use `POST /api/cal/{slug}/{table}/users` to pre-register users.
+      Different user tables per platform are supported via `users_entity_id` (Section Builder entity).
 
       ### Kanban Integration
-      Link a Kanban board to a Cal platform via `cal_platform_id` on the board.
-      Every new booking auto-creates a card in the board's first column with:
-      - `is_meeting_card: true` (read-only — edit blocked, drag & drop allowed)
-      - `source_meeting_id` — links back to the `cal_meetings` record
-      - `metadata.meeting_url`, `metadata.attendee_email`, `metadata.start_time`
+      The auto-created board is linked via `cal_platform_id`. Meeting cards (`is_meeting_card: true`):
+      - Are placed in the column matching meeting status
+      - Are moved automatically when meeting status changes
+      - Cannot be edited — only drag & drop between columns is allowed
+      - Show attendee email and Join Meeting link in the UI
 
   - name: Platform User Auth
     description: |
@@ -461,7 +478,8 @@ tags:
 
       ### Board Structure
       Board → Columns (ordered by `position`) → Cards (ordered by `position`)
-      Creating a board auto-creates 4 default columns: To Do, In Progress, Review, Done.
+      Manually created boards auto-create 4 default columns: To Do, In Progress, Review, Done.
+      Boards auto-created via Cal platform creation get 5 columns: To Do, In Progress, Review, Done, Cancelled.
 
       ### Drag and Drop
       When a card is dragged to a different column the frontend calls:
@@ -6190,7 +6208,11 @@ paths:
     post:
       tags: [Cal.com]
       summary: Sync bookings from Cal.com into local meetings table
-      description: Fetches up to 250 bookings and upserts them via booking_uid. Also creates kanban cards for new bookings if a board is linked to this platform.
+      description: |
+        Cursor-paginated sync (max 100 per page) — fetches all bookings and upserts via `booking_uid`.
+        - New meetings: Kanban card is created in the column matching the meeting's status.
+        - Existing meetings whose status changed: Kanban card is moved to the matching column.
+        Status → column mapping: upcoming/confirmed/rescheduled → "To Do", cancelled → "Cancelled", completed → "Done".
       security: [{ sanctumCookie: [] }]
       parameters:
         - name: id
@@ -6205,8 +6227,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  synced: { type: integer, example: 12 }
-                  kanban_cards_created: { type: integer, example: 3 }
+                  synced: { type: integer, example: 12, description: "Total meetings upserted" }
+                  kanban_cards_created: { type: integer, example: 3, description: "New kanban cards created" }
+                  kanban_cards_moved: { type: integer, example: 2, description: "Existing cards moved to new column due to status change" }
 
   /api/admin/cal/platforms/{id}/test:
     post:

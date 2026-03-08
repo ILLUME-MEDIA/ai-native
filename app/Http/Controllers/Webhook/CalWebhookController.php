@@ -7,6 +7,7 @@ use App\Models\CalMeeting;
 use App\Models\CalPlatform;
 use App\Models\KanbanBoard;
 use App\Models\KanbanCard;
+use App\Services\CalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -111,48 +112,16 @@ class CalWebhookController extends Controller
             ]
         );
 
-        // ── Auto-create kanban card for new bookings only ──────────────────────
-        if ($isNew) {
-            $this->createKanbanCard($meeting, $platform, $userId, $userSource);
+        $service = new CalService($platform);
+        $board   = KanbanBoard::where('cal_platform_id', $platform->id)->orderBy('id')->first();
+
+        if ($board) {
+            if ($isNew) {
+                $service->createKanbanCard($meeting, $board, $userId, $userSource);
+            } else {
+                $service->moveKanbanCardToStatus($meeting, $board, $status);
+            }
         }
-    }
-
-    private function createKanbanCard(CalMeeting $meeting, CalPlatform $platform, ?int $userId, ?string $userSource): void
-    {
-        $board = KanbanBoard::where('cal_platform_id', $platform->id)
-            ->orderBy('id')
-            ->first();
-
-        if (! $board) return;
-
-        $firstColumn = $board->columns()->orderBy('position')->first();
-        if (! $firstColumn) return;
-
-        // Don't duplicate if card already exists for this meeting
-        if (KanbanCard::where('source_meeting_id', $meeting->id)->exists()) return;
-
-        $maxPos = KanbanCard::where('column_id', $firstColumn->id)->max('position') ?? -1;
-
-        KanbanCard::create([
-            'column_id'         => $firstColumn->id,
-            'board_id'          => $board->id,
-            'title'             => $meeting->title,
-            'description'       => $meeting->description,
-            'assignee'          => $meeting->attendee_name,
-            'openorg_user_id'   => $userId,
-            'user_source'       => $userSource,
-            'due_date'          => $meeting->start_time?->toDateString(),
-            'priority'          => 'medium',
-            'position'          => $maxPos + 1,
-            'source_meeting_id' => $meeting->id,
-            'is_meeting_card'   => true,
-            'metadata'          => [
-                'meeting_url'    => $meeting->meeting_url,
-                'attendee_email' => $meeting->attendee_email,
-                'start_time'     => $meeting->start_time?->toIso8601String(),
-                'end_time'       => $meeting->end_time?->toIso8601String(),
-            ],
-        ]);
     }
 
     private function cancelBooking(CalPlatform $platform, array $payload): void
@@ -160,9 +129,18 @@ class CalWebhookController extends Controller
         $uid = $payload['uid'] ?? null;
         if (! $uid) return;
 
-        CalMeeting::where('booking_uid', $uid)
+        $meeting = CalMeeting::where('booking_uid', $uid)
             ->where('cal_platform_id', $platform->id)
-            ->update(['status' => 'cancelled', 'metadata' => $payload]);
+            ->first();
+
+        if (! $meeting) return;
+
+        $meeting->update(['status' => 'cancelled', 'metadata' => $payload]);
+
+        $board = KanbanBoard::where('cal_platform_id', $platform->id)->orderBy('id')->first();
+        if ($board) {
+            (new CalService($platform))->moveKanbanCardToStatus($meeting, $board, 'cancelled');
+        }
     }
 
     private function completeBooking(CalPlatform $platform, array $payload): void
@@ -170,8 +148,17 @@ class CalWebhookController extends Controller
         $uid = $payload['uid'] ?? null;
         if (! $uid) return;
 
-        CalMeeting::where('booking_uid', $uid)
+        $meeting = CalMeeting::where('booking_uid', $uid)
             ->where('cal_platform_id', $platform->id)
-            ->update(['status' => 'completed']);
+            ->first();
+
+        if (! $meeting) return;
+
+        $meeting->update(['status' => 'completed']);
+
+        $board = KanbanBoard::where('cal_platform_id', $platform->id)->orderBy('id')->first();
+        if ($board) {
+            (new CalService($platform))->moveKanbanCardToStatus($meeting, $board, 'completed');
+        }
     }
 }

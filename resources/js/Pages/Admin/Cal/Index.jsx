@@ -138,7 +138,10 @@ function PlatformsTab() {
         setSyncing(p.id);
         try {
             const { data } = await api(`platforms/${p.id}/sync`, { method: 'POST' });
-            alert(`Synced ${data.synced} meetings from Cal.com`);
+            const parts = [`Synced ${data.synced} meeting(s)`];
+            if (data.kanban_cards_created > 0) parts.push(`${data.kanban_cards_created} card(s) created`);
+            if (data.kanban_cards_moved   > 0) parts.push(`${data.kanban_cards_moved} card(s) moved`);
+            alert(parts.join(', '));
             load();
         } catch (e) {
             alert(e.response?.data?.message || 'Sync failed');
@@ -215,7 +218,14 @@ function PlatformsTab() {
                                     Webhook Secret: <span className="font-mono">{p.webhook_secret_masked}</span>
                                 </div>
                             )}
-                            <p className="text-xs text-gray-400 mb-3">{p.meetings_count} meeting(s)</p>
+                            <div className="flex items-center gap-3 text-xs text-gray-400 mb-3">
+                                <span>{p.meetings_count} meeting(s)</span>
+                                {p.kanban_board && (
+                                    <a href="/admin/kanban" className="flex items-center gap-1 text-indigo-600 hover:underline font-medium">
+                                        📋 {p.kanban_board.name}
+                                    </a>
+                                )}
+                            </div>
                             <div className="flex flex-wrap gap-1.5">
                                 <Btn size="xs" variant="ghost" onClick={() => openEdit(p)}>Edit</Btn>
                                 <Btn size="xs" variant="ghost" onClick={() => testConn(p)} disabled={testing === p.id}>
@@ -234,6 +244,11 @@ function PlatformsTab() {
             {modal && (
                 <Modal title={modal === 'create' ? 'Add Cal.com Platform' : `Edit: ${editing?.name}`} onClose={() => setModal(null)}>
                     <div className="space-y-4">
+                        {modal === 'create' && (
+                            <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-xs text-indigo-700">
+                                A Kanban board with 5 columns (To Do, In Progress, Review, Done, Cancelled) will be auto-created and linked to this platform.
+                            </div>
+                        )}
                         <Field label="Name *">
                             <Input value={form.name} onChange={f('name')} placeholder="My Platform" />
                         </Field>
