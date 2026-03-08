@@ -240,17 +240,23 @@ function KanbanColumnComp({ column, cards, onAddCard, onEditCard, onDeleteCard, 
 // ── Board Modal ───────────────────────────────────────────────────────────────
 
 function BoardModal({ board, onClose, onSave }) {
-    const [form, setForm] = useState(board ?? { name: '', description: '', color: '#6366f1', is_active: true });
-    const [saving, setSaving] = useState(false);
-    const [error, setError]   = useState('');
+    const [form, setForm]         = useState(board ?? { name: '', description: '', color: '#6366f1', is_active: true, cal_platform_id: '' });
+    const [saving, setSaving]     = useState(false);
+    const [error, setError]       = useState('');
+    const [calPlatforms, setCalPlatforms] = useState([]);
+
+    useEffect(() => {
+        axios.get('/api/admin/cal/platforms').then(r => setCalPlatforms(r.data)).catch(() => {});
+    }, []);
 
     const save = async () => {
         setSaving(true); setError('');
         try {
+            const payload = { ...form, cal_platform_id: form.cal_platform_id || null };
             if (board) {
-                await api(`boards/${board.id}`, { method: 'PUT', data: form });
+                await api(`boards/${board.id}`, { method: 'PUT', data: payload });
             } else {
-                await api('boards', { method: 'POST', data: form });
+                await api('boards', { method: 'POST', data: payload });
             }
             onSave();
         } catch (e) {
@@ -270,6 +276,18 @@ function BoardModal({ board, onClose, onSave }) {
                 </Field>
                 <Field label="Description">
                     <Textarea value={form.description} onChange={f('description')} placeholder="Optional description" />
+                </Field>
+                <Field label="Link to Cal.com Platform (optional)">
+                    <select value={form.cal_platform_id ?? ''} onChange={f('cal_platform_id')}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">— None (manual board) —</option>
+                        {calPlatforms.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                    </select>
+                    {form.cal_platform_id && (
+                        <p className="text-xs text-indigo-600 mt-1">New Cal.com bookings from this platform will auto-create cards in the first column.</p>
+                    )}
                 </Field>
                 <Field label="Color">
                     <div className="flex gap-2">
@@ -447,6 +465,9 @@ function BoardSelector({ boards, selected, onSelect, onCreateBoard }) {
                     <span className="w-2 h-2 rounded-full" style={{ background: b.color }} />
                     {b.name}
                     <span className="text-xs opacity-70">({b.cards_count})</span>
+                    {b.cal_platform_id && (
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 font-normal">📅 Cal</span>
+                    )}
                 </button>
             ))}
             <Btn onClick={onCreateBoard} variant="ghost">+ New Board</Btn>

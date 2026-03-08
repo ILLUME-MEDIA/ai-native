@@ -85,7 +85,7 @@ function Select({ value, onChange, children }) {
 
 // ── Platforms Tab ─────────────────────────────────────────────────────────────
 
-const EMPTY_PLATFORM = { name: '', slug: '', api_key: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true };
+const EMPTY_PLATFORM = { name: '', slug: '', api_key: '', webhook_secret: '', base_url: 'https://api.cal.com/v2', color: '#6366f1', is_active: true };
 
 function PlatformsTab() {
     const [platforms, setPlatforms] = useState([]);
@@ -109,7 +109,7 @@ function PlatformsTab() {
     useEffect(() => { load(); }, [load]);
 
     const openCreate = () => { setForm(EMPTY_PLATFORM); setEditing(null); setError(''); setModal('create'); };
-    const openEdit   = (p) => { setForm({ ...p, api_key: '' }); setEditing(p); setError(''); setModal('edit'); };
+    const openEdit   = (p) => { setForm({ ...p, api_key: '', webhook_secret: '' }); setEditing(p); setError(''); setModal('edit'); };
 
     const save = async () => {
         setSaving(true); setError('');
@@ -200,6 +200,21 @@ function PlatformsTab() {
                                     <button onClick={() => revealKey(p)} className="ml-2 text-indigo-500 hover:underline text-xs">Reveal</button>
                                 )}
                             </div>
+                            {p.webhook_url && (
+                                <div className="text-xs text-gray-500 mb-1 flex items-center gap-1 flex-wrap">
+                                    <span className="font-medium text-gray-700">Webhook:</span>
+                                    <span className="font-mono text-gray-400 truncate max-w-[160px]" title={p.webhook_url}>{p.webhook_url}</span>
+                                    <button
+                                        onClick={() => { navigator.clipboard.writeText(p.webhook_url); alert('Webhook URL copied!'); }}
+                                        className="text-indigo-500 hover:underline text-xs shrink-0"
+                                    >Copy</button>
+                                </div>
+                            )}
+                            {p.webhook_secret_masked && (
+                                <div className="text-xs text-gray-400 mb-1">
+                                    Webhook Secret: <span className="font-mono">{p.webhook_secret_masked}</span>
+                                </div>
+                            )}
                             <p className="text-xs text-gray-400 mb-3">{p.meetings_count} meeting(s)</p>
                             <div className="flex flex-wrap gap-1.5">
                                 <Btn size="xs" variant="ghost" onClick={() => openEdit(p)}>Edit</Btn>
@@ -230,6 +245,23 @@ function PlatformsTab() {
                         <Field label="API Key">
                             <Input value={form.api_key} onChange={f('api_key')} type="password" placeholder={modal === 'edit' ? 'Leave blank to keep existing' : 'cal_live_...'} />
                         </Field>
+                        <Field label="Webhook Secret (optional — for signature verification)">
+                            <Input value={form.webhook_secret} onChange={f('webhook_secret')} type="password" placeholder={modal === 'edit' ? 'Leave blank to keep existing' : 'your-secret'} />
+                        </Field>
+                        {modal === 'edit' && editing?.webhook_url && (
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs">
+                                <div className="font-medium text-gray-700 mb-1">Cal.com Webhook URL</div>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono text-gray-500 break-all flex-1">{editing.webhook_url}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => { navigator.clipboard.writeText(editing.webhook_url); alert('Copied!'); }}
+                                        className="text-indigo-600 hover:underline shrink-0 font-medium"
+                                    >Copy</button>
+                                </div>
+                                <p className="text-gray-400 mt-1">Add this URL as a webhook in your Cal.com dashboard to get real-time booking notifications.</p>
+                            </div>
+                        )}
                         <Field label="Cal.com API Base URL">
                             <Input value={form.base_url} onChange={f('base_url')} placeholder="https://api.cal.com/v2" />
                         </Field>

@@ -6031,9 +6031,9 @@ paths:
           schema: { type: string, example: my-platform }
         - name: X-Cal-Signature-256
           in: header
-          required: true
+          required: false
           schema: { type: string }
-          description: HMAC-SHA256 of raw request body with webhook_secret
+          description: HMAC-SHA256 of raw request body with webhook_secret. Only required if the platform has a webhook_secret configured.
       requestBody:
         required: true
         content:
@@ -6157,7 +6157,7 @@ paths:
     post:
       tags: [Cal.com]
       summary: Sync bookings from Cal.com into local meetings table
-      description: Fetches up to 100 bookings and upserts them via booking_uid.
+      description: Fetches up to 250 bookings and upserts them via booking_uid. Also creates kanban cards for new bookings if a board is linked to this platform.
       security: [{ sanctumCookie: [] }]
       parameters:
         - name: id
@@ -6173,6 +6173,7 @@ paths:
                 type: object
                 properties:
                   synced: { type: integer, example: 12 }
+                  kanban_cards_created: { type: integer, example: 3 }
 
   /api/admin/cal/platforms/{id}/test:
     post:
