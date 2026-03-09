@@ -755,17 +755,20 @@ Route::post('/auth/token', function (\Illuminate\Http\Request $request) {
 
 
 // ── Platform User Auth (Public API — per Cal platform) ─────────────────────────
-// URL: /api/cal/{platform-slug}/{table}/users
-// {table} = exact DB table name (openorg_users, se_xdstudio_users, etc.)
-// GET  /api/cal/{slug}/{table}/users?email=...  → get user profile by email (requires SITE_API_KEY)
-// POST /api/cal/{slug}/{table}/users            → find-or-create user + return token (requires SITE_API_KEY)
-// GET  /api/cal/{slug}/{table}/meetings         → public list; pass user token as Bearer for user-filtered
-Route::prefix('cal/{slug}/{table}')->group(function () {
+// {table} = DB table name (openorg_users, se_xdstudio_users …)
+// Platform auto-resolved from table: openorg_users → platform(users_entity_id IS NULL)
+//                                     se_xyz_users  → SectionEntity → platform(users_entity_id)
+// GET  /api/cal/{table}/users?email=  → get user profile          (SITE_API_KEY)
+// POST /api/cal/{table}/users         → find-or-create + token     (SITE_API_KEY)
+// GET  /api/cal/{table}/meetings      → public; Bearer token = user-filtered + kanban_card
+// GET  /api/cal/{table}/cards?email=  → cards by email param or Bearer token
+Route::prefix('cal/{table}')->group(function () {
     Route::middleware(['site.api.key', 'throttle:60,1'])->group(function () {
         Route::get('users',  [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'show']);
         Route::post('users', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'store']);
     });
     Route::middleware(['throttle:60,1'])->group(function () {
         Route::get('meetings', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'meetings']);
+        Route::get('cards',    [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'cards']);
     });
 });
