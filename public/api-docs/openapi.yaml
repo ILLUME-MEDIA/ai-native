@@ -6579,13 +6579,17 @@ paths:
   /api/admin/kanban/boards:
     get:
       tags: [Kanban]
-      summary: List all boards (optionally filtered by platform)
+      summary: List all boards (optionally filtered by platform or email)
       security: [{ sanctumCookie: [] }]
       parameters:
         - name: platform_id
           in: query
           schema: { type: integer }
           description: Filter boards linked to a specific Cal.com platform
+        - name: email
+          in: query
+          schema: { type: string, format: email }
+          description: Filter boards that have at least one card matching this attendee email or assignee
       responses:
         "200":
           description: Array of boards
@@ -6614,15 +6618,24 @@ paths:
     get:
       tags: [Kanban]
       summary: Get board with all columns and cards
+      description: |
+        Returns the board with all columns and their cards.
+        Use `?email=user@example.com` to filter cards by attendee email (meeting cards) or assignee field (manual cards).
+        This is useful for showing a user's personal kanban view.
       security: [{ sanctumCookie: [] }]
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: integer }
+        - name: email
+          in: query
+          required: false
+          schema: { type: string, format: email }
+          description: Filter cards by attendee email (meeting cards) or assignee email (manual cards)
       responses:
         "200":
-          description: Board with nested columns and cards
+          description: Board with nested columns and cards (filtered if email provided)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/KanbanBoardFull" }
@@ -6761,6 +6774,48 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/KanbanCard" }
+
+  /api/admin/kanban/cards:
+    get:
+      tags: [Kanban]
+      summary: Get all cards by email (across all boards)
+      description: |
+        Returns all kanban cards matching the given email — no board ID needed.
+        Matches against `metadata.attendee_email` (meeting cards) or `assignee` field (manual cards).
+        Each card includes `column_name` and `column_color` for display.
+      security: [{ sanctumCookie: [] }]
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema: { type: string, format: email }
+          description: Attendee email or assignee email to filter by
+        - name: board_id
+          in: query
+          required: false
+          schema: { type: integer }
+          description: Optionally restrict to a specific board
+        - name: platform_id
+          in: query
+          required: false
+          schema: { type: integer }
+          description: Optionally restrict to boards linked to a Cal.com platform
+      responses:
+        "200":
+          description: Flat array of matching cards with column info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: "#/components/schemas/KanbanCard"
+                    - type: object
+                      properties:
+                        column_name:  { type: string, example: "To Do" }
+                        column_color: { type: string, example: "#e5e7eb" }
+        "422":
+          description: email parameter missing
 
   /api/admin/kanban/cards/{id}:
     put:

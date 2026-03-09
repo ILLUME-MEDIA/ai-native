@@ -15,18 +15,43 @@ class KanbanController extends Controller
     public function boardsIndex(Request $request): JsonResponse
     {
         $query = KanbanBoard::withCount('cards')->orderBy('name');
+
         if ($platformId = $request->query('platform_id')) {
             $query->where('cal_platform_id', $platformId);
         }
+
+        // Filter boards that have at least one card matching the given email
+        if ($email = trim($request->query('email', ''))) {
+            $query->whereHas('cards', function ($q) use ($email) {
+                $q->where(function ($sub) use ($email) {
+                    $sub->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.attendee_email')) = ?", [$email])
+                        ->orWhere('assignee', $email);
+                });
+            });
+        }
+
         return response()->json($query->get());
     }
 
-    public function boardsShow(KanbanBoard $board): JsonResponse
+    public function boardsShow(Request $request, KanbanBoard $board): JsonResponse
     {
-        $board->load(['columns.cards']);
+        $email = trim($request->query('email', ''));
+
+        $board->load(['columns.cards' => function ($q) use ($email) {
+            if ($email) {
+                $q->where(function ($sub) use ($email) {
+                    // Match by attendee_email stored in metadata JSON
+                    $sub->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.attendee_email')) = ?", [$email])
+                        // OR match by assignee name (for manual cards)
+                        ->orWhere('assignee', $email);
+                });
+            }
+        }]);
+
         $board->columns->each(function ($col) {
             $col->setRelation('cards', $col->cards->map(fn ($c) => $this->formatCard($c)));
         });
+
         return response()->json($board);
     }
 
@@ -113,6 +138,44 @@ class KanbanController extends Controller
                 ->update(['position' => $item['position']]);
         }
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * GET /api/admin/kanban/cards?email=xxx — get all cards by attendee email across all boards.
+     * Also supports ?board_id= and ?platform_id= filters.
+     */
+    public function cardsByEmail(Request $request): JsonResponse
+    {
+        $email      = trim($request->query('email', ''));
+        $boardId    = $request->query('board_id');
+        $platformId = $request->query('platform_id');
+
+        if (!$email) {
+            return response()->json(['message' => 'email parameter is required.'], 422);
+        }
+
+        $query = KanbanCard::with(['column'])
+            ->where(function ($q) use ($email) {
+                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.attendee_email')) = ?", [$email])
+                  ->orWhere('assignee', $email);
+            })
+            ->orderBy('due_date');
+
+        if ($boardId) {
+            $query->where('board_id', $boardId);
+        }
+
+        if ($platformId) {
+            $boardIds = KanbanBoard::where('cal_platform_id', $platformId)->pluck('id');
+            $query->whereIn('board_id', $boardIds);
+        }
+
+        $cards = $query->get()->map(fn ($c) => array_merge($this->formatCard($c), [
+            'column_name' => $c->column?->name,
+            'column_color' => $c->column?->color,
+        ]));
+
+        return response()->json($cards);
     }
 
     public function cardsStore(Request $request, KanbanColumn $column): JsonResponse

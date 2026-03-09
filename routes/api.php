@@ -128,6 +128,7 @@ Route::middleware('auth:sanctum')->prefix('admin/kanban')->group(function () {
     Route::put('columns/{column}',                   [KanbanController::class, 'columnsUpdate']);
     Route::delete('columns/{column}',                [KanbanController::class, 'columnsDestroy']);
     // Cards
+    Route::get('cards',                              [KanbanController::class, 'cardsByEmail']);  // ?email=
     Route::post('columns/{column}/cards',            [KanbanController::class, 'cardsStore']);
     Route::put('cards/{card}',                       [KanbanController::class, 'cardsUpdate']);
     Route::delete('cards/{card}',                    [KanbanController::class, 'cardsDestroy']);
