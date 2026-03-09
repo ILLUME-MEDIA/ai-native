@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Webhook;
 
 use App\Http\Controllers\Controller;
-use App\Mail\NewMeetingNotification;
 use App\Models\CalMeeting;
 use App\Models\CalPlatform;
 use App\Models\KanbanBoard;
@@ -13,7 +12,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class CalWebhookController extends Controller
 {
@@ -122,18 +120,6 @@ class CalWebhookController extends Controller
                 $service->createKanbanCard($meeting, $board, $userId, $userSource);
             } else {
                 $service->moveKanbanCardToStatus($meeting, $board, $status);
-            }
-        }
-
-        // Send admin email notification for new bookings
-        if ($isNew) {
-            $adminEmail = config('app.admin_email');
-            if ($adminEmail) {
-                try {
-                    Mail::to($adminEmail)->send(new NewMeetingNotification($meeting, $platform));
-                } catch (\Throwable $e) {
-                    Log::warning("Cal webhook: failed to send admin email — {$e->getMessage()}");
-                }
             }
         }
     }
