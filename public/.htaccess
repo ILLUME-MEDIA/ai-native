@@ -22,29 +22,24 @@
     RewriteCond %{REQUEST_URI} ^/storage/
     RewriteRule ^ index.php [L]
 
-    # Handle CORS preflight OPTIONS requests directly (no PHP overhead)
-    RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule .* - [R=204,L]
-
     # Send Requests To Front Controller
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# CORS Headers — allowed origins
+# CORS Headers — handled by Laravel (config/cors.php).
+# Apache only adds Allow-Credentials here to avoid empty-header issue
+# when origin matches. All other CORS headers come from Laravel middleware.
 <IfModule mod_headers.c>
     SetEnvIf Origin "(https?://localhost(:[0-9]+)?)" CORS_ALLOW_ORIGIN=$1
-    SetEnvIf Origin "(https://magazine\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://[a-zA-Z0-9-]+\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://development\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://discovery\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://magazine\.muzzhub\.com)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://javed\.io)" CORS_ALLOW_ORIGIN=$1
     SetEnvIf Origin "(https://openorg\.us)" CORS_ALLOW_ORIGIN=$1
-    Header always set Access-Control-Allow-Origin "%{CORS_ALLOW_ORIGIN}e" env=CORS_ALLOW_ORIGIN
-    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ALLOW_ORIGIN
-    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-Token, Accept" env=CORS_ALLOW_ORIGIN
-    Header always set Access-Control-Max-Age "7200" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Credentials "true" env=CORS_ALLOW_ORIGIN
 </IfModule>
 
 # Security Headers
