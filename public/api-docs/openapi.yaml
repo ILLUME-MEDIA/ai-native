@@ -403,6 +403,53 @@ tags:
 
       `{table}` must be `openorg_users` or a registered Section Builder entity table.
 
+  - name: ShipEngine — Addresses
+    description: |
+      Validate and parse addresses for virtually every country on Earth.
+
+      API key stored in **Admin → App Secrets** as `SHIPENGINE_API_KEY`.
+
+  - name: ShipEngine — Carriers
+    description: List connected carriers, their services, package types, and options.
+
+  - name: ShipEngine — Rates
+    description: |
+      Rate shopping across connected carriers.
+
+      - `POST /api/shipengine/rates` — compare rates for a full shipment
+      - `POST /api/shipengine/rates/estimate` — quick estimate with minimal address info
+
+  - name: ShipEngine — Shipments
+    description: Create and manage shipments. A shipment holds ship_to/ship_from/packages but no label yet.
+
+  - name: ShipEngine — Labels
+    description: |
+      Create, download, and void shipping labels.
+
+      - Create from inline shipment details: `POST /api/shipengine/labels`
+      - Create from saved rate: `POST /api/shipengine/labels/rates/{rateId}`
+      - Create from existing shipment: `POST /api/shipengine/labels/shipments/{shipmentId}`
+
+  - name: ShipEngine — Tracking
+    description: |
+      Track packages by carrier code + tracking number.
+      Subscribe to real-time tracking updates (webhook-based).
+
+  - name: ShipEngine — Service Points
+    description: Find nearby carrier drop-off / pick-up locations (e.g. UPS Access Points, FedEx Offices).
+
+  - name: ShipEngine — Warehouses
+    description: Manage warehouse/origin addresses used as default ship-from locations.
+
+  - name: ShipEngine — Batches
+    description: Bulk label creation — group shipments into a batch and generate all labels at once.
+
+  - name: ShipEngine — Manifests
+    description: End-of-day manifest (carrier close-out / LTL pickup manifest).
+
+  - name: ShipEngine — Pickups
+    description: Schedule carrier pickups from your warehouse location.
+
 
 paths:
 
@@ -5922,6 +5969,772 @@ paths:
         "422": { description: email param or Bearer token required }
         "404": { description: Platform not found }
 
+  # ── SHIPENGINE ──────────────────────────────────────────────────────────────
+
+  /api/shipengine/account/settings:
+    get:
+      summary: Get ShipEngine account settings
+      tags: [ShipEngine — Addresses]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Account settings object }
+        '502': { description: ShipEngine API error }
+
+  /api/shipengine/addresses/validate:
+    post:
+      summary: Validate addresses
+      description: |
+        Validate one or more addresses. Returns normalized addresses with validation status,
+        matched components, and warnings for ambiguous results.
+      tags: [ShipEngine — Addresses]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/SE_AddressInput'
+            example:
+              - name: "John Doe"
+                address_line1: "525 S Winchester Blvd"
+                city_locality: "San Jose"
+                state_province: "CA"
+                postal_code: "95128"
+                country_code: "US"
+      responses:
+        '200':
+          description: Validation results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SE_AddressValidationResult'
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+
+  /api/shipengine/carriers:
+    get:
+      summary: List connected carriers
+      tags: [ShipEngine — Carriers]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: List of carriers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  carriers:
+                    type: array
+                    items: { $ref: '#/components/schemas/SE_Carrier' }
+
+  /api/shipengine/carriers/{carrierId}:
+    get:
+      summary: Get a carrier
+      tags: [ShipEngine — Carriers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrierId, in: path, required: true, schema: { type: string }, example: "se-123456" }
+      responses:
+        '200': { description: Carrier object }
+
+  /api/shipengine/carriers/{carrierId}/services:
+    get:
+      summary: List carrier services
+      tags: [ShipEngine — Carriers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrierId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: List of services }
+
+  /api/shipengine/carriers/{carrierId}/packages:
+    get:
+      summary: List carrier package types
+      tags: [ShipEngine — Carriers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrierId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: List of package types }
+
+  /api/shipengine/carriers/{carrierId}/options:
+    get:
+      summary: List carrier options
+      tags: [ShipEngine — Carriers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrierId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: List of carrier-specific options }
+
+  /api/shipengine/rates:
+    post:
+      summary: Get shipping rates
+      description: |
+        Compare rates across all connected carriers for a shipment.
+        Pass `rate_options.carrier_ids` to limit to specific carriers.
+      tags: [ShipEngine — Rates]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment]
+              properties:
+                shipment:
+                  $ref: '#/components/schemas/SE_ShipmentInput'
+                rate_options:
+                  type: object
+                  properties:
+                    carrier_ids:        { type: array, items: { type: string } }
+                    service_codes:      { type: array, items: { type: string } }
+                    preferred_currency: { type: string, example: usd }
+            example:
+              shipment:
+                ship_to:
+                  name: "Jane Doe"
+                  address_line1: "525 S Winchester Blvd"
+                  city_locality: "San Jose"
+                  state_province: "CA"
+                  postal_code: "95128"
+                  country_code: "US"
+                ship_from:
+                  name: "My Store"
+                  address_line1: "100 Shipping Lane"
+                  city_locality: "Austin"
+                  state_province: "TX"
+                  postal_code: "78701"
+                  country_code: "US"
+                packages:
+                  - weight: { value: 1.0, unit: pound }
+              rate_options:
+                carrier_ids: ["se-123456"]
+      responses:
+        '200': { description: Rate results }
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+
+  /api/shipengine/rates/estimate:
+    post:
+      summary: Estimate rates (quick, minimal info)
+      description: |
+        Get a rough rate estimate without a full address or carrier account.
+        Useful for showing shipping cost previews on product pages.
+      tags: [ShipEngine — Rates]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_country_code, from_postal_code, to_country_code, to_postal_code, weight]
+              properties:
+                carrier_id:        { type: string }
+                from_country_code: { type: string, example: US }
+                from_postal_code:  { type: string, example: "78701" }
+                to_country_code:   { type: string, example: US }
+                to_postal_code:    { type: string, example: "95128" }
+                to_city_locality:  { type: string }
+                to_state_province: { type: string }
+                weight:
+                  type: object
+                  required: [value, unit]
+                  properties:
+                    value: { type: number, example: 1.0 }
+                    unit:  { type: string, enum: [pound, ounce, gram, kilogram] }
+                dimensions:
+                  type: object
+                  properties:
+                    length: { type: number }
+                    width:  { type: number }
+                    height: { type: number }
+                    unit:   { type: string, enum: [inch, centimeter] }
+      responses:
+        '200': { description: Rate estimates }
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+
+  /api/shipengine/shipments:
+    post:
+      summary: Create shipments
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipments]
+              properties:
+                shipments:
+                  type: array
+                  items: { $ref: '#/components/schemas/SE_ShipmentInput' }
+      responses:
+        '200': { description: Created shipments }
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+    get:
+      summary: List shipments
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: batch_id,  in: query, schema: { type: string } }
+        - { name: tag,       in: query, schema: { type: string } }
+        - { name: status,    in: query, schema: { type: string, enum: [pending, processing, label_purchased, cancelled] } }
+        - { name: page,      in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 25 } }
+      responses:
+        '200': { description: Paginated list of shipments }
+
+  /api/shipengine/shipments/{shipmentId}:
+    get:
+      summary: Get a shipment
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: shipmentId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Shipment object }
+    put:
+      summary: Update a shipment
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: shipmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SE_ShipmentInput' }
+      responses:
+        '200': { description: Updated shipment }
+
+  /api/shipengine/shipments/{shipmentId}/cancel:
+    put:
+      summary: Cancel a shipment
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: shipmentId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Cancelled }
+
+  /api/shipengine/shipments/{shipmentId}/rates:
+    get:
+      summary: Get rates for an existing shipment
+      tags: [ShipEngine — Shipments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: shipmentId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Rates for the shipment }
+
+  /api/shipengine/labels:
+    post:
+      summary: Create a label (inline shipment)
+      description: |
+        Create a shipping label with full shipment details in a single call.
+        Returns label download URL (PDF/PNG/ZPL).
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment]
+              properties:
+                shipment:
+                  $ref: '#/components/schemas/SE_ShipmentInput'
+                label_format:
+                  type: string
+                  enum: [pdf, png, zpl]
+                  default: pdf
+                label_layout:
+                  type: string
+                  enum: [4x6, letter]
+                  default: 4x6
+                label_download_type:
+                  type: string
+                  enum: [url, inline]
+                  default: url
+            example:
+              shipment:
+                carrier_id: "se-123456"
+                service_code: "usps_priority_mail"
+                ship_to:
+                  name: "Jane Doe"
+                  address_line1: "525 S Winchester Blvd"
+                  city_locality: "San Jose"
+                  state_province: "CA"
+                  postal_code: "95128"
+                  country_code: "US"
+                ship_from:
+                  name: "My Store"
+                  address_line1: "100 Shipping Lane"
+                  city_locality: "Austin"
+                  state_province: "TX"
+                  postal_code: "78701"
+                  country_code: "US"
+                packages:
+                  - weight: { value: 1.0, unit: pound }
+              label_format: pdf
+              label_layout: 4x6
+      responses:
+        '200':
+          description: Label created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SE_Label' }
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+    get:
+      summary: List labels
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status,     in: query, schema: { type: string, enum: [processing, completed, error, voided] } }
+        - { name: carrier_id, in: query, schema: { type: string } }
+        - { name: page,       in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size,  in: query, schema: { type: integer, default: 25 } }
+        - { name: sort_by,    in: query, schema: { type: string, enum: [modified_at, created_at] } }
+        - { name: sort_dir,   in: query, schema: { type: string, enum: [asc, desc] } }
+      responses:
+        '200': { description: Paginated list of labels }
+
+  /api/shipengine/labels/rates/{rateId}:
+    post:
+      summary: Create label from rate ID
+      description: Purchase a label using a previously retrieved rate ID.
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: rateId, in: path, required: true, schema: { type: string }, example: "se-rate-abc123" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label_format:        { type: string, enum: [pdf, png, zpl] }
+                label_layout:        { type: string, enum: [4x6, letter] }
+                label_download_type: { type: string, enum: [url, inline] }
+      responses:
+        '200':
+          description: Label created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SE_Label' }
+
+  /api/shipengine/labels/shipments/{shipmentId}:
+    post:
+      summary: Create label from shipment ID
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: shipmentId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                carrier_id:          { type: string }
+                service_code:        { type: string }
+                label_format:        { type: string, enum: [pdf, png, zpl] }
+                label_layout:        { type: string, enum: [4x6, letter] }
+                label_download_type: { type: string, enum: [url, inline] }
+      responses:
+        '200':
+          description: Label created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SE_Label' }
+
+  /api/shipengine/labels/{labelId}:
+    get:
+      summary: Get a label
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: labelId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Label object }
+
+  /api/shipengine/labels/{labelId}/void:
+    put:
+      summary: Void a label
+      description: Cancel/void a label. The carrier will be notified and the label becomes invalid.
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: labelId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Void result }
+
+  /api/shipengine/labels/{labelId}/track:
+    get:
+      summary: Get tracking info for a label
+      tags: [ShipEngine — Labels]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: labelId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Tracking events }
+
+  /api/shipengine/tracking:
+    get:
+      summary: Track a package
+      description: Get current status and tracking events by carrier code + tracking number.
+      tags: [ShipEngine — Tracking]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrier_code,    in: query, required: true, schema: { type: string }, example: "stamps_com" }
+        - { name: tracking_number, in: query, required: true, schema: { type: string }, example: "9400111899223397507930" }
+      responses:
+        '200':
+          description: Tracking events and current status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SE_TrackingInfo' }
+
+  /api/shipengine/tracking/start:
+    post:
+      summary: Start tracking (subscribe to webhooks)
+      description: Subscribe to real-time tracking updates via webhook.
+      tags: [ShipEngine — Tracking]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carrier_code, tracking_number]
+              properties:
+                carrier_code:    { type: string, example: "stamps_com" }
+                tracking_number: { type: string, example: "9400111899223397507930" }
+      responses:
+        '204': { description: Tracking started }
+        '422': { description: Validation error }
+
+  /api/shipengine/tracking/stop:
+    post:
+      summary: Stop tracking (unsubscribe)
+      tags: [ShipEngine — Tracking]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carrier_code, tracking_number]
+              properties:
+                carrier_code:    { type: string }
+                tracking_number: { type: string }
+      responses:
+        '204': { description: Tracking stopped }
+
+  /api/shipengine/service-points/search:
+    post:
+      summary: Search nearby service points
+      description: |
+        Find carrier drop-off/pick-up locations (e.g. UPS Access Points, FedEx Offices)
+        near a given address or lat/long coordinates.
+      tags: [ShipEngine — Service Points]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carriers]
+              properties:
+                carriers:
+                  type: array
+                  items:
+                    type: object
+                    required: [carrier_code, country_code]
+                    properties:
+                      carrier_code: { type: string, example: "ups" }
+                      country_code: { type: string, example: "US" }
+                address_query: { type: string, example: "525 S Winchester Blvd, San Jose CA" }
+                lat:           { type: number, example: 37.322 }
+                long:          { type: number, example: -121.95 }
+                radius:        { type: number, description: "Search radius in miles", example: 5 }
+                max_results:   { type: integer, example: 10 }
+      responses:
+        '200': { description: List of service points }
+
+  /api/shipengine/service-points/{carrierCode}/{countryCode}/{servicePointId}:
+    get:
+      summary: Get a service point
+      tags: [ShipEngine — Service Points]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrierCode,    in: path, required: true, schema: { type: string }, example: "ups" }
+        - { name: countryCode,    in: path, required: true, schema: { type: string }, example: "US" }
+        - { name: servicePointId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Service point details }
+
+  /api/shipengine/warehouses:
+    get:
+      summary: List warehouses
+      tags: [ShipEngine — Warehouses]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: List of warehouses }
+    post:
+      summary: Create a warehouse
+      tags: [ShipEngine — Warehouses]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, origin_address]
+              properties:
+                name:           { type: string, example: "Main Warehouse" }
+                origin_address: { $ref: '#/components/schemas/SE_AddressInput' }
+                return_address: { $ref: '#/components/schemas/SE_AddressInput' }
+      responses:
+        '200': { description: Created warehouse }
+
+  /api/shipengine/warehouses/{warehouseId}:
+    get:
+      summary: Get a warehouse
+      tags: [ShipEngine — Warehouses]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: warehouseId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Warehouse object }
+    put:
+      summary: Update a warehouse
+      tags: [ShipEngine — Warehouses]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: warehouseId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:           { type: string }
+                origin_address: { $ref: '#/components/schemas/SE_AddressInput' }
+                return_address: { $ref: '#/components/schemas/SE_AddressInput' }
+      responses:
+        '204': { description: Updated }
+    delete:
+      summary: Delete a warehouse
+      tags: [ShipEngine — Warehouses]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: warehouseId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted }
+
+  /api/shipengine/batches:
+    post:
+      summary: Create a batch
+      description: Group shipments or rate IDs for bulk label generation.
+      tags: [ShipEngine — Batches]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label_layout:  { type: string, enum: [4x6, letter] }
+                label_format:  { type: string, enum: [pdf, png, zpl] }
+                shipment_ids:  { type: array, items: { type: string } }
+                rate_ids:      { type: array, items: { type: string } }
+      responses:
+        '200': { description: Batch created }
+
+  /api/shipengine/batches/{batchId}:
+    get:
+      summary: Get a batch
+      tags: [ShipEngine — Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Batch object with status and label count }
+
+  /api/shipengine/batches/{batchId}/add:
+    post:
+      summary: Add shipments to batch
+      tags: [ShipEngine — Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment_ids]
+              properties:
+                shipment_ids: { type: array, items: { type: string } }
+      responses:
+        '204': { description: Added }
+
+  /api/shipengine/batches/{batchId}/remove:
+    post:
+      summary: Remove shipments from batch
+      tags: [ShipEngine — Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment_ids]
+              properties:
+                shipment_ids: { type: array, items: { type: string } }
+      responses:
+        '204': { description: Removed }
+
+  /api/shipengine/batches/{batchId}/process:
+    post:
+      summary: Process batch (generate all labels)
+      tags: [ShipEngine — Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label_layout:        { type: string, enum: [4x6, letter] }
+                label_format:        { type: string, enum: [pdf, png, zpl] }
+                label_download_type: { type: string, enum: [url, inline] }
+      responses:
+        '204': { description: Processing started }
+
+  /api/shipengine/manifests:
+    post:
+      summary: Create a manifest (end-of-day close-out)
+      description: |
+        Generate an end-of-day manifest for a carrier.
+        Required by some carriers (e.g. USPS SCAN form) to confirm all packages tendered that day.
+      tags: [ShipEngine — Manifests]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carrier_id]
+              properties:
+                carrier_id:   { type: string, example: "se-123456" }
+                warehouse_id: { type: string }
+                ship_date:    { type: string, format: date, example: "2026-03-09" }
+                label_ids:    { type: array, items: { type: string } }
+      responses:
+        '200': { description: Manifest created }
+    get:
+      summary: List manifests
+      tags: [ShipEngine — Manifests]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrier_id,      in: query, schema: { type: string } }
+        - { name: warehouse_id,    in: query, schema: { type: string } }
+        - { name: ship_date_start, in: query, schema: { type: string, format: date } }
+        - { name: ship_date_end,   in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: List of manifests }
+
+  /api/shipengine/manifests/{manifestId}:
+    get:
+      summary: Get a manifest
+      tags: [ShipEngine — Manifests]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: manifestId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Manifest object }
+
+  /api/shipengine/pickups:
+    post:
+      summary: Schedule a carrier pickup
+      tags: [ShipEngine — Pickups]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carrier_id, warehouse_id, pickup_window]
+              properties:
+                carrier_id:   { type: string, example: "se-123456" }
+                warehouse_id: { type: string }
+                pickup_window:
+                  type: object
+                  required: [start_at, end_at]
+                  properties:
+                    start_at: { type: string, format: date-time }
+                    end_at:   { type: string, format: date-time }
+                label_ids:
+                  type: array
+                  items: { type: string }
+                contact_details:
+                  type: object
+                  properties:
+                    name:  { type: string }
+                    phone: { type: string }
+      responses:
+        '200': { description: Pickup scheduled }
+    get:
+      summary: List pickups
+      tags: [ShipEngine — Pickups]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: carrier_id,   in: query, schema: { type: string } }
+        - { name: warehouse_id, in: query, schema: { type: string } }
+        - { name: page,         in: query, schema: { type: integer } }
+        - { name: page_size,    in: query, schema: { type: integer } }
+      responses:
+        '200': { description: List of pickups }
+
+  /api/shipengine/pickups/{pickupId}:
+    delete:
+      summary: Cancel a pickup
+      tags: [ShipEngine — Pickups]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: pickupId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Pickup cancelled }
+
 # ── COMPONENTS ────────────────────────────────────────────────────────────────
 
 
@@ -7506,3 +8319,164 @@ components:
         is_meeting_card:   { type: boolean }
         source_meeting_id: { type: integer, nullable: true }
         metadata:          { type: object, nullable: true, description: "meeting_url, attendee_email, start_time, end_time" }
+
+  # ── SHIPENGINE ──────────────────────────────────────────────────────────────
+
+  SE_AddressInput:
+    type: object
+    required: [address_line1, city_locality, state_province, postal_code, country_code]
+    properties:
+      name:            { type: string }
+      company_name:    { type: string }
+      address_line1:   { type: string, example: "525 S Winchester Blvd" }
+      address_line2:   { type: string }
+      city_locality:   { type: string, example: "San Jose" }
+      state_province:  { type: string, example: "CA" }
+      postal_code:     { type: string, example: "95128" }
+      country_code:    { type: string, example: "US", minLength: 2, maxLength: 2 }
+      phone:           { type: string }
+      address_residential_indicator:
+        type: string
+        enum: [yes, no, unknown]
+        default: unknown
+
+  SE_AddressValidationResult:
+    type: object
+    properties:
+      status:           { type: string, enum: [verified, unverified, warning, error] }
+      original_address: { $ref: '#/components/schemas/SE_AddressInput' }
+      matched_address:  { $ref: '#/components/schemas/SE_AddressInput' }
+      messages:
+        type: array
+        items:
+          type: object
+          properties:
+            code:    { type: string }
+            message: { type: string }
+            type:    { type: string, enum: [info, warning, error] }
+
+  SE_Weight:
+    type: object
+    required: [value, unit]
+    properties:
+      value: { type: number, example: 1.0 }
+      unit:  { type: string, enum: [pound, ounce, gram, kilogram] }
+
+  SE_Dimensions:
+    type: object
+    properties:
+      unit:   { type: string, enum: [inch, centimeter] }
+      length: { type: number }
+      width:  { type: number }
+      height: { type: number }
+
+  SE_Package:
+    type: object
+    required: [weight]
+    properties:
+      weight:       { $ref: '#/components/schemas/SE_Weight' }
+      dimensions:   { $ref: '#/components/schemas/SE_Dimensions' }
+      package_code: { type: string, example: "package" }
+      insured_value:
+        type: object
+        properties:
+          currency: { type: string, example: "usd" }
+          amount:   { type: number }
+
+  SE_ShipmentInput:
+    type: object
+    required: [ship_to, ship_from, packages]
+    properties:
+      carrier_id:    { type: string, example: "se-123456" }
+      service_code:  { type: string, example: "usps_priority_mail" }
+      ship_date:     { type: string, format: date }
+      ship_to:       { $ref: '#/components/schemas/SE_AddressInput' }
+      ship_from:     { $ref: '#/components/schemas/SE_AddressInput' }
+      return_to:     { $ref: '#/components/schemas/SE_AddressInput' }
+      confirmation:
+        type: string
+        enum: [none, delivery, signature, adult_signature, direct_signature]
+      packages:
+        type: array
+        items: { $ref: '#/components/schemas/SE_Package' }
+      advanced_options:
+        type: object
+        description: Carrier-specific options (e.g. bill_to_account, contains_alcohol)
+
+  SE_Carrier:
+    type: object
+    properties:
+      carrier_id:     { type: string }
+      carrier_code:   { type: string }
+      account_number: { type: string }
+      friendly_name:  { type: string }
+      nickname:       { type: string }
+      primary:        { type: boolean }
+      balance:
+        type: object
+        properties:
+          currency: { type: string }
+          amount:   { type: number }
+      services:
+        type: array
+        items:
+          type: object
+          properties:
+            carrier_id:    { type: string }
+            carrier_code:  { type: string }
+            service_code:  { type: string }
+            name:          { type: string }
+            domestic:      { type: boolean }
+            international: { type: boolean }
+
+  SE_Label:
+    type: object
+    properties:
+      label_id:        { type: string }
+      status:          { type: string, enum: [processing, completed, error, voided] }
+      shipment_id:     { type: string }
+      carrier_id:      { type: string }
+      service_code:    { type: string }
+      tracking_number: { type: string }
+      label_download:
+        type: object
+        properties:
+          pdf:  { type: string, format: uri }
+          png:  { type: string, format: uri }
+          zpl:  { type: string, format: uri }
+          href: { type: string, format: uri }
+      created_at:  { type: string, format: date-time }
+      voided:      { type: boolean }
+      voided_at:   { type: string, format: date-time, nullable: true }
+      shipment_cost:
+        type: object
+        properties:
+          currency: { type: string }
+          amount:   { type: number }
+      insurance_cost:
+        type: object
+        properties:
+          currency: { type: string }
+          amount:   { type: number }
+
+  SE_TrackingInfo:
+    type: object
+    properties:
+      tracking_number:       { type: string }
+      status_code:           { type: string }
+      status_description:    { type: string }
+      carrier_code:          { type: string }
+      estimated_delivery_at: { type: string, format: date-time, nullable: true }
+      actual_delivery_at:    { type: string, format: date-time, nullable: true }
+      events:
+        type: array
+        items:
+          type: object
+          properties:
+            occurred_at:    { type: string, format: date-time }
+            description:    { type: string }
+            city_locality:  { type: string }
+            state_province: { type: string }
+            postal_code:    { type: string }
+            country_code:   { type: string }
+            event_code:     { type: string }

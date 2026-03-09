@@ -46,6 +46,7 @@ use App\Http\Controllers\Admin\OpenorgUsersController;
 use App\Http\Controllers\Admin\PlatformUsersController;
 use App\Http\Controllers\Admin\PlatformGenresController;
 use App\Http\Controllers\Webhook\CalWebhookController;
+use App\Http\Controllers\ShipEngine\ShipEngineController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -637,6 +638,77 @@ Route::middleware('auth:sanctum')->prefix('delivery/instacart')->group(function 
 // ── Platform Webhooks (no auth — signature verified internally) ───────────────
 Route::post('webhooks/delivery/ubereats',  [UberEatsController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
 Route::post('webhooks/delivery/instacart', [InstacartController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
+
+// ── ShipEngine API Routes (admin auth required) ───────────────────────────────
+Route::middleware('auth:sanctum')->prefix('shipengine')->group(function () {
+
+    // Account
+    Route::get('account/settings',           [ShipEngineController::class, 'getAccountSettings']);
+
+    // Addresses
+    Route::post('addresses/validate',        [ShipEngineController::class, 'validateAddresses']);
+
+    // Carriers
+    Route::get('carriers',                   [ShipEngineController::class, 'listCarriers']);
+    Route::get('carriers/{carrierId}',       [ShipEngineController::class, 'getCarrier']);
+    Route::get('carriers/{carrierId}/services', [ShipEngineController::class, 'getCarrierServices']);
+    Route::get('carriers/{carrierId}/packages', [ShipEngineController::class, 'getCarrierPackageTypes']);
+    Route::get('carriers/{carrierId}/options',  [ShipEngineController::class, 'getCarrierOptions']);
+
+    // Rates
+    Route::post('rates',                     [ShipEngineController::class, 'getRates']);
+    Route::post('rates/estimate',            [ShipEngineController::class, 'estimateRates']);
+
+    // Shipments
+    Route::post('shipments',                 [ShipEngineController::class, 'createShipments']);
+    Route::get('shipments',                  [ShipEngineController::class, 'listShipments']);
+    Route::get('shipments/{shipmentId}',     [ShipEngineController::class, 'getShipment']);
+    Route::put('shipments/{shipmentId}',     [ShipEngineController::class, 'updateShipment']);
+    Route::put('shipments/{shipmentId}/cancel', [ShipEngineController::class, 'cancelShipment']);
+    Route::get('shipments/{shipmentId}/rates',  [ShipEngineController::class, 'getShipmentRates']);
+
+    // Labels
+    Route::post('labels',                            [ShipEngineController::class, 'createLabel']);
+    Route::get('labels',                             [ShipEngineController::class, 'listLabels']);
+    Route::get('labels/{labelId}',                   [ShipEngineController::class, 'getLabel']);
+    Route::put('labels/{labelId}/void',              [ShipEngineController::class, 'voidLabel']);
+    Route::get('labels/{labelId}/track',             [ShipEngineController::class, 'getLabelTrackingInfo']);
+    Route::post('labels/rates/{rateId}',             [ShipEngineController::class, 'createLabelFromRate']);
+    Route::post('labels/shipments/{shipmentId}',     [ShipEngineController::class, 'createLabelFromShipment']);
+
+    // Tracking
+    Route::get('tracking',                   [ShipEngineController::class, 'track']);
+    Route::post('tracking/start',            [ShipEngineController::class, 'startTracking']);
+    Route::post('tracking/stop',             [ShipEngineController::class, 'stopTracking']);
+
+    // Service Points
+    Route::post('service-points/search',                                    [ShipEngineController::class, 'searchServicePoints']);
+    Route::get('service-points/{carrierCode}/{countryCode}/{servicePointId}', [ShipEngineController::class, 'getServicePoint']);
+
+    // Warehouses
+    Route::get('warehouses',                 [ShipEngineController::class, 'listWarehouses']);
+    Route::post('warehouses',                [ShipEngineController::class, 'createWarehouse']);
+    Route::get('warehouses/{warehouseId}',   [ShipEngineController::class, 'getWarehouse']);
+    Route::put('warehouses/{warehouseId}',   [ShipEngineController::class, 'updateWarehouse']);
+    Route::delete('warehouses/{warehouseId}',[ShipEngineController::class, 'deleteWarehouse']);
+
+    // Batches
+    Route::post('batches',                            [ShipEngineController::class, 'createBatch']);
+    Route::get('batches/{batchId}',                   [ShipEngineController::class, 'getBatch']);
+    Route::post('batches/{batchId}/add',              [ShipEngineController::class, 'addToBatch']);
+    Route::post('batches/{batchId}/remove',           [ShipEngineController::class, 'removeFromBatch']);
+    Route::post('batches/{batchId}/process',          [ShipEngineController::class, 'processBatch']);
+
+    // Manifests (LTL / End-of-day)
+    Route::post('manifests',                 [ShipEngineController::class, 'createManifest']);
+    Route::get('manifests',                  [ShipEngineController::class, 'listManifests']);
+    Route::get('manifests/{manifestId}',     [ShipEngineController::class, 'getManifest']);
+
+    // Pickups
+    Route::post('pickups',                   [ShipEngineController::class, 'schedulePickup']);
+    Route::get('pickups',                    [ShipEngineController::class, 'listPickups']);
+    Route::delete('pickups/{pickupId}',      [ShipEngineController::class, 'cancelPickup']);
+});
 
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
