@@ -136,7 +136,7 @@ function JobsTab() {
     const [modal, setModal] = useState(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
-    const [running, setRunning] = useState({});
+    const [running, setRunning] = useState({}); // { [job.id]: AbortController }
 
     const empty = {
         name: '',
@@ -212,13 +212,20 @@ function JobsTab() {
     };
 
     const runNow = async (job) => {
-        setRunning(r => ({ ...r, [job.id]: true }));
+        const controller = new AbortController();
+        setRunning(r => ({ ...r, [job.id]: controller }));
         try {
-            await api(`jobs/${job.id}/run`, { method: 'post' });
+            await api(`jobs/${job.id}/run`, { method: 'post', signal: controller.signal });
             load();
+        } catch (e) {
+            if (!e?.message?.includes('cancel') && !e?.code === 'ERR_CANCELED') load();
         } finally {
-            setRunning(r => ({ ...r, [job.id]: false }));
+            setRunning(r => { const n = { ...r }; delete n[job.id]; return n; });
         }
+    };
+
+    const stopJob = (job) => {
+        running[job.id]?.abort();
     };
 
     const toggleMapping = (yelpKey) => {
@@ -255,7 +262,10 @@ function JobsTab() {
                                     <td className="px-4 py-2"><Badge color={job.auto_merge ? 'green' : 'yellow'}>{job.auto_merge ? 'On' : 'Manual'}</Badge></td>
                                     <td className="px-4 py-2"><Badge color={{ completed: 'green', failed: 'red', running: 'blue', paused: 'yellow', pending: 'gray' }[log?.status] ?? 'gray'}>{log?.status ?? 'never'}</Badge></td>
                                     <td className="px-4 py-2 flex gap-1">
-                                        <Btn variant="success" disabled={running[job.id]} onClick={() => runNow(job)}>{running[job.id] ? 'Running...' : 'Run'}</Btn>
+                                        {running[job.id]
+                                            ? <Btn variant="danger" onClick={() => stopJob(job)}>Stop</Btn>
+                                            : <Btn variant="success" onClick={() => runNow(job)}>Run</Btn>
+                                        }
                                         <Btn variant="ghost" onClick={() => openEdit(job)}>Edit</Btn>
                                         <Btn variant="danger" onClick={async () => { if (confirm(`Delete "${job.name}"?`)) { await api(`jobs/${job.id}`, { method: 'delete' }); load(); } }}>Delete</Btn>
                                     </td>
