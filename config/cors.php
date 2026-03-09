@@ -23,7 +23,7 @@ return [
         ['http://localhost:3000'],  // Local frontend
         array_filter(array_map(
             'trim',
-            explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4173,https://javed.io,https://development.illumemedia.app,https://openorg.us,https://magazine.muzzhub.com'))
+            explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4173,https://javed.io,https://development.illumemedia.app,https://discovery.illumemedia.app,https://openorg.us,https://magazine.muzzhub.com'))
         ))
     ),
 

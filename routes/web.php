@@ -30,6 +30,23 @@ Route::get('/api-docs/openapi.yaml', function () {
 // Run all migrations. GET /run-migrations (no key required).
 // Smart mode: if a table already exists (created manually before migration was added),
 // the migration is marked as run in the migrations table without re-creating the table.
+// Clear all Laravel + OPcache caches. GET /clear-cache
+Route::get('/clear-cache', function () {
+    $opcacheCleared = function_exists('opcache_reset') ? opcache_reset() : false;
+
+    Artisan::call('config:clear');
+    Artisan::call('route:clear');
+    Artisan::call('view:clear');
+    Artisan::call('cache:clear');
+    Artisan::call('event:clear');
+
+    return response()->json([
+        'message'        => 'All caches cleared.',
+        'opcache_reset'  => $opcacheCleared,
+        'cleared'        => ['config', 'route', 'view', 'cache', 'event'],
+    ]);
+})->name('clear-cache');
+
 Route::get('/run-migrations', function () {
     try {
         $allOutput = [];
@@ -127,6 +144,7 @@ Route::get('/run-migrations', function () {
             'MCPCatalogSeeder',
             'MenuCategoryTypeSeeder',
             'RestaurantSampleDataSeeder',
+            'AppSecretsSeeder',
         ];
 
         foreach ($seeders as $seeder) {
