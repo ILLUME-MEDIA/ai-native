@@ -6052,10 +6052,12 @@ paths:
         No email/token: returns all meetings for the platform.
         With `?email=` param OR Bearer token: returns only that user's meetings.
         Each meeting includes a `kanban_card` field with the linked Kanban card (column, position).
-      security: []
+      security:
+        - otpBearerAuth: []
+        - {}
       parameters:
         - { name: table,    in: path,  required: true,  schema: { type: string }, example: openorg_users }
-        - { name: email,    in: query, required: false, schema: { type: string, format: email }, example: ali@openorg.com, description: "Filter by user email (or pass Bearer token)" }
+        - { name: email,    in: query, required: false, schema: { type: string, format: email }, example: ali@openorg.com, description: "Optional — filter by email. Or pass Bearer token instead." }
         - { name: status,   in: query, required: false, schema: { type: string, enum: [upcoming, completed, cancelled, rescheduled] } }
         - { name: per_page, in: query, required: false, schema: { type: integer, default: 15, maximum: 100 } }
       responses:
@@ -6097,10 +6099,12 @@ paths:
         - `?email=` query param (direct, no auth needed)
         - Bearer token (from POST /users) — email extracted automatically
         Matches by `metadata.attendee_email` or `assignee`.
-      security: []
+      security:
+        - otpBearerAuth: []
+        - {}
       parameters:
         - { name: table, in: path,  required: true,  schema: { type: string }, example: openorg_users }
-        - { name: email, in: query, required: false, schema: { type: string, format: email }, example: ali@openorg.com, description: "Required if no Bearer token" }
+        - { name: email, in: query, required: false, schema: { type: string, format: email }, example: ali@openorg.com, description: "Pass email here OR use Bearer token — one of the two is required" }
       responses:
         "200":
           description: Cards for the given email
