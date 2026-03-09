@@ -6458,8 +6458,10 @@ paths:
       tags: [Platform User Auth]
       summary: List meetings for a platform (public calendar or user-filtered)
       description: |
-        Without Bearer token: returns all meetings for the platform (public calendar).
-        With Bearer token (from POST /users): returns only that user's meetings.
+        Public endpoint — no authentication required.
+        Without Bearer token: returns all meetings for the platform (public calendar view).
+        With Bearer token (from POST /users): returns only that user's meetings filtered by user_id + table.
+        Token format: encrypted { email, table, id, exp, type:"otp_auth" }.
       parameters:
         - name: slug
           in: path
@@ -6477,7 +6479,7 @@ paths:
         - name: per_page
           in: query
           schema: { type: integer, default: 15, maximum: 100 }
-      security: [{ otpBearerAuth: [] }]
+      security: []
       responses:
         "200":
           description: Paginated meetings
@@ -6492,7 +6494,7 @@ paths:
                   total:        { type: integer }
                   current_page: { type: integer }
                   last_page:    { type: integer }
-                  user_id:      { type: integer, nullable: true }
+                  user_email:   { type: string, nullable: true, description: "Email from Bearer token; null if no token sent" }
 
   # ─────────────────────────────────────────────────────────────────────────────
   # OpenOrg Users
@@ -8552,11 +8554,12 @@ components:
     PlatformUserAuthResponse:
       type: object
       properties:
-        success: { type: boolean, example: true }
-        status:  { type: string, enum: [found, created] }
-        token:   { type: string, description: Encrypted auth token - same format as OTP auth }
-        user:    { $ref: "#/components/schemas/PlatformUserProfile" }
-        source:  { type: string, example: openorg_users }
+        success:  { type: boolean, example: true }
+        status:   { type: string, enum: [found, created], description: "'found' = existing user returned, 'created' = new user inserted" }
+        token:    { type: string, description: "Encrypted auth token (same format as OTP auth). Pass as Bearer on GET /meetings to filter by user." }
+        user:     { $ref: "#/components/schemas/PlatformUserProfile" }
+        platform: { type: string, example: openorg }
+        table:    { type: string, example: openorg_users }
 
     OpenorgUser:
       type: object

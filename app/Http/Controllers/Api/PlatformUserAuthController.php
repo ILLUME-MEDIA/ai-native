@@ -92,10 +92,15 @@ class PlatformUserAuthController extends Controller
             ->first();
 
         if ($existing) {
+            $user = (array) $existing;
             return response()->json([
-                'message' => 'User with this email already exists.',
-                'user'    => $this->formatUser((array) $existing),
-            ], 409);
+                'success'  => true,
+                'status'   => 'found',
+                'token'    => $this->buildToken($email, $table, $user),
+                'user'     => $this->formatUser($user),
+                'platform' => $platform->slug,
+                'table'    => $table,
+            ]);
         }
 
         // Create new user
@@ -113,7 +118,7 @@ class PlatformUserAuthController extends Controller
             $insert['metadata'] = json_encode($data['metadata']);
         }
 
-        $id  = DB::table($table)->insertGetId($insert);
+        $id   = DB::table($table)->insertGetId($insert);
         $user = (array) DB::table($table)->find($id);
 
         Log::info("PlatformUserAuth [{$slug}/{$table}]: created [{$email}]");
@@ -153,19 +158,18 @@ class PlatformUserAuthController extends Controller
         [$platform, $error] = $this->resolvePlatformAndTable($slug, $table);
         if ($error) return $error;
 
-        // Try to resolve user from Bearer token (optional)
-        $userId = null;
-        $token  = $request->bearerToken();
+        // Try to resolve user email from Bearer token (optional)
+        $userEmail = null;
+        $token     = $request->bearerToken();
         if ($token) {
             try {
                 $payload = decrypt($token);
                 if (
-                    isset($payload['type'], $payload['exp'], $payload['id']) &&
+                    isset($payload['type'], $payload['exp'], $payload['email']) &&
                     $payload['type'] === 'otp_auth' &&
-                    $payload['exp'] > now()->timestamp &&
-                    $payload['table'] === $table
+                    $payload['exp'] > now()->timestamp
                 ) {
-                    $userId = (int) $payload['id'];
+                    $userEmail = strtolower(trim($payload['email']));
                 }
             } catch (\Throwable) {}
         }
@@ -173,9 +177,9 @@ class PlatformUserAuthController extends Controller
         $query = CalMeeting::where('cal_platform_id', $platform->id)
             ->orderByDesc('start_time');
 
-        // Token present → filter to that user only
-        if ($userId) {
-            $query->where('openorg_user_id', $userId);
+        // Token present → filter by attendee_email extracted from token
+        if ($userEmail) {
+            $query->where('attendee_email', $userEmail);
         }
 
         if ($status = $request->query('status')) {
@@ -190,7 +194,7 @@ class PlatformUserAuthController extends Controller
             'total'        => $meetings->total(),
             'current_page' => $meetings->currentPage(),
             'last_page'    => $meetings->lastPage(),
-            'user_id'      => $userId,
+            'user_email'   => $userEmail,
         ]);
     }
 
