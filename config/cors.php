@@ -41,6 +41,6 @@ return [
     // Cache preflight for 2 hours so browsers don't re-check on every request.
     'max_age' => 7200,
 
-    'supports_credentials' => false,
+    'supports_credentials' => true,
 
 ];

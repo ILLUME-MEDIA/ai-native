@@ -369,7 +369,6 @@ tags:
     description: |
       Manage your own delivery drivers (for `own` delivery vendor).
 
-      Drivers authenticate via the Driver App using **phone + PIN**.
       Admin generates a Bearer token via `POST /delivery/staff/{id}/token` to share with the driver.
 
   - name: Delivery Assignments
@@ -380,21 +379,6 @@ tags:
 
       Auto-assign finds the nearest available driver automatically.
 
-  - name: Driver App
-    description: |
-      **Mobile Driver App API** — used by drivers on their phones.
-
-      ### Authentication
-      - Driver logs in with phone + PIN: `POST /driver-app/login` → returns Bearer token
-      - All subsequent requests: `Authorization: Bearer <token>`
-
-      ### Typical driver workflow
-      1. Login → get token
-      2. Go online: `PATCH /driver-app/status` `{ "status": "available" }`
-      3. Receive assignment notification (admin assigned order)
-      4. Accept: `PATCH /driver-app/assignments/{id}/respond` `{ "action": "accept" }`
-      5. Pick up: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "picked_up" }`
-      6. Deliver: `PATCH /driver-app/assignments/{id}/progress` `{ "status": "delivered" }`
 
   - name: Platform User Auth
     description: |
@@ -2534,7 +2518,7 @@ paths:
                   example: 10
                 delivery_fee:
                   type: number
-                  description: Delivery fee in dollars (from GET /delivery/quote or fixed rate)
+                  description: Delivery fee in dollars (from POST /api/delivery/quote or fixed rate)
                   example: 3.99
             example:
               business_id: 1
@@ -2760,7 +2744,7 @@ paths:
                   example: "doordash"
                 delivery_fee:
                   type: number
-                  description: Delivery fee in dollars. Use GET /delivery/quote to get the real fee first.
+                  description: Delivery fee in dollars. Use POST /api/delivery/quote to get the real fee first.
                   example: 5.99
                 tax_rate:
                   type: number
@@ -4424,7 +4408,7 @@ paths:
 
   # ── DELIVERY QUOTE (UNIFIED) ───────────────────────────────────────────────
 
-  /delivery/quote:
+  /api/delivery/quote:
     post:
       tags:
         - Delivery Quote
@@ -5111,9 +5095,9 @@ paths:
     post:
       tags:
         - Delivery Staff
-      summary: Generate Driver App token
+      summary: Generate driver Bearer token
       description: |
-        Generates a new Bearer token for the driver to use in the Driver App.
+        Generates a new Bearer token for the driver.
         **The token is shown only once** — share it with the driver immediately.
       parameters:
         - name: deliveryStaff
@@ -5734,249 +5718,6 @@ paths:
         "200":
           description: Status updated
 
-  # ── DRIVER APP ───────────────────────────────────────────────────────────────
-
-  /driver-app/login:
-    post:
-      tags:
-        - Driver App
-      summary: Driver login with phone + PIN
-      description: Returns a Bearer token for use in all subsequent Driver App requests.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [phone, pin]
-              properties:
-                phone:
-                  type: string
-                  example: "+923001234567"
-                pin:
-                  type: string
-                  example: "1234"
-      responses:
-        "200":
-          description: Login successful
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token:
-                    type: string
-                    example: "xxxxxxxx80chars"
-                  driver:
-                    $ref: "#/components/schemas/DeliveryStaff"
-        "401":
-          description: Invalid phone or PIN
-
-  /driver-app/me:
-    get:
-      tags:
-        - Driver App
-      summary: Get driver profile + current active assignment
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Profile and current assignment
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  driver:
-                    $ref: "#/components/schemas/DeliveryStaff"
-                  current_assignment:
-                    nullable: true
-                    $ref: "#/components/schemas/DeliveryAssignment"
-
-  /driver-app/status:
-    patch:
-      tags:
-        - Driver App
-      summary: Go online / offline + update location
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                  enum: [available, busy, offline]
-                  example: available
-                current_lat:
-                  type: number
-                  nullable: true
-                  example: 33.7294
-                current_lng:
-                  type: number
-                  nullable: true
-                  example: 73.0931
-      responses:
-        "200":
-          description: Status updated
-
-  /driver-app/location:
-    post:
-      tags:
-        - Driver App
-      summary: Update GPS location (call every 30s while active)
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [lat, lng]
-              properties:
-                lat:
-                  type: number
-                  example: 33.7294
-                lng:
-                  type: number
-                  example: 73.0931
-      responses:
-        "200":
-          description: Location updated
-
-  /driver-app/assignments:
-    get:
-      tags:
-        - Driver App
-      summary: Get active assignments for the logged-in driver
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Active assignments
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/DeliveryAssignment"
-
-  /driver-app/assignments/{assignmentId}/respond:
-    patch:
-      tags:
-        - Driver App
-      summary: Accept or reject an assignment
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: assignmentId
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [action]
-              properties:
-                action:
-                  type: string
-                  enum: [accept, reject]
-                  example: accept
-                rejection_reason:
-                  type: string
-                  nullable: true
-                  example: Too far away
-      responses:
-        "200":
-          description: Response recorded
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  assignment:
-                    $ref: "#/components/schemas/DeliveryAssignment"
-
-  /driver-app/assignments/{assignmentId}/progress:
-    patch:
-      tags:
-        - Driver App
-      summary: Update delivery progress (picked_up / out_for_delivery / delivered / failed)
-      description: |
-        **Status flow:** `accepted → picked_up → out_for_delivery → delivered`
-
-        Each status update also syncs the parent `Order` status.
-        After `delivered`, driver is automatically marked `available`.
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: assignmentId
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                  enum: [picked_up, out_for_delivery, delivered, failed]
-                  example: picked_up
-                driver_notes:
-                  type: string
-                  nullable: true
-                lat:
-                  type: number
-                  nullable: true
-                  description: Current driver GPS lat
-                lng:
-                  type: number
-                  nullable: true
-                  description: Current driver GPS lng
-      responses:
-        "200":
-          description: Progress updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  assignment:
-                    $ref: "#/components/schemas/DeliveryAssignment"
-
-  /driver-app/history:
-    get:
-      tags:
-        - Driver App
-      summary: Driver's completed delivery history
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Paginated delivery history
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PaginatedAssignments"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Platform User Auth

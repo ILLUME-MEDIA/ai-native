@@ -34,7 +34,6 @@ use App\Http\Controllers\Delivery\DeliveryStaffController;
 use App\Http\Controllers\Delivery\DeliveryZoneController;
 use App\Http\Controllers\Delivery\DeliveryAssignmentController;
 use App\Http\Controllers\Delivery\DeliverySettingsController;
-use App\Http\Controllers\Delivery\DriverAppController;
 use App\Http\Controllers\Delivery\UberEatsController;
 use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
@@ -638,20 +637,6 @@ Route::middleware('auth:sanctum')->prefix('delivery/instacart')->group(function 
 // ── Platform Webhooks (no auth — signature verified internally) ───────────────
 Route::post('webhooks/delivery/ubereats',  [UberEatsController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
 Route::post('webhooks/delivery/instacart', [InstacartController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
-
-// ── Driver App API ─────────────────────────────────────────────────────────────
-// Authentication: POST /api/driver-app/login → returns Bearer token
-// All other routes: Authorization: Bearer <token>
-Route::prefix('driver-app')->group(function () {
-    Route::post('/login',                                          [DriverAppController::class, 'login']);
-    Route::get('/me',                                              [DriverAppController::class, 'me']);
-    Route::patch('/status',                                        [DriverAppController::class, 'updateStatus']);
-    Route::post('/location',                                       [DriverAppController::class, 'updateLocation']);
-    Route::get('/assignments',                                     [DriverAppController::class, 'assignments']);
-    Route::patch('/assignments/{assignmentId}/respond',            [DriverAppController::class, 'respondToAssignment']);
-    Route::patch('/assignments/{assignmentId}/progress',           [DriverAppController::class, 'updateProgress']);
-    Route::get('/history',                                         [DriverAppController::class, 'history']);
-});
 
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
