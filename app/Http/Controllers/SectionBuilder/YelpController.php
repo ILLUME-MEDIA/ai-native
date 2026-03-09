@@ -274,15 +274,20 @@ class YelpController extends Controller
         ]);
     }
 
-    /** Signal a running log to stop (sets stop_requested_at) */
+    /** Signal a running log to stop. Also force-sets status to paused so stuck/orphaned jobs are unblocked. */
     public function logStop(YelpJobLog $log): JsonResponse
     {
         if ($log->status !== 'running') {
             return response()->json(['error' => 'Job is not currently running.'], 422);
         }
 
-        $log->update(['stop_requested_at' => now()->toISOString()]);
-        return response()->json(['status' => 'stop_requested']);
+        $log->update([
+            'stop_requested_at' => now()->toISOString(),
+            'status'            => 'paused',
+            'completed_at'      => now()->toISOString(),
+        ]);
+
+        return response()->json(['status' => 'stopped']);
     }
 
     public function reconciliationSummary(Request $request): JsonResponse
