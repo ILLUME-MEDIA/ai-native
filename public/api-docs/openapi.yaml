@@ -6029,16 +6029,46 @@ paths:
                 phone:       { type: string, nullable: true, example: "+923001234567" }
                 metadata:    { type: object, nullable: true }
       responses:
-        "200":
-          description: Existing user found
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CalPlatformUserAuthResponse" }
         "201":
           description: New user created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalPlatformUserAuthResponse" }
+              example:
+                success: true
+                status: created
+                token: "eyJpdiI6Ik..."
+                table: openorg_users
+                user:
+                  id: 42
+                  name: Ali Khan
+                  email: ali@openorg.com
+                  phone: "+923001234567"
+                  is_active: true
+                  cal_platform_id: 1
+                  metadata: {}
+                  created_at: "2026-03-09T10:00:00.000000Z"
+                  updated_at: "2026-03-09T10:00:00.000000Z"
+        "200":
+          description: Existing user found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalPlatformUserAuthResponse" }
+              example:
+                success: true
+                status: found
+                token: "eyJpdiI6Ik..."
+                table: openorg_users
+                user:
+                  id: 42
+                  name: Ali Khan
+                  email: ali@openorg.com
+                  phone: "+923001234567"
+                  is_active: true
+                  cal_platform_id: 1
+                  metadata: {}
+                  created_at: "2026-03-05T08:00:00.000000Z"
+                  updated_at: "2026-03-09T10:00:00.000000Z"
         "422": { description: Validation error }
         "403": { description: Table not allowed }
         "404": { description: Platform not found or inactive }
@@ -6088,6 +6118,36 @@ paths:
                   current_page: { type: integer }
                   last_page:    { type: integer }
                   user_email:   { type: string, nullable: true }
+              example:
+                data:
+                  - id: 3
+                    cal_platform_id: 4
+                    openorg_user_id: null
+                    user_source: null
+                    booking_uid: "5eZZsNt3ze1mGK5Eun2bZ3"
+                    event_type_id: ""
+                    title: "15 Min Meeting between Fahad K. and Muhammad Fahad khan"
+                    description: ""
+                    attendee_name: "Muhammad Fahad khan"
+                    attendee_email: "kmuhammadfahad496@gmail.com"
+                    attendee_timezone: "Asia/Karachi"
+                    start_time: "2026-03-12T04:30:00.000000Z"
+                    end_time: "2026-03-12T04:45:00.000000Z"
+                    status: "accepted"
+                    meeting_url: "https://meet.google.com/qay-wpiw-yzd"
+                    metadata: {}
+                    created_at: "2026-03-09T06:26:46.000000Z"
+                    updated_at: "2026-03-09T06:26:46.000000Z"
+                    kanban_card:
+                      id: 2
+                      column_id: 10
+                      column_name: "To Do"
+                      column_color: "#e5e7eb"
+                      position: 0
+                total: 1
+                current_page: 1
+                last_page: 1
+                user_email: null
 
   /api/cal/{table}/cards:
     get:
@@ -7670,15 +7730,22 @@ components:
       properties:
         id:                { type: integer }
         cal_platform_id:   { type: integer }
+        openorg_user_id:   { type: integer, nullable: true, description: "Matched user ID if found in users table" }
+        user_source:       { type: string, nullable: true, description: "Users table name e.g. openorg_users" }
         booking_uid:       { type: string }
+        event_type_id:     { type: string, nullable: true }
         title:             { type: string, example: "30 Min Consultation" }
+        description:       { type: string, nullable: true }
         attendee_name:     { type: string }
         attendee_email:    { type: string, format: email }
         attendee_timezone: { type: string, nullable: true }
         start_time:        { type: string, format: date-time }
         end_time:          { type: string, format: date-time }
-        status:            { type: string, enum: [upcoming, confirmed, rescheduled, cancelled, completed] }
+        status:            { type: string, enum: [upcoming, accepted, confirmed, rescheduled, cancelled, completed] }
         meeting_url:       { type: string, nullable: true }
+        metadata:          { type: object, nullable: true, description: "Full Cal.com booking payload" }
+        created_at:        { type: string, format: date-time }
+        updated_at:        { type: string, format: date-time }
 
     CalPlatformCard:
       type: object

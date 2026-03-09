@@ -160,7 +160,7 @@ class PlatformUserAuthController extends Controller
 
         $data = collect($meetings->items())->map(function ($meeting) use ($cardsByMeeting) {
             $card = $cardsByMeeting->get($meeting->id);
-            return array_merge((array) $meeting, [
+            return array_merge($meeting->toArray(), [
                 'kanban_card' => $card ? [
                     'id'           => $card->id,
                     'column_id'    => $card->column_id,
