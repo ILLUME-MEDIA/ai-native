@@ -312,9 +312,19 @@ function JobsTab() {
         setLoading(true);
         try {
             const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
-            setJobs(j.data ?? []);
+            const jobs = j.data ?? [];
+            setJobs(jobs);
             setEntities(e.data ?? []);
             setYelpFields(yf.data ?? {});
+
+            // Resume polling for any jobs already running (e.g. after page refresh)
+            jobs.forEach(job => {
+                const log = job.latest_log?.[0];
+                if (log && ['running', 'pending'].includes(log.status)) {
+                    setActiveLogs(prev => ({ ...prev, [job.id]: log }));
+                    startPolling(job.id, log.id);
+                }
+            });
         } catch (err) {
             console.error('Yelp page load error:', err);
         } finally {
@@ -351,11 +361,12 @@ function JobsTab() {
     };
 
     const stopJob = async (job) => {
-        const log = activeLogs[job.id];
+        const log = activeLogs[job.id] ?? job.latest_log?.[0];
         if (!log) return;
         try {
             await api(`logs/${log.id}/stop`, { method: 'post' });
-            setActiveLogs(prev => ({ ...prev, [job.id]: { ...prev[job.id], status: 'stop_requested' } }));
+            setActiveLogs(prev => ({ ...prev, [job.id]: { ...(prev[job.id] ?? log), status: 'paused' } }));
+            load();
         } catch (e) { alert(e.response?.data?.error || 'Stop failed.'); }
     };
 
