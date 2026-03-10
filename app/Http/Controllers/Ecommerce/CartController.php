@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Ecommerce;
 
 use App\Http\Controllers\Controller;
+use App\Models\Business;
 use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\MenuItemModifierOption;
+use App\Services\FeeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -74,8 +76,28 @@ class CartController extends Controller
             );
             return ($base + $modAdj) * $i->quantity;
         });
+        $subtotal = round($subtotal, 2);
 
-        return response()->json(['items' => $items, 'subtotal' => round($subtotal, 2), 'count' => $items->count()]);
+        // Resolve business from cart items (first item wins); load muzzhub for fee resolution
+        $businessId = $items->first()?->business_id;
+        $business   = $businessId ? Business::with('muzzhub')->find($businessId) : null;
+
+        // Platform fee
+        $feeService  = app(FeeService::class);
+        $platformFee = $feeService->calculatePlatformFee($subtotal, $business);
+        $feeConfig   = $feeService->getFeeConfig($business);
+
+        // Tip options
+        $tipOptions  = $feeService->getTipOptions($subtotal);
+
+        return response()->json([
+            'items'        => $items,
+            'subtotal'     => $subtotal,
+            'platform_fee' => $platformFee,
+            'fee_config'   => $feeConfig,
+            'tip_options'  => $tipOptions,
+            'count'        => $items->count(),
+        ]);
     }
 
     public function store(Request $request): JsonResponse

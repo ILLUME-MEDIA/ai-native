@@ -39,6 +39,7 @@ use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
 use App\Http\Controllers\Admin\AppSecretsController;
+use App\Http\Controllers\Admin\EcommerceSettingsController;
 use App\Http\Controllers\Admin\Cal\CalPlatformsController;
 use App\Http\Controllers\Admin\Cal\CalMeetingsController;
 use App\Http\Controllers\Admin\KanbanController;
@@ -133,6 +134,13 @@ Route::middleware('auth:sanctum')->prefix('admin/kanban')->group(function () {
     Route::put('cards/{card}',                       [KanbanController::class, 'cardsUpdate']);
     Route::delete('cards/{card}',                    [KanbanController::class, 'cardsDestroy']);
     Route::patch('cards/{card}/move',                [KanbanController::class, 'cardsMove']);
+});
+
+// ── Ecommerce Settings (platform fee + tip global config) ─────────────────────
+Route::middleware('auth:sanctum')->prefix('admin/ecommerce-settings')->group(function () {
+    Route::get('/',           [EcommerceSettingsController::class, 'index']);
+    Route::get('/{group}',    [EcommerceSettingsController::class, 'byGroup']);
+    Route::put('/',           [EcommerceSettingsController::class, 'update']);
 });
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
@@ -657,6 +665,7 @@ Route::middleware('auth:sanctum')->prefix('shipengine')->group(function () {
 
     // Rates
     Route::post('rates',                     [ShipEngineController::class, 'getRates']);
+    Route::post('rates/bulk',                [ShipEngineController::class, 'getBulkRates']);
     Route::post('rates/estimate',            [ShipEngineController::class, 'estimateRates']);
 
     // Shipments

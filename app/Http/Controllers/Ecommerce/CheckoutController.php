@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Ecommerce;
 
 use App\Http\Controllers\Controller;
+use App\Models\Business;
 use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\MenuItemModifierOption;
@@ -10,6 +11,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\StripeCustomer;
 use App\Services\DoorDashService;
+use App\Services\FeeService;
 use App\Services\StripeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -64,6 +66,10 @@ class CheckoutController extends Controller
             'items.*.modifiers.*.option_id'  => 'required|integer|exists:menu_item_modifier_options,id',
             'items.*.modifiers.*.quantity'   => 'nullable|integer|min:1|max:99',
 
+            // Tip
+            'tip_type'                       => 'nullable|in:none,percentage,fixed',
+            'tip_value'                      => 'nullable|numeric|min:0',
+
             // Payment
             'payment_method'                 => 'nullable|in:cod,stripe',
             'stripe_payment_method_id'       => 'nullable|string|starts_with:pm_',
@@ -101,8 +107,21 @@ class CheckoutController extends Controller
         $taxRate     = (float) ($data['tax_rate'] ?? 0);
         $tax         = round($subtotal * ($taxRate / 100), 2);
         $deliveryFee = round((float) ($data['delivery_fee'] ?? 0), 2);
-        $total       = round($subtotal + $tax + $deliveryFee, 2);
         $orderType   = $data['order_type'] ?? 'delivery';
+
+        // Platform fee — resolved from business override, Muzzhub flag, or global settings
+        $business    = Business::with('muzzhub')->find($data['business_id']);
+        $feeService  = app(FeeService::class);
+        $platformFee = $feeService->calculatePlatformFee($subtotal, $business);
+
+        // Tip — resolved from client-submitted tip_type + tip_value
+        $tip = $feeService->resolveTip(
+            $subtotal,
+            $data['tip_type'] ?? null,
+            isset($data['tip_value']) ? (float) $data['tip_value'] : null
+        );
+
+        $total = round($subtotal + $tax + $deliveryFee + $platformFee + $tip, 2);
 
         // ── Create order ──────────────────────────────────────────────────────
 
@@ -117,6 +136,8 @@ class CheckoutController extends Controller
             'subtotal'           => $subtotal,
             'tax'                => $tax,
             'delivery_fee'       => $deliveryFee,
+            'platform_fee'       => $platformFee,
+            'tip'                => $tip,
             'total'              => $total,
             'customer_name'      => $data['customer_name'],
             'customer_phone'     => $data['customer_phone'],
