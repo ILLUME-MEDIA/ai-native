@@ -6,6 +6,7 @@ use Illuminate\Auth\Middleware\RedirectIfAuthenticated;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -31,5 +32,24 @@ class AppServiceProvider extends ServiceProvider
         RedirectIfAuthenticated::redirectUsing(function () {
             return '/admin/dashboard/ecommerce';
         });
+
+        // On cPanel / shared hosting, SESSION_DOMAIN / secure flags are frequently misconfigured
+        // (e.g. cookie bound to a different domain or sent with SameSite rules that prevent it
+        // from being sent after redirects). That results in "login → dashboard → back to login"
+        // and CSRF 419 loops because every request starts a new anonymous session.
+        //
+        // For this project we prefer reliability over strict cookie settings, so we normalize
+        // session cookies to the safest, most compatible configuration whenever handling HTTP
+        // traffic (never in artisan / console).
+        if (! $this->app->runningInConsole()) {
+            config([
+                // Host-only cookie – automatically matches the current subdomain.
+                'session.domain' => null,
+                // Allow cookie over both HTTP and HTTPS (still encrypted & httpOnly).
+                'session.secure' => false,
+                // Standard Lax SameSite which works well with redirects on the same site.
+                'session.same_site' => 'lax',
+            ]);
+        }
     }
 }

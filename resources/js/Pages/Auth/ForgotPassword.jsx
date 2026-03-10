@@ -1,16 +1,18 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, useForm } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
+import { useState } from 'react';
 
 export default function ForgotPassword({ status }) {
-    const { data, setData, post, processing, errors } = useForm({
-        email: '',
-    });
+    const {
+        props: { errors = {} },
+    } = usePage();
 
-    const submit = (e) => {
-        e.preventDefault();
+    const [email, setEmail] = useState('');
 
-        post(route('password.email'));
-    };
+    const csrfToken =
+        typeof document !== 'undefined'
+            ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
+            : '';
 
     return (
         <AdminAuthLayout
@@ -32,7 +34,8 @@ export default function ForgotPassword({ status }) {
                 </div>
             )}
 
-            <form onSubmit={submit}>
+            <form method="POST" action={route('password.email')}>
+                {csrfToken && <input type="hidden" name="_token" value={csrfToken} />}
                 <div className="mb-3">
                     <label htmlFor="email" className="form-label">
                         Email <span className="text-danger">*</span>
@@ -42,8 +45,8 @@ export default function ForgotPassword({ status }) {
                         type="email"
                         name="email"
                         className={`form-control ${errors.email ? 'is-invalid' : ''}`}
-                        value={data.email}
-                        onChange={(e) => setData('email', e.target.value)}
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
                         required
                         autoFocus
                     />
@@ -51,7 +54,7 @@ export default function ForgotPassword({ status }) {
                 </div>
 
                 <div className="d-grid">
-                    <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
+                    <button className="btn btn-primary fw-semibold py-2">
                         Email Password Reset Link
                     </button>
                 </div>
