@@ -14,7 +14,7 @@
     RewriteCond %{REQUEST_URI} ^/public/ [NC]
     RewriteRule ^ - [L]
 
-    # Preserve Inertia + XSRF request headers through internal rewrite to public/.
+    # Preserve Inertia + CSRF request headers through internal rewrite to public/.
     # Apache subrequests can strip non-standard HTTP headers; setting them as
     # HTTP_* env vars makes PHP expose them via $_SERVER as if they were headers.
     RewriteCond %{HTTP:X-Inertia} .
@@ -22,6 +22,9 @@
 
     RewriteCond %{HTTP:X-XSRF-TOKEN} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-TOKEN}]
+
+    RewriteCond %{HTTP:X-CSRF-TOKEN} .
+    RewriteRule .* - [E=HTTP_X_CSRF_TOKEN:%{HTTP:X-CSRF-TOKEN}]
 
     # Send all other requests to public folder (Laravel entry point)
     RewriteCond %{REQUEST_FILENAME} !-f

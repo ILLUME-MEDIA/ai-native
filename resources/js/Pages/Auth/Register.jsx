@@ -2,12 +2,20 @@ import AdminAuthLayout from './AdminAuthLayout';
 import { Link, useForm } from '@inertiajs/react';
 
 export default function Register() {
-    const { data, setData, post, processing, errors, reset } = useForm({
+    const { data, setData, post, processing, errors, reset, transform } = useForm({
         name: '',
         email: '',
         password: '',
         password_confirmation: '',
     });
+
+    // Include _token in the POST body as a fallback for cPanel/Apache setups that
+    // strip non-standard request headers (X-CSRF-TOKEN / X-XSRF-TOKEN).
+    // Laravel checks $request->input('_token') first, before any header.
+    transform((d) => ({
+        ...d,
+        _token: document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '',
+    }));
 
     const submit = (e) => {
         e.preventDefault();
