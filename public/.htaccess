@@ -13,6 +13,12 @@
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
 
+    # Handle X-Inertia Header — cPanel/Apache can strip non-standard request
+    # headers during internal rewrites. Preserving as HTTP_* env var ensures
+    # PHP sees it as $_SERVER['HTTP_X_INERTIA'] (same as a real HTTP header).
+    RewriteCond %{HTTP:X-Inertia} .
+    RewriteRule .* - [E=HTTP_X_INERTIA:%{HTTP:X-Inertia}]
+
     # Redirect Trailing Slashes If Not A Folder
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} (.+)/$
@@ -26,6 +32,15 @@
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
+</IfModule>
+
+# Inertia Response Header Preservation
+# Some cPanel/Apache environments strip non-standard response headers set by PHP.
+# We detect the X-Inertia request header and re-add X-Inertia: true to the response
+# so Inertia.js does not throw "plain JSON response was received" errors.
+<IfModule mod_headers.c>
+    SetEnvIf X-Inertia "." INERTIA_REQUEST
+    Header always set X-Inertia "true" env=INERTIA_REQUEST
 </IfModule>
 
 # CORS Headers — handled by Laravel (config/cors.php).

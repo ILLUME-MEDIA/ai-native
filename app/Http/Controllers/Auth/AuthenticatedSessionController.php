@@ -24,7 +24,13 @@ class AuthenticatedSessionController extends Controller
     public function create(): Response|RedirectResponse|HttpResponse
     {
         if (Auth::check()) {
-            return Inertia::location('/admin/dashboard/ecommerce');
+            // Use redirectTo prop (same pattern as store()) instead of
+            // Inertia::location() to avoid Apache stripping X-Inertia-Location.
+            return Inertia::render('Auth/Login', [
+                'canResetPassword' => Route::has('password.request'),
+                'status'           => session('status'),
+                'redirectTo'       => '/admin/dashboard/ecommerce',
+            ]);
         }
 
         return Inertia::render('Auth/Login', [
@@ -44,9 +50,17 @@ class AuthenticatedSessionController extends Controller
 
         $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
 
-        // Inertia::location() forces a full browser page reload instead of an XHR redirect.
-        // This ensures a fresh session cookie + CSRF token after login on cPanel/proxy setups.
-        return Inertia::location($redirectUrl);
+        // Re-render the Login page with a `redirectTo` prop.
+        // Login.jsx detects this and does window.location.href (full browser reload).
+        //
+        // We avoid Inertia::location() (409 + X-Inertia-Location header) because
+        // cPanel/Apache strips non-standard response headers, causing the redirect
+        // to silently fail on production servers.
+        return Inertia::render('Auth/Login', [
+            'canResetPassword' => Route::has('password.request'),
+            'status'           => session('status'),
+            'redirectTo'       => $redirectUrl,
+        ]);
     }
 
     /**

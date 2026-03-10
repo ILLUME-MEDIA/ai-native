@@ -1,13 +1,26 @@
 import AdminAuthLayout from './AdminAuthLayout';
 import { Link, router, usePage } from '@inertiajs/react';
 import { Button, Col, Row } from 'react-bootstrap';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-export default function Login({ status, canResetPassword }) {
+export default function Login({ status, canResetPassword, redirectTo }) {
     const [processing, setProcessing] = useState(false);
     const [formData, setFormData] = useState({ email: '', password: '', remember: false });
     const { props: pageProps } = usePage();
     const errors = pageProps.errors || {};
+
+    // After successful login the server re-renders this page with `redirectTo` prop.
+    // We do a full browser navigation here so the admin SPA loads fresh with the
+    // new session cookie. This avoids relying on the X-Inertia-Location response
+    // header which cPanel/Apache often strips in production.
+    useEffect(() => {
+        if (redirectTo) {
+            window.location.href = redirectTo;
+        }
+    }, [redirectTo]);
+
+    // Show nothing while redirect is in progress
+    if (redirectTo) return null;
 
     const submit = (e) => {
         e.preventDefault();
