@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Foundation\ViteManifestNotFoundException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -37,6 +38,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
         $middleware->validateCsrfTokens(except: [
             'api/*',
+            // Auth routes are served via Inertia and sometimes hit proxy/cPanel setups
+            // where session cookies may not persist correctly during initial login.
+            // Exempting these prevents "419 Page Expired" on login/logout.
+            'login',
+            'logout',
         ]);
 
         $middleware->alias([
@@ -49,5 +55,13 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (ViteManifestNotFoundException $e) {
+            $msg = "Frontend assets are not built on the server.\n\n".
+                "Fix:\n".
+                "- Run: npm ci && npm run build\n".
+                "- Ensure public/build/manifest.json exists\n".
+                "- Then clear caches: php artisan view:clear && php artisan config:clear\n";
+
+            return response($msg, 500, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        });
     })->create();

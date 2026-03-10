@@ -17,11 +17,12 @@ use Illuminate\Support\Facades\Log;
 class ShipEngineService
 {
     private string $apiKey;
-    private string $baseUrl = 'https://api.shipengine.com';
+    private string $baseUrl;
 
     public function __construct()
     {
         $this->apiKey = (string) AppSecretService::get('SHIPENGINE_API_KEY', env('SHIPENGINE_API_KEY', ''));
+        $this->baseUrl = rtrim((string) AppSecretService::get('SHIPENGINE_BASE_URL', env('SHIPENGINE_BASE_URL', 'https://api.shipengine.com')), '/');
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -71,7 +72,7 @@ class ShipEngineService
             Log::error("ShipEngine API error [{$method} {$path}] {$response->status()}: {$body}");
             $json = $response->json() ?? [];
             throw new \RuntimeException(
-                $json['message'] ?? "ShipEngine API error [{$response->status()}]",
+                $json['message'] ?? $json['error'] ?? "ShipEngine API error [{$response->status()}]",
             );
         }
 

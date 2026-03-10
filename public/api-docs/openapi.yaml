@@ -6121,6 +6121,57 @@ paths:
         '422': { description: Validation error }
         '502': { description: ShipEngine API error }
 
+  /api/shipengine/rates/bulk:
+    post:
+      summary: Get bulk shipping rates
+      description: |
+        Get rates for multiple shipments in one request.
+        Useful for rating a batch/cart with multiple packages/shipments.
+      tags: [ShipEngine — Rates]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipments]
+              properties:
+                shipments:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/SE_ShipmentInput'
+                rate_options:
+                  type: object
+                  properties:
+                    carrier_ids:        { type: array, items: { type: string } }
+                    service_codes:      { type: array, items: { type: string } }
+                    preferred_currency: { type: string, example: usd }
+            example:
+              shipments:
+                - ship_to:
+                    name: "Jane Doe"
+                    address_line1: "525 S Winchester Blvd"
+                    city_locality: "San Jose"
+                    state_province: "CA"
+                    postal_code: "95128"
+                    country_code: "US"
+                  ship_from:
+                    name: "My Store"
+                    address_line1: "100 Shipping Lane"
+                    city_locality: "Austin"
+                    state_province: "TX"
+                    postal_code: "78701"
+                    country_code: "US"
+                  packages:
+                    - weight: { value: 1.0, unit: pound }
+              rate_options:
+                carrier_ids: ["se-123456"]
+      responses:
+        '200': { description: Bulk rate results }
+        '422': { description: Validation error }
+        '502': { description: ShipEngine API error }
+
   /api/shipengine/rates/estimate:
     post:
       summary: Estimate rates (quick, minimal info)

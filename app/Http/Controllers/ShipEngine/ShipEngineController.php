@@ -135,6 +135,29 @@ class ShipEngineController extends Controller
         return $this->proxy(fn() => $this->se->estimateRates($data));
     }
 
+    /**
+     * POST /api/shipengine/rates/bulk
+     * Get rates for multiple shipments in one request.
+     *
+     * Body: { "shipments": [{...}, {...}], "rate_options": { ... } }
+     */
+    public function getBulkRates(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'shipments'                     => 'required|array|min:1',
+            'shipments.*'                   => 'required|array',
+            'shipments.*.ship_to'           => 'required|array',
+            'shipments.*.ship_from'         => 'required|array',
+            'shipments.*.packages'          => 'required|array|min:1',
+            'rate_options'                  => 'nullable|array',
+            'rate_options.carrier_ids'      => 'nullable|array',
+            'rate_options.service_codes'    => 'nullable|array',
+            'rate_options.preferred_currency' => 'nullable|string',
+        ]);
+
+        return $this->proxy(fn() => $this->se->getBulkRates($data));
+    }
+
     // ── Shipments ────────────────────────────────────────────────────────────
 
     /**
