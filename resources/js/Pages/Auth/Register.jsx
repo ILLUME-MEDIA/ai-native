@@ -24,6 +24,7 @@ export default function Register() {
             pageTitle="Register"
             heading="Create your account"
             subheading="Join us today. Fill in your details to get started."
+            footer={
                 <p className="text-muted text-center mt-4 mb-0">
                     Already have an account?{' '}
                     <Link
