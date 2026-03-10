@@ -43,15 +43,15 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# Inertia Response Header Preservation
-# Some cPanel/Apache environments strip the X-Inertia response header set by PHP.
-# We detect it from the request and re-add it to 2xx/3xx responses only.
-# NOTE: do NOT use "always" here — that would add X-Inertia:true to 4xx error
-# responses (like 419 CSRF errors), causing Inertia.js to try to parse the error
-# HTML as an Inertia page object and throw "Cannot read properties of undefined".
+# Inertia Request Detection
+# SetEnvIf checks HTTP headers which are stripped during the root→public internal
+# rewrite, so we use SetEnvIfExpr to read the INERTIA_REQUEST env var that root
+# .htaccess set via [E=INERTIA_REQUEST:1]. This lets other directives reference it.
+# NOTE: X-Inertia response header is added by PHP (HandleInertiaRequests) only on
+# 2xx responses — no Apache Header directive needed here, which avoids accidentally
+# adding X-Inertia:true to 4xx responses (419, 422) that would break Inertia.js.
 <IfModule mod_headers.c>
-    SetEnvIf X-Inertia "." INERTIA_REQUEST
-    Header set X-Inertia "true" env=INERTIA_REQUEST
+    SetEnvIfExpr "env('INERTIA_REQUEST') != ''" INERTIA_REQUEST=1
 </IfModule>
 
 # CORS — full headers at Apache so preflight (OPTIONS) always gets Access-Control-Allow-Origin

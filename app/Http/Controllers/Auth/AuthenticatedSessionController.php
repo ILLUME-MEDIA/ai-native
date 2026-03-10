@@ -44,6 +44,11 @@ class AuthenticatedSessionController extends Controller
 
         $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
 
+        // Explicitly flush the session to the store before sending the redirect.
+        // On cPanel/Apache, the response can be sent before PHP's shutdown handlers
+        // write the session, so the next request sees no authenticated session.
+        $request->session()->save();
+
         // Return a standard PHP 302 redirect.
         // Login.jsx submits via a programmatic native form (not Inertia XHR), so the
         // browser follows this redirect natively — session cookie is guaranteed to be
