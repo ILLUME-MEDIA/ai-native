@@ -17,20 +17,14 @@ class AuthenticatedSessionController extends Controller
     /**
      * Display the login view.
      *
-     * If the user is already authenticated, redirect them straight to the
-     * admin dashboard instead of rendering the login page inside the
-     * auth layout (which looks like a modal/overlay).
+     * If the user is already authenticated, send them straight to the admin
+     * dashboard via a plain PHP redirect so the browser follows it natively
+     * (same pattern as store() — no Inertia::location() header tricks).
      */
     public function create(): Response|RedirectResponse|HttpResponse
     {
         if (Auth::check()) {
-            // Use redirectTo prop (same pattern as store()) instead of
-            // Inertia::location() to avoid Apache stripping X-Inertia-Location.
-            return Inertia::render('Auth/Login', [
-                'canResetPassword' => Route::has('password.request'),
-                'status'           => session('status'),
-                'redirectTo'       => '/admin/dashboard/ecommerce',
-            ]);
+            return redirect('/admin/dashboard/ecommerce');
         }
 
         return Inertia::render('Auth/Login', [
@@ -42,7 +36,7 @@ class AuthenticatedSessionController extends Controller
     /**
      * Handle an incoming authentication request.
      */
-    public function store(LoginRequest $request): Response|RedirectResponse|HttpResponse
+    public function store(LoginRequest $request): RedirectResponse
     {
         $request->authenticate();
 
@@ -50,17 +44,11 @@ class AuthenticatedSessionController extends Controller
 
         $redirectUrl = $request->session()->pull('url.intended', '/admin/dashboard/ecommerce');
 
-        // Re-render the Login page with a `redirectTo` prop.
-        // Login.jsx detects this and does window.location.href (full browser reload).
-        //
-        // We avoid Inertia::location() (409 + X-Inertia-Location header) because
-        // cPanel/Apache strips non-standard response headers, causing the redirect
-        // to silently fail on production servers.
-        return Inertia::render('Auth/Login', [
-            'canResetPassword' => Route::has('password.request'),
-            'status'           => session('status'),
-            'redirectTo'       => $redirectUrl,
-        ]);
+        // Return a standard PHP 302 redirect.
+        // Login.jsx submits via a programmatic native form (not Inertia XHR), so the
+        // browser follows this redirect natively — session cookie is guaranteed to be
+        // sent on the next GET, regardless of cPanel/Apache proxy configuration.
+        return redirect($redirectUrl);
     }
 
     /**

@@ -1,39 +1,45 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, router, usePage } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
 import { Button, Col, Row } from 'react-bootstrap';
-import { useState, useEffect } from 'react';
+import { useState, useRef } from 'react';
 
-export default function Login({ status, canResetPassword, redirectTo }) {
+export default function Login({ status, canResetPassword }) {
     const [processing, setProcessing] = useState(false);
     const [formData, setFormData] = useState({ email: '', password: '', remember: false });
     const { props: pageProps } = usePage();
     const errors = pageProps.errors || {};
-
-    // After successful login the server re-renders this page with `redirectTo` prop.
-    // We do a full browser navigation here so the admin SPA loads fresh with the
-    // new session cookie. This avoids relying on the X-Inertia-Location response
-    // header which cPanel/Apache often strips in production.
-    useEffect(() => {
-        if (redirectTo) {
-            window.location.href = redirectTo;
-        }
-    }, [redirectTo]);
-
-    // Show nothing while redirect is in progress
-    if (redirectTo) return null;
+    const formRef = useRef(null);
 
     const submit = (e) => {
         e.preventDefault();
         setProcessing(true);
-        // Use Inertia router.post() — reads XSRF-TOKEN cookie automatically via axios.
-        // More reliable than native form.submit() on reverse-proxy setups (cPanel/Apache).
-        router.post(route('login'), {
-            email: formData.email,
-            password: formData.password,
-            remember: formData.remember,
-        }, {
-            onFinish: () => setProcessing(false),
-        });
+
+        // Use a native browser form submit instead of Inertia XHR / axios.
+        // On cPanel/Apache, XHR-based POST responses sometimes lose the session
+        // cookie before window.location fires, causing a redirect loop back to login.
+        // Native form POST → server 302 → browser follows with all cookies intact.
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/login';
+
+        const addField = (name, value) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value ?? '';
+            form.appendChild(input);
+        };
+
+        // CSRF token (from meta tag — exempted from validation but good practice)
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        if (csrfMeta) addField('_token', csrfMeta.getAttribute('content'));
+
+        addField('email', formData.email);
+        addField('password', formData.password);
+        if (formData.remember) addField('remember', '1');
+
+        document.body.appendChild(form);
+        form.submit();
     };
 
     const socialContent = (
@@ -85,7 +91,7 @@ export default function Login({ status, canResetPassword, redirectTo }) {
                 </div>
             )}
 
-            <form onSubmit={submit}>
+            <form ref={formRef} onSubmit={submit}>
                 <div className="mb-3">
                     <label htmlFor="email" className="form-label">
                         Email address <span className="text-danger">*</span>
@@ -148,7 +154,7 @@ export default function Login({ status, canResetPassword, redirectTo }) {
 
                 <div className="d-grid">
                     <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
-                        Sign In
+                        {processing ? 'Signing in…' : 'Sign In'}
                     </button>
                 </div>
             </form>
