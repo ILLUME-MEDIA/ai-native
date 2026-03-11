@@ -54,10 +54,7 @@ class FeeService
                     return round((float) ($muzzhub->platform_fee_value ?? 0), 2);
                 }
 
-                // inherit on muzzhub — legacy boolean check
-                if ($muzzhub->adjust_platform_fee === false) {
-                    return 0.0;
-                }
+                // muzzhub inherits → fall through to global
             }
         }
 
@@ -109,10 +106,7 @@ class FeeService
                     return ['type' => $mOverride, 'value' => (float) ($muzzhub->platform_fee_value ?? 0), 'source' => 'muzzhub'];
                 }
 
-                // legacy boolean check
-                if ($muzzhub->adjust_platform_fee === false) {
-                    return ['type' => 'none', 'value' => 0, 'source' => 'muzzhub'];
-                }
+                // muzzhub inherits → fall through to global
             }
         }
 

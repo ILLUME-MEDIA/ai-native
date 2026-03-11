@@ -127,9 +127,9 @@ info:
     Use your `SITE_API_KEY` from `.env`.
 
 servers:
-  - url: http://127.0.0.1:8000
+  - url: http://127.0.0.1:8000/api
     description: Local development
-  - url: https://development.illumemedia.app
+  - url: https://development.illumemedia.app/api
     description: Staging
 
 security:
@@ -2068,7 +2068,7 @@ paths:
           description: Guest session UUID — same UUID on every request
       responses:
         "200":
-          description: Cart items, subtotal and count
+          description: Cart items, subtotal, platform fee, tip options and count
           content:
             application/json:
               schema:
@@ -2082,6 +2082,44 @@ paths:
                     type: number
                     description: "( base_price + modifier_adjustments ) × quantity, summed for all items"
                     example: 27.00
+                  platform_fee:
+                    type: number
+                    description: "Computed platform fee amount for this cart (0 if none)"
+                    example: 10.00
+                  fee_config:
+                    type: object
+                    description: "Effective fee config (source: global | muzzhub | business)"
+                    properties:
+                      type:
+                        type: string
+                        enum: [none, percentage, fixed]
+                        example: fixed
+                      value:
+                        type: number
+                        example: 10
+                      source:
+                        type: string
+                        example: global
+                  tip_options:
+                    type: array
+                    nullable: true
+                    description: "Suggested tip options (null if tips disabled globally)"
+                    items:
+                      type: object
+                      properties:
+                        label:
+                          type: string
+                          example: "10%"
+                        type:
+                          type: string
+                          enum: [percentage, custom]
+                        percent:
+                          type: number
+                          example: 10
+                        amount:
+                          type: number
+                          description: "Dollar amount for this % on current subtotal"
+                          example: 2.70
                   count:
                     type: integer
                     example: 2

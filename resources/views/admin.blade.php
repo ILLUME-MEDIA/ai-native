@@ -36,6 +36,9 @@
     <script>
         // Provide initial server-side props for hydration
         window.__INITIAL_PROPS__ = @json($initialProps ?? []);
+        // Site API key — allows the admin SPA to call /api/entities/* even when
+        // the user is not logged in (no Sanctum session cookie present).
+        window.__SITE_API_KEY__ = @json(config('mcp.site_api_key'));
         
         // Cleanup Bootstrap modals and backdrops on page load (fixes login modal issue)
         (function() {

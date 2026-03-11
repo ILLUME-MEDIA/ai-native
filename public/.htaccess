@@ -68,7 +68,7 @@
     Header always set Access-Control-Allow-Origin "%{CORS_ALLOW_ORIGIN}e" env=CORS_ALLOW_ORIGIN
     Header always set Access-Control-Allow-Credentials "true" env=CORS_ALLOW_ORIGIN
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ALLOW_ORIGIN
-    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-XSRF-TOKEN" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-XSRF-TOKEN, X-Session-Id" env=CORS_ALLOW_ORIGIN
     Header always set Access-Control-Max-Age "7200" env=CORS_ALLOW_ORIGIN
     Header always set Vary "Origin" env=CORS_ALLOW_ORIGIN
 </IfModule>
