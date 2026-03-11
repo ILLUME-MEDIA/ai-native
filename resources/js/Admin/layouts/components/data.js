@@ -151,6 +151,10 @@ export const menuItems = [{
       slug: "pages:apps-ecommerce-settings",
       label: "Settings"
     }, {
+      url: "/apps/ecommerce/fee-settings",
+      slug: "pages:apps-ecommerce-fee-settings",
+      label: "Fee & Tip Settings"
+    }, {
       url: "/apps/ecommerce/pos",
       slug: "pages:apps-ecommerce-pos",
       label: "POS Integration"
