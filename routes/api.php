@@ -66,7 +66,7 @@ Route::post('/webhooks/cal/{slug}', [CalWebhookController::class, 'handle'])
     ->middleware('throttle:120,1');
 
 // ── Cal.com Integration ────────────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('admin/cal')->group(function () {
+Route::prefix('admin/cal')->group(function () {
     // Platforms
     Route::get('platforms',                          [CalPlatformsController::class, 'index']);
     Route::post('platforms',                         [CalPlatformsController::class, 'store']);
@@ -84,7 +84,7 @@ Route::middleware('auth:sanctum')->prefix('admin/cal')->group(function () {
 });
 
 // ── Platform Genres ────────────────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('admin/platform-genres')->group(function () {
+Route::prefix('admin/platform-genres')->group(function () {
     Route::get('/',                                    [PlatformGenresController::class, 'index']);
     Route::post('/',                                   [PlatformGenresController::class, 'store']);
     Route::post('/reorder',                            [PlatformGenresController::class, 'reorder']);
@@ -95,7 +95,7 @@ Route::middleware('auth:sanctum')->prefix('admin/platform-genres')->group(functi
 });
 
 // ── OpenOrg Users (legacy — platform-scoped, openorg_users table only) ────────
-Route::middleware('auth:sanctum')->prefix('admin/openorg-users')->group(function () {
+Route::prefix('admin/openorg-users')->group(function () {
     Route::get('/',                        [OpenorgUsersController::class, 'index']);
     Route::post('/',                       [OpenorgUsersController::class, 'store']);
     Route::put('/{openorgUser}',           [OpenorgUsersController::class, 'update']);
@@ -108,7 +108,7 @@ Route::middleware('auth:sanctum')->prefix('admin/openorg-users')->group(function
 //        POST /api/admin/platforms/{platform}/users
 //        PUT  /api/admin/platforms/{platform}/users/{userId}
 //        DELETE /api/admin/platforms/{platform}/users/{userId}
-Route::middleware('auth:sanctum')->prefix('admin/platforms/{platform}')->group(function () {
+Route::prefix('admin/platforms/{platform}')->group(function () {
     Route::get('users',           [PlatformUsersController::class, 'index']);
     Route::post('users',          [PlatformUsersController::class, 'store']);
     Route::put('users/{userId}',  [PlatformUsersController::class, 'update']);
@@ -116,7 +116,7 @@ Route::middleware('auth:sanctum')->prefix('admin/platforms/{platform}')->group(f
 });
 
 // ── Kanban ─────────────────────────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('admin/kanban')->group(function () {
+Route::prefix('admin/kanban')->group(function () {
     // Boards
     Route::get('boards',                             [KanbanController::class, 'boardsIndex']);
     Route::post('boards',                            [KanbanController::class, 'boardsStore']);
@@ -137,14 +137,14 @@ Route::middleware('auth:sanctum')->prefix('admin/kanban')->group(function () {
 });
 
 // ── Ecommerce Settings (platform fee + tip global config) ─────────────────────
-Route::middleware('auth:sanctum')->prefix('admin/ecommerce-settings')->group(function () {
+Route::prefix('admin/ecommerce-settings')->group(function () {
     Route::get('/',           [EcommerceSettingsController::class, 'index']);
     Route::get('/{group}',    [EcommerceSettingsController::class, 'byGroup']);
     Route::put('/',           [EcommerceSettingsController::class, 'update']);
 });
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
-Route::middleware('auth:sanctum')->prefix('admin/app-secrets')->group(function () {
+Route::prefix('admin/app-secrets')->group(function () {
     Route::get('/',                         [AppSecretsController::class, 'index']);
     Route::post('/',                        [AppSecretsController::class, 'store']);
     Route::put('/{appSecret}',              [AppSecretsController::class, 'update']);
@@ -152,7 +152,7 @@ Route::middleware('auth:sanctum')->prefix('admin/app-secrets')->group(function (
     Route::post('/{appSecret}/reveal',      [AppSecretsController::class, 'reveal']);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::group([], function () {
     // ── Case Studies Admin CRUD ─────────────────────────────────────────────
     Route::get('/admin/case-studies',                        [AdminCaseStudyController::class, 'index']);
     Route::post('/admin/case-studies/upload-media',          [AdminCaseStudyController::class, 'uploadMedia']);
@@ -535,7 +535,7 @@ Route::prefix('ecommerce/discovery-users/me')->group(function () {
 });
 
 // ── POS Admin Routes (Sanctum auth required) ─────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('ecommerce/pos')->group(function () {
+Route::prefix('ecommerce/pos')->group(function () {
     // ── Literal routes first (must come before /{connection} wildcard) ────────
     Route::get('/',                                     [PosController::class, 'index']);
     Route::get('/square/auth-url',                      [PosController::class, 'squareAuthUrl']);
@@ -563,7 +563,7 @@ Route::middleware('auth:sanctum')->prefix('ecommerce/pos')->group(function () {
 });
 
 // ── POS order lookup (admin) ──────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
+Route::get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
 
 // ── POS Webhooks (no auth — verified by signature) ────────────────────────────
 Route::post('webhooks/pos/square', [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
@@ -574,7 +574,7 @@ Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->wit
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Admin: Delivery Staff Management ─────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/staff')->group(function () {
+Route::prefix('delivery/staff')->group(function () {
     Route::get('/',                         [DeliveryStaffController::class, 'index']);
     Route::post('/',                        [DeliveryStaffController::class, 'store']);
     Route::get('/available',               [DeliveryStaffController::class, 'available']);
@@ -586,7 +586,7 @@ Route::middleware('auth:sanctum')->prefix('delivery/staff')->group(function () {
 });
 
 // ── Admin: Delivery Zones Management ──────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/zones')->group(function () {
+Route::prefix('delivery/zones')->group(function () {
     Route::get('/',                       [DeliveryZoneController::class, 'index']);
     Route::post('/',                      [DeliveryZoneController::class, 'store']);
     Route::post('/reorder',              [DeliveryZoneController::class, 'reorder']);
@@ -603,7 +603,7 @@ Route::get('/delivery/zones/check-point', [DeliveryZoneController::class, 'check
 Route::post('/delivery/quote', [DeliveryQuoteController::class, 'quote']);
 
 // ── Admin: Order Assignment / Dispatch ────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/assignments')->group(function () {
+Route::prefix('delivery/assignments')->group(function () {
     Route::get('/',                                [DeliveryAssignmentController::class, 'index']);
     Route::post('/assign',                         [DeliveryAssignmentController::class, 'assign']);
     Route::post('/auto-assign',                    [DeliveryAssignmentController::class, 'autoAssign']);
@@ -612,14 +612,14 @@ Route::middleware('auth:sanctum')->prefix('delivery/assignments')->group(functio
 });
 
 // ── Admin: Delivery Platform Settings ─────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/settings')->group(function () {
+Route::prefix('delivery/settings')->group(function () {
     Route::get('/',               [DeliverySettingsController::class, 'index']);
     Route::post('/',              [DeliverySettingsController::class, 'upsert']);
     Route::post('/test',          [DeliverySettingsController::class, 'testConnection']);
 });
 
 // ── Admin: All Platform Orders (UberEats + Instacart unified) ─────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/platform-orders')->group(function () {
+Route::prefix('delivery/platform-orders')->group(function () {
     Route::get('/',                                [PlatformOrderController::class, 'index']);
     Route::get('/summary',                         [PlatformOrderController::class, 'summary']);
     Route::get('/{platformOrder}',                 [PlatformOrderController::class, 'show']);
@@ -627,7 +627,7 @@ Route::middleware('auth:sanctum')->prefix('delivery/platform-orders')->group(fun
 });
 
 // ── Admin: UberEats Order Management ──────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/ubereats')->group(function () {
+Route::prefix('delivery/ubereats')->group(function () {
     Route::get('/config',                          [UberEatsController::class, 'config']);
     Route::get('/orders',                          [UberEatsController::class, 'orders']);
     Route::post('/orders/{platformOrder}/accept',  [UberEatsController::class, 'accept']);
@@ -636,7 +636,7 @@ Route::middleware('auth:sanctum')->prefix('delivery/ubereats')->group(function (
 });
 
 // ── Admin: Instacart Order Management ─────────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('delivery/instacart')->group(function () {
+Route::prefix('delivery/instacart')->group(function () {
     Route::get('/config',                          [InstacartController::class, 'config']);
     Route::get('/orders',                          [InstacartController::class, 'orders']);
     Route::post('/orders/{platformOrder}/accept',  [InstacartController::class, 'accept']);
@@ -648,7 +648,7 @@ Route::post('webhooks/delivery/ubereats',  [UberEatsController::class,  'webhook
 Route::post('webhooks/delivery/instacart', [InstacartController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
 
 // ── ShipEngine API Routes (admin auth required) ───────────────────────────────
-Route::middleware('auth:sanctum')->prefix('shipengine')->group(function () {
+Route::prefix('shipengine')->group(function () {
 
     // Account
     Route::get('account/settings',           [ShipEngineController::class, 'getAccountSettings']);

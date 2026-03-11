@@ -36,7 +36,7 @@ class AuthenticatedSessionController extends Controller
     /**
      * Handle an incoming authentication request.
      */
-    public function store(LoginRequest $request): RedirectResponse
+    public function store(LoginRequest $request): HttpResponse|RedirectResponse
     {
         $request->authenticate();
 
@@ -49,11 +49,32 @@ class AuthenticatedSessionController extends Controller
         // write the session, so the next request sees no authenticated session.
         $request->session()->save();
 
-        // Return a standard PHP 302 redirect.
-        // Login.jsx submits via a programmatic native form (not Inertia XHR), so the
-        // browser follows this redirect natively — session cookie is guaranteed to be
-        // sent on the next GET, regardless of cPanel/Apache proxy configuration.
-        return redirect($redirectUrl);
+        // Debug logging
+        \Log::info('User logged in, Session ID: ' . $request->session()->getId() . ', Redirect to: ' . $redirectUrl);
+
+        // On cPanel/Apache, a 302 redirect response can have its Set-Cookie header
+        // stripped by ModSecurity or Apache rewrite rules before it reaches the browser.
+        // By returning a 200 response with a delayed JS redirect, the cookie is fully
+        // committed to the browser's cookie store BEFORE the navigation fires.
+        // setTimeout(fn, 200) ensures the cookie write completes before the GET request.
+        $url = e($redirectUrl);
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Redirecting...</title>
+</head>
+<body>
+    <script>
+        setTimeout(function() {
+            window.location.replace('{$url}');
+        }, 200);
+    </script>
+</body>
+</html>
+HTML;
+        return response($html, 200)->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     /**

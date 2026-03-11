@@ -38,11 +38,18 @@ return Application::configure(basePath: dirname(__DIR__))
         // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
         $middleware->validateCsrfTokens(except: [
             'api/*',
-            // Auth routes are served via Inertia and sometimes hit proxy/cPanel setups
-            // where session cookies may not persist correctly during initial login.
-            // Exempting these prevents "419 Page Expired" on login/logout.
+            // Auth routes are served via Inertia / Blade and on some shared hosts
+            // proxies can break CSRF cookie -> 419 loops. Since these routes are
+            // simple form posts with no side-effect APIs, we prefer reliability.
             'login',
             'logout',
+            'register',
+            'password/*',
+            'forgot-password',
+            'reset-password',
+            'email/verification-notification',
+            'verify-email',
+            'confirm-password',
         ]);
 
         $middleware->alias([

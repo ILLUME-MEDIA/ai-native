@@ -29,10 +29,9 @@ return [
 
     // Regex patterns for dynamic origins (e.g. all *.illumemedia.app subdomains).
     // Override via CORS_ALLOWED_ORIGIN_PATTERNS env (comma-separated regex list).
-    'allowed_origins_patterns' => array_filter(array_map(
-        'trim',
-        explode(',', env('CORS_ALLOWED_ORIGIN_PATTERNS', '#^https://([a-z0-9-]+\.)?illumemedia\.app$#,#^http://localhost(:[0-9]+)?$#'))
-    )),
+    // Allow any origin — public API endpoints (entities, streaming-apps, etc.)
+    // Pattern matching echoes back the request origin, so credentials still work for admin SPA.
+    'allowed_origins_patterns' => ['#.*#'],
 
     'allowed_headers' => ['*'],
 

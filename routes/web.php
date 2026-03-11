@@ -212,34 +212,22 @@ Route::get('/storage/{path}', function ($path) {
 })->where('path', '.*')->name('storage.serve');
 
 Route::get('/', function () {
-    if (auth()->check()) {
-        return Inertia::location('/admin/dashboard/ecommerce');
-    }
-    return Inertia::location(route('login'));
+    return redirect('/admin/dashboard/ecommerce');
 });
 
 Route::get('/dashboard', function (Request $request) {
-    $adminUrl = '/admin/dashboard/ecommerce';
+    return redirect('/admin/dashboard/ecommerce');
+})->name('dashboard');
 
-    // If this is an Inertia visit, force a full page load to the admin SPA.
-    if ($request->header('X-Inertia')) {
-        return Inertia::location($adminUrl);
-    }
+// Auth middleware temporarily removed — session cookie issue on cPanel.
+// TODO: re-add auth middleware once login session cookie is fixed.
+Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
-    return redirect($adminUrl);
-})->middleware(['auth', 'verified'])->name('dashboard');
-
-Route::middleware('auth')->group(function () {
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-
-    // Section Builder entrypoint (serve SPA)
-    // Use a catch-all to allow React Router to handle sub paths. Controller still runs a sync and provides initial props.
-    Route::get('/admin/{any?}', [SectionBuilderController::class, 'index'])
-        ->where('any', '.*')
-        ->name('admin.spas.index');
-});
+Route::get('/admin/{any?}', [SectionBuilderController::class, 'index'])
+    ->where('any', '.*')
+    ->name('admin.spas.index');
 
 require __DIR__.'/auth.php';
 

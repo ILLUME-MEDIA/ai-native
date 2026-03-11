@@ -17,6 +17,8 @@ class SectionBuilderController extends Controller
      */
     public function index(Request $request, SchemaSyncService $schemaSyncService)
     {
+        \Log::info('Admin route hit, Auth check: ' . (auth()->check() ? 'true' : 'false') . ', User: ' . (auth()->id() ?? 'null') . ', Session ID: ' . $request->session()->getId());
+
         // Ensure DB tables & Section Editor stay in sync whenever this page is opened.
         // TTL set to 0 so new tables appear immediately when you visit the page.
         $schemaSyncService->syncIfStale(0);
@@ -42,11 +44,15 @@ class SectionBuilderController extends Controller
         }
 
         // Pass initial props to the Blade view so the React app can hydrate with server data.
-        return view('admin', [
+        // No-cache headers prevent the browser from serving a stale cached copy that
+        // bypasses auth middleware and causes the session to appear invalid.
+        return response()->view('admin', [
             'initialProps' => [
                 'entities' => $entities,
             ],
-        ]);
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate')
+          ->header('Pragma', 'no-cache')
+          ->header('Expires', '0');
     }
 }
 
