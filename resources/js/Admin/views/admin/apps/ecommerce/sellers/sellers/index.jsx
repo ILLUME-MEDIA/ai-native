@@ -42,7 +42,8 @@ const emptyForm = {
   catering: false, delivery: false, wheelchair_access: false, wifi: false,
   cash_only: false, pork: false, featured: false, sponsored: false,
   enable_order: false, enable_order_print: false, enable_stripe: false,
-  adjust_platform_fee: false, is_online: false, restrict_checkin: false,
+  adjust_platform_fee: false, platform_fee_override: 'inherit', platform_fee_value: '',
+  is_online: false, restrict_checkin: false,
   created_app_user: false, auto_accept: false,
   // Text features
   shisha: '', drive_thru: '', reservations: '', outdoor_seating: '',
@@ -152,9 +153,17 @@ export default function SellersPage() {
 
   const openEdit = (biz) => {
     setEditBiz(biz);
+    // Date fields with MySQL zero-date should become empty string
+    const zeroDate = /^0000-00-00/;
+    const dateFields = ['checkin_start', 'checkin_end', 'start_date', 'end_date', 'closedDate'];
     const f = {};
     Object.keys(emptyForm).forEach(k => {
-      f[k] = biz[k] !== undefined && biz[k] !== null ? biz[k] : emptyForm[k];
+      // Skip computed accessor (amenities is built server-side from other fields)
+      if (k === 'amenities') { f[k] = ''; return; }
+      let val = biz[k] !== undefined && biz[k] !== null ? biz[k] : emptyForm[k];
+      // Nullify zero-dates so datetime-local input doesn't get invalid value
+      if (dateFields.includes(k) && typeof val === 'string' && zeroDate.test(val)) val = '';
+      f[k] = val;
     });
     setForm(f);
     setSlugLocked(true);
@@ -678,6 +687,53 @@ export default function SellersPage() {
                         />
                       ))}
                     </div>
+                  </Col>
+
+                  <Col xs={12}><hr className="my-1" /></Col>
+
+                  {/* ── Platform Fee Override ── */}
+                  <Col xs={12}>
+                    <FormLabel className="fw-semibold">Platform Fee Override</FormLabel>
+                    <p className="text-muted fs-sm mb-2">
+                      Override the global platform fee for this seller. "Inherit" uses the global setting.
+                    </p>
+                    <div className="d-flex flex-wrap gap-3 mb-2">
+                      {[
+                        { v: 'inherit',    l: 'Inherit Global' },
+                        { v: 'none',       l: 'No Fee' },
+                        { v: 'percentage', l: '% Percentage' },
+                        { v: 'fixed',      l: '$ Fixed' },
+                      ].map(opt => (
+                        <Form.Check
+                          key={opt.v}
+                          type="radio"
+                          id={`pf-${opt.v}`}
+                          name="platform_fee_override"
+                          label={opt.l}
+                          value={opt.v}
+                          checked={form.platform_fee_override === opt.v}
+                          onChange={e => set('platform_fee_override', e.target.value)}
+                        />
+                      ))}
+                    </div>
+                    {['percentage', 'fixed'].includes(form.platform_fee_override) && (
+                      <div className="input-group" style={{ maxWidth: 200 }}>
+                        {form.platform_fee_override === 'fixed' && (
+                          <span className="input-group-text">$</span>
+                        )}
+                        <FormControl
+                          type="number"
+                          min="0"
+                          step={form.platform_fee_override === 'percentage' ? '0.5' : '0.01'}
+                          placeholder={form.platform_fee_override === 'percentage' ? 'e.g. 5' : 'e.g. 1.99'}
+                          value={form.platform_fee_value}
+                          onChange={e => set('platform_fee_value', e.target.value)}
+                        />
+                        {form.platform_fee_override === 'percentage' && (
+                          <span className="input-group-text">%</span>
+                        )}
+                      </div>
+                    )}
                   </Col>
 
                   <Col xs={12}><hr className="my-1" /></Col>

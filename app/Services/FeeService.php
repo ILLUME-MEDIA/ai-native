@@ -13,11 +13,10 @@ class FeeService
      * Calculate the platform fee amount for a given subtotal and business.
      *
      * Resolution order:
-     *  1. Business.platform_fee_override = none       → 0
-     *  2. Business.platform_fee_override = percentage → business value
-     *  3. Business.platform_fee_override = fixed      → business value
-     *  4. Business has linked Muzzhub with adjust_platform_fee = false → 0
-     *  5. inherit (or no business) → global ecommerce_settings
+     *  1. Business.platform_fee_override = none/percentage/fixed → use business value
+     *  2. inherit → check linked Muzzhub.platform_fee_override (none/percentage/fixed)
+     *  3. Muzzhub.platform_fee_override = inherit → check Muzzhub.adjust_platform_fee = false → 0
+     *  4. Fall through → global ecommerce_settings
      *
      * Returns the fee amount (rounded to 2 dp).
      */
@@ -38,11 +37,27 @@ class FeeService
             return round((float) ($business->platform_fee_value ?? 0), 2);
         }
 
-        // inherit — check Muzzhub.adjust_platform_fee before falling to global
+        // inherit — check linked Muzzhub overrides
         if ($business) {
             $muzzhub = $business->muzzhub;
-            if ($muzzhub && $muzzhub->adjust_platform_fee === false) {
-                return 0.0;
+            if ($muzzhub) {
+                $mOverride = $muzzhub->platform_fee_override ?? 'inherit';
+
+                if ($mOverride === 'none') return 0.0;
+
+                if ($mOverride === 'percentage') {
+                    $rate = (float) ($muzzhub->platform_fee_value ?? 0);
+                    return round($subtotal * ($rate / 100), 2);
+                }
+
+                if ($mOverride === 'fixed') {
+                    return round((float) ($muzzhub->platform_fee_value ?? 0), 2);
+                }
+
+                // inherit on muzzhub — legacy boolean check
+                if ($muzzhub->adjust_platform_fee === false) {
+                    return 0.0;
+                }
             }
         }
 
@@ -80,11 +95,24 @@ class FeeService
             return ['type' => $override, 'value' => (float) ($business->platform_fee_value ?? 0)];
         }
 
-        // inherit — check Muzzhub flag
+        // inherit — check linked Muzzhub overrides
         if ($business) {
             $muzzhub = $business->muzzhub;
-            if ($muzzhub && $muzzhub->adjust_platform_fee === false) {
-                return ['type' => 'none', 'value' => 0, 'source' => 'muzzhub'];
+            if ($muzzhub) {
+                $mOverride = $muzzhub->platform_fee_override ?? 'inherit';
+
+                if ($mOverride === 'none') {
+                    return ['type' => 'none', 'value' => 0, 'source' => 'muzzhub'];
+                }
+
+                if (in_array($mOverride, ['percentage', 'fixed'])) {
+                    return ['type' => $mOverride, 'value' => (float) ($muzzhub->platform_fee_value ?? 0), 'source' => 'muzzhub'];
+                }
+
+                // legacy boolean check
+                if ($muzzhub->adjust_platform_fee === false) {
+                    return ['type' => 'none', 'value' => 0, 'source' => 'muzzhub'];
+                }
             }
         }
 
