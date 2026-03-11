@@ -176,9 +176,22 @@ export default function SellersPage() {
     const req = editBiz
       ? axios.patch(`/api/ecommerce/muzzhub/${editBiz.id}`, form)
       : axios.post('/api/ecommerce/muzzhub', form);
-    req.then(() => { showToast(editBiz ? 'Updated!' : 'Created!'); setShowModal(false); load(); })
-       .catch(e => showToast(e.response?.data?.message || 'Error saving', 'danger'))
-       .finally(() => setSaving(false));
+    req
+      .then(() => {
+        showToast(editBiz ? 'Updated successfully!' : 'Created successfully!');
+        setShowModal(false);
+        load();
+      })
+      .catch(e => {
+        const data = e.response?.data;
+        if (data?.errors) {
+          const msgs = Object.values(data.errors).flat().join(' • ');
+          showToast(msgs, 'danger');
+        } else {
+          showToast(data?.message || 'Error saving. Please try again.', 'danger');
+        }
+      })
+      .finally(() => setSaving(false));
   };
 
   const handleDelete = () => {
