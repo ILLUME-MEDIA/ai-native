@@ -212,7 +212,10 @@ class CheckoutController extends Controller
             // Direct charge with a Stripe payment method (external site / new card)
             try {
                 $stripe = new StripeClient(config('services.stripe.secret'));
-                $intent = $stripe->paymentIntents->create([
+
+                // If the PM is attached to a Stripe Customer it must be included
+                $pm = $stripe->paymentMethods->retrieve($pmId);
+                $intentParams = [
                     'amount'         => $amountCents,
                     'currency'       => 'usd',
                     'payment_method' => $pmId,
@@ -221,7 +224,11 @@ class CheckoutController extends Controller
                     'off_session'    => true,
                     'return_url'     => config('app.url'),
                     'metadata'       => ['order_number' => $order->order_number],
-                ]);
+                ];
+                if (!empty($pm->customer)) {
+                    $intentParams['customer'] = $pm->customer;
+                }
+                $intent = $stripe->paymentIntents->create($intentParams);
 
                 $order->update([
                     'payment_status'           => $intent->status === 'succeeded' ? 'paid' : 'failed',

@@ -30,6 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->api(prepend: [
+            // Adds Cache-Control: no-store + CORS fallback so Nginx proxy cache
+            // never serves a stale HTML page instead of the API JSON response.
+            \App\Http\Middleware\AddApiHeaders::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
@@ -62,6 +65,14 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Force JSON responses for all API routes — prevents HTML error pages
+        // when Accept: */* is sent (e.g. Swagger UI curl).
+        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            if ($request->is('api/*') && !$request->expectsJson()) {
+                $request->headers->set('Accept', 'application/json');
+            }
+        });
+
         $exceptions->render(function (ViteManifestNotFoundException $e) {
             $msg = "Frontend assets are not built on the server.\n\n".
                 "Fix:\n".

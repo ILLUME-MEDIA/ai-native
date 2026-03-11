@@ -92,19 +92,15 @@ class ShipEngineController extends Controller
      */
     public function getRates(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'shipment'                            => 'required|array',
-            'shipment.ship_to'                    => 'required|array',
-            'shipment.ship_from'                  => 'required|array',
-            'shipment.packages'                   => 'required|array|min:1',
-            'rate_options'                        => 'nullable|array',
-            'rate_options.carrier_ids'            => 'nullable|array',
-            'rate_options.service_codes'          => 'nullable|array',
-            'rate_options.calculate_tax_amount'   => 'nullable|boolean',
-            'rate_options.preferred_currency'     => 'nullable|string',
+        $request->validate([
+            'shipment'            => 'required|array',
+            'shipment.ship_to'    => 'required|array',
+            'shipment.ship_from'  => 'required|array',
+            'shipment.packages'   => 'required|array|min:1',
+            'rate_options'        => 'nullable|array',
         ]);
 
-        return $this->proxy(fn() => $this->se->getRates($data));
+        return $this->proxy(fn() => $this->se->getRates($request->all()));
     }
 
     /**
@@ -143,19 +139,15 @@ class ShipEngineController extends Controller
      */
     public function getBulkRates(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'shipments'                     => 'required|array|min:1',
-            'shipments.*'                   => 'required|array',
-            'shipments.*.ship_to'           => 'required|array',
-            'shipments.*.ship_from'         => 'required|array',
-            'shipments.*.packages'          => 'required|array|min:1',
-            'rate_options'                  => 'nullable|array',
-            'rate_options.carrier_ids'      => 'nullable|array',
-            'rate_options.service_codes'    => 'nullable|array',
-            'rate_options.preferred_currency' => 'nullable|string',
+        $request->validate([
+            'shipments'           => 'required|array|min:1',
+            'shipments.*.ship_to' => 'required|array',
+            'shipments.*.ship_from' => 'required|array',
+            'shipments.*.packages'  => 'required|array|min:1',
+            'rate_options'          => 'nullable|array',
         ]);
 
-        return $this->proxy(fn() => $this->se->getBulkRates($data));
+        return $this->proxy(fn() => $this->se->getBulkRates($request->all()));
     }
 
     // ── Shipments ────────────────────────────────────────────────────────────
@@ -168,14 +160,14 @@ class ShipEngineController extends Controller
      */
     public function createShipments(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $request->validate([
             'shipments'              => 'required|array|min:1',
-            'shipments.*.ship_to'   => 'required|array',
-            'shipments.*.ship_from' => 'required|array',
-            'shipments.*.packages'  => 'required|array|min:1',
+            'shipments.*.ship_to'    => 'required|array',
+            'shipments.*.ship_from'  => 'required|array',
+            'shipments.*.packages'   => 'required|array|min:1',
         ]);
 
-        return $this->proxy(fn() => $this->se->createShipments($data['shipments']));
+        return $this->proxy(fn() => $this->se->createShipments($request->input('shipments')));
     }
 
     /**
@@ -229,19 +221,17 @@ class ShipEngineController extends Controller
      */
     public function createLabel(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'shipment'                   => 'required|array',
-            'shipment.ship_to'           => 'required|array',
-            'shipment.ship_from'         => 'required|array',
-            'shipment.packages'          => 'required|array|min:1',
-            'shipment.service_code'      => 'nullable|string',
-            'shipment.carrier_id'        => 'nullable|string',
-            'label_format'               => 'nullable|string|in:pdf,png,zpl',
-            'label_layout'               => 'nullable|string|in:4x6,letter',
-            'label_download_type'        => 'nullable|string|in:url,inline',
+        $request->validate([
+            'shipment'           => 'required|array',
+            'shipment.ship_to'   => 'required|array',
+            'shipment.ship_from' => 'required|array',
+            'shipment.packages'  => 'required|array|min:1',
+            'label_format'       => 'nullable|string|in:pdf,png,zpl',
+            'label_layout'       => 'nullable|string|in:4x6,letter',
+            'label_download_type'=> 'nullable|string|in:url,inline',
         ]);
 
-        return $this->proxy(fn() => $this->se->createLabel($data));
+        return $this->proxy(fn() => $this->se->createLabel($request->all()));
     }
 
     /**
@@ -389,7 +379,7 @@ class ShipEngineController extends Controller
      */
     public function createWarehouse(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $request->validate([
             'name'                         => 'required|string',
             'origin_address'               => 'required|array',
             'origin_address.name'          => 'required|string',
@@ -401,7 +391,7 @@ class ShipEngineController extends Controller
             'return_address'               => 'nullable|array',
         ]);
 
-        return $this->proxy(fn() => $this->se->createWarehouse($data));
+        return $this->proxy(fn() => $this->se->createWarehouse($request->all()));
     }
 
     /** GET /api/shipengine/warehouses/{warehouseId} */

@@ -6009,7 +6009,7 @@ paths:
 
   # ── SHIPENGINE ──────────────────────────────────────────────────────────────
 
-  /api/shipengine/account/settings:
+  /shipengine/account/settings:
     get:
       summary: Get ShipEngine account settings
       tags: [ShipEngine — Addresses]
@@ -6018,7 +6018,7 @@ paths:
         '200': { description: Account settings object }
         '502': { description: ShipEngine API error }
 
-  /api/shipengine/addresses/validate:
+  /shipengine/addresses/validate:
     post:
       summary: Validate addresses
       description: |
@@ -6053,7 +6053,7 @@ paths:
         '422': { description: Validation error }
         '502': { description: ShipEngine API error }
 
-  /api/shipengine/carriers:
+  /shipengine/carriers:
     get:
       summary: List connected carriers
       tags: [ShipEngine — Carriers]
@@ -6070,7 +6070,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/SE_Carrier' }
 
-  /api/shipengine/carriers/{carrierId}:
+  /shipengine/carriers/{carrierId}:
     get:
       summary: Get a carrier
       tags: [ShipEngine — Carriers]
@@ -6080,7 +6080,7 @@ paths:
       responses:
         '200': { description: Carrier object }
 
-  /api/shipengine/carriers/{carrierId}/services:
+  /shipengine/carriers/{carrierId}/services:
     get:
       summary: List carrier services
       tags: [ShipEngine — Carriers]
@@ -6090,7 +6090,7 @@ paths:
       responses:
         '200': { description: List of services }
 
-  /api/shipengine/carriers/{carrierId}/packages:
+  /shipengine/carriers/{carrierId}/packages:
     get:
       summary: List carrier package types
       tags: [ShipEngine — Carriers]
@@ -6100,7 +6100,7 @@ paths:
       responses:
         '200': { description: List of package types }
 
-  /api/shipengine/carriers/{carrierId}/options:
+  /shipengine/carriers/{carrierId}/options:
     get:
       summary: List carrier options
       tags: [ShipEngine — Carriers]
@@ -6110,7 +6110,7 @@ paths:
       responses:
         '200': { description: List of carrier-specific options }
 
-  /api/shipengine/rates:
+  /shipengine/rates:
     post:
       summary: Get shipping rates
       description: |
@@ -6159,7 +6159,7 @@ paths:
         '422': { description: Validation error }
         '502': { description: ShipEngine API error }
 
-  /api/shipengine/rates/bulk:
+  /shipengine/rates/bulk:
     post:
       summary: Get bulk shipping rates
       description: |
@@ -6210,7 +6210,7 @@ paths:
         '422': { description: Validation error }
         '502': { description: ShipEngine API error }
 
-  /api/shipengine/rates/estimate:
+  /shipengine/rates/estimate:
     post:
       summary: Estimate rates (quick, minimal info)
       description: |
@@ -6251,7 +6251,7 @@ paths:
         '422': { description: Validation error }
         '502': { description: ShipEngine API error }
 
-  /api/shipengine/shipments:
+  /shipengine/shipments:
     post:
       summary: Create shipments
       tags: [ShipEngine — Shipments]
@@ -6284,7 +6284,7 @@ paths:
       responses:
         '200': { description: Paginated list of shipments }
 
-  /api/shipengine/shipments/{shipmentId}:
+  /shipengine/shipments/{shipmentId}:
     get:
       summary: Get a shipment
       tags: [ShipEngine — Shipments]
@@ -6307,7 +6307,7 @@ paths:
       responses:
         '200': { description: Updated shipment }
 
-  /api/shipengine/shipments/{shipmentId}/cancel:
+  /shipengine/shipments/{shipmentId}/cancel:
     put:
       summary: Cancel a shipment
       tags: [ShipEngine — Shipments]
@@ -6317,7 +6317,7 @@ paths:
       responses:
         '204': { description: Cancelled }
 
-  /api/shipengine/shipments/{shipmentId}/rates:
+  /shipengine/shipments/{shipmentId}/rates:
     get:
       summary: Get rates for an existing shipment
       tags: [ShipEngine — Shipments]
@@ -6327,7 +6327,7 @@ paths:
       responses:
         '200': { description: Rates for the shipment }
 
-  /api/shipengine/labels:
+  /shipengine/labels:
     post:
       summary: Create a label (inline shipment)
       description: |
@@ -6401,7 +6401,7 @@ paths:
       responses:
         '200': { description: Paginated list of labels }
 
-  /api/shipengine/labels/rates/{rateId}:
+  /shipengine/labels/rates/{rateId}:
     post:
       summary: Create label from rate ID
       description: Purchase a label using a previously retrieved rate ID.
@@ -6425,7 +6425,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SE_Label' }
 
-  /api/shipengine/labels/shipments/{shipmentId}:
+  /shipengine/labels/shipments/{shipmentId}:
     post:
       summary: Create label from shipment ID
       tags: [ShipEngine — Labels]
@@ -6450,7 +6450,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SE_Label' }
 
-  /api/shipengine/labels/{labelId}:
+  /shipengine/labels/{labelId}:
     get:
       summary: Get a label
       tags: [ShipEngine — Labels]
@@ -6460,7 +6460,7 @@ paths:
       responses:
         '200': { description: Label object }
 
-  /api/shipengine/labels/{labelId}/void:
+  /shipengine/labels/{labelId}/void:
     put:
       summary: Void a label
       description: Cancel/void a label. The carrier will be notified and the label becomes invalid.
@@ -6471,7 +6471,7 @@ paths:
       responses:
         '200': { description: Void result }
 
-  /api/shipengine/labels/{labelId}/track:
+  /shipengine/labels/{labelId}/track:
     get:
       summary: Get tracking info for a label
       tags: [ShipEngine — Labels]
@@ -6481,7 +6481,7 @@ paths:
       responses:
         '200': { description: Tracking events }
 
-  /api/shipengine/tracking:
+  /shipengine/tracking:
     get:
       summary: Track a package
       description: Get current status and tracking events by carrier code + tracking number.
@@ -6497,7 +6497,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SE_TrackingInfo' }
 
-  /api/shipengine/tracking/start:
+  /shipengine/tracking/start:
     post:
       summary: Start tracking (subscribe to webhooks)
       description: Subscribe to real-time tracking updates via webhook.
@@ -6517,7 +6517,7 @@ paths:
         '204': { description: Tracking started }
         '422': { description: Validation error }
 
-  /api/shipengine/tracking/stop:
+  /shipengine/tracking/stop:
     post:
       summary: Stop tracking (unsubscribe)
       tags: [ShipEngine — Tracking]
@@ -6535,7 +6535,7 @@ paths:
       responses:
         '204': { description: Tracking stopped }
 
-  /api/shipengine/service-points/search:
+  /shipengine/service-points/search:
     post:
       summary: Search nearby service points
       description: |
@@ -6567,7 +6567,7 @@ paths:
       responses:
         '200': { description: List of service points }
 
-  /api/shipengine/service-points/{carrierCode}/{countryCode}/{servicePointId}:
+  /shipengine/service-points/{carrierCode}/{countryCode}/{servicePointId}:
     get:
       summary: Get a service point
       tags: [ShipEngine — Service Points]
@@ -6579,7 +6579,7 @@ paths:
       responses:
         '200': { description: Service point details }
 
-  /api/shipengine/warehouses:
+  /shipengine/warehouses:
     get:
       summary: List warehouses
       tags: [ShipEngine — Warehouses]
@@ -6604,7 +6604,7 @@ paths:
       responses:
         '200': { description: Created warehouse }
 
-  /api/shipengine/warehouses/{warehouseId}:
+  /shipengine/warehouses/{warehouseId}:
     get:
       summary: Get a warehouse
       tags: [ShipEngine — Warehouses]
@@ -6640,7 +6640,7 @@ paths:
       responses:
         '204': { description: Deleted }
 
-  /api/shipengine/batches:
+  /shipengine/batches:
     post:
       summary: Create a batch
       description: Group shipments or rate IDs for bulk label generation.
@@ -6660,7 +6660,7 @@ paths:
       responses:
         '200': { description: Batch created }
 
-  /api/shipengine/batches/{batchId}:
+  /shipengine/batches/{batchId}:
     get:
       summary: Get a batch
       tags: [ShipEngine — Batches]
@@ -6670,7 +6670,7 @@ paths:
       responses:
         '200': { description: Batch object with status and label count }
 
-  /api/shipengine/batches/{batchId}/add:
+  /shipengine/batches/{batchId}/add:
     post:
       summary: Add shipments to batch
       tags: [ShipEngine — Batches]
@@ -6689,7 +6689,7 @@ paths:
       responses:
         '204': { description: Added }
 
-  /api/shipengine/batches/{batchId}/remove:
+  /shipengine/batches/{batchId}/remove:
     post:
       summary: Remove shipments from batch
       tags: [ShipEngine — Batches]
@@ -6708,7 +6708,7 @@ paths:
       responses:
         '204': { description: Removed }
 
-  /api/shipengine/batches/{batchId}/process:
+  /shipengine/batches/{batchId}/process:
     post:
       summary: Process batch (generate all labels)
       tags: [ShipEngine — Batches]
@@ -6727,7 +6727,7 @@ paths:
       responses:
         '204': { description: Processing started }
 
-  /api/shipengine/manifests:
+  /shipengine/manifests:
     post:
       summary: Create a manifest (end-of-day close-out)
       description: |
@@ -6761,7 +6761,7 @@ paths:
       responses:
         '200': { description: List of manifests }
 
-  /api/shipengine/manifests/{manifestId}:
+  /shipengine/manifests/{manifestId}:
     get:
       summary: Get a manifest
       tags: [ShipEngine — Manifests]
@@ -6771,7 +6771,7 @@ paths:
       responses:
         '200': { description: Manifest object }
 
-  /api/shipengine/pickups:
+  /shipengine/pickups:
     post:
       summary: Schedule a carrier pickup
       tags: [ShipEngine — Pickups]
@@ -6814,7 +6814,7 @@ paths:
       responses:
         '200': { description: List of pickups }
 
-  /api/shipengine/pickups/{pickupId}:
+  /shipengine/pickups/{pickupId}:
     delete:
       summary: Cancel a pickup
       tags: [ShipEngine — Pickups]

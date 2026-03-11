@@ -10,8 +10,8 @@ import {
 } from 'react-bootstrap';
 
 const SESSION_KEY  = 'ecom_session_id';
-const TAX_RATE     = 10; // percent
-const DELIVERY_FEE = 3.99;
+const TAX_RATE     = 10; // percent — used if backend doesn't provide one
+const DELIVERY_FEE = 3.99; // fallback; will use 0 for pickup/dine_in
 
 function getSessionId() {
   let sid = localStorage.getItem(SESSION_KEY);
@@ -67,6 +67,9 @@ export default function CheckoutPage() {
   const cardRef   = useRef(null);
 
   const [cartItems,    setCartItems]    = useState([]);
+  const [cartData,     setCartData]     = useState(null); // full API response: subtotal, platform_fee, tip_options
+  const [selectedTip,  setSelectedTip]  = useState(null); // { type, percent?, amount } | { type:'custom' }
+  const [customTip,    setCustomTip]    = useState('');
   const [loadingCart,  setLoadingCart]  = useState(true);
   const [form,         setForm]         = useState(initialForm);
   const [errors,       setErrors]       = useState({});
@@ -100,11 +103,14 @@ export default function CheckoutPage() {
     setTimeout(() => setToast(null), 5000);
   };
 
-  // ── Load cart ────────────────────────────────────────────────────────────
+  // ── Load cart (includes subtotal, platform_fee, tip_options from API) ────
   useEffect(() => {
     setLoadingCart(true);
     api('get', '/api/ecommerce/cart')
-      .then(r => setCartItems(r.data.items || []))
+      .then(r => {
+        setCartItems(r.data.items || []);
+        setCartData(r.data);
+      })
       .finally(() => setLoadingCart(false));
   }, []);
 
@@ -150,12 +156,17 @@ export default function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMethod, selectedCard, stripeObj]);
 
-  // ── Totals ───────────────────────────────────────────────────────────────
+  // ── Totals (from API where available) ────────────────────────────────────
   const businessId  = cartItems[0]?.business_id ?? null;
-  const subtotal    = cartItems.reduce((s, i) => s + parseFloat(i.menu_item?.price || 0) * i.quantity, 0);
+  const subtotal    = cartData?.subtotal ?? cartItems.reduce((s, i) => s + parseFloat(i.menu_item?.price || 0) * i.quantity, 0);
+  const platformFee = cartData?.platform_fee ?? 0;
+  const tipOptions  = cartData?.tip_options ?? null;
+  const tipAmount   = selectedTip?.type === 'custom'
+    ? Math.max(0, parseFloat(customTip || 0))
+    : (selectedTip?.amount ?? 0);
   const tax         = subtotal * (TAX_RATE / 100);
   const deliveryFee = form.order_type === 'delivery' ? DELIVERY_FEE : 0;
-  const total       = subtotal + tax + deliveryFee;
+  const total       = subtotal + platformFee + tipAmount + tax + deliveryFee;
 
   // Pre-fill OTP email from customer email field
   useEffect(() => {
@@ -271,29 +282,37 @@ export default function CheckoutPage() {
         pmId = selectedCard;
       }
 
-      // Step 2 — place order
-      const orderRes = await api('post', '/api/ecommerce/orders', {
-        business_id:        businessId,
-        customer_name:      form.customer_name,
-        customer_email:     form.customer_email,
-        customer_phone:     form.customer_phone,
-        order_type:         form.order_type,
-        item_delivery_type: form.item_delivery_type,
-        delivery_vendor:    form.delivery_vendor,
-        delivery_address:   form.delivery_address,
-        notes:              form.notes,
-        tax_rate:           TAX_RATE,
-        delivery_fee:       deliveryFee,
-      });
-      const order = orderRes.data;
-
-      // Step 3 — charge if Stripe
-      if (paymentMethod === 'stripe') {
-        const chargePayload = { order_id: order.id };
-        if (pmId) chargePayload.payment_method_id = pmId;
-        const chargeRes = await stripeApi('post', '/api/payment/stripe/charge', chargePayload);
-        order.payment_status = chargeRes.data.payment_status;
+      // Resolve tip params for backend
+      let tipType  = 'none';
+      let tipValue = 0;
+      if (selectedTip) {
+        if (selectedTip.type === 'custom') {
+          tipType  = 'fixed';
+          tipValue = Math.max(0, parseFloat(customTip || 0));
+        } else if (selectedTip.type === 'percentage') {
+          tipType  = 'percentage';
+          tipValue = selectedTip.percent;
+        }
       }
+
+      // Step 2 — place order + charge in one call via /checkout endpoint
+      const orderRes = await api('post', '/api/ecommerce/checkout', {
+        business_id:               businessId,
+        customer_name:             form.customer_name,
+        customer_email:            form.customer_email,
+        customer_phone:            form.customer_phone,
+        order_type:                form.order_type,
+        delivery_vendor:           form.delivery_vendor,
+        delivery_address:          form.delivery_address,
+        notes:                     form.notes,
+        tax_rate:                  TAX_RATE,
+        delivery_fee:              deliveryFee,
+        tip_type:                  tipType,
+        tip_value:                 tipValue,
+        payment_method:            paymentMethod,
+        stripe_payment_method_id:  pmId ?? undefined,
+      });
+      const order = orderRes.data.order ?? orderRes.data;
 
       setSuccessOrder(order);
       setCartItems([]);
@@ -331,7 +350,36 @@ export default function CheckoutPage() {
                 </p>
                 <div className="bg-light rounded p-3 mb-4 text-start">
                   <div className="d-flex justify-content-between mb-1">
-                    <span className="text-muted">Order Total</span>
+                    <span className="text-muted">Subtotal</span>
+                    <span>${parseFloat(successOrder.subtotal ?? 0).toFixed(2)}</span>
+                  </div>
+                  {parseFloat(successOrder.platform_fee ?? 0) > 0 && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Platform Fee</span>
+                      <span>${parseFloat(successOrder.platform_fee).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {parseFloat(successOrder.tip ?? 0) > 0 && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Tip</span>
+                      <span>${parseFloat(successOrder.tip).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {parseFloat(successOrder.tax ?? 0) > 0 && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Tax</span>
+                      <span>${parseFloat(successOrder.tax).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {parseFloat(successOrder.delivery_fee ?? 0) > 0 && (
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted">Delivery Fee</span>
+                      <span>${parseFloat(successOrder.delivery_fee).toFixed(2)}</span>
+                    </div>
+                  )}
+                  <hr className="my-2" />
+                  <div className="d-flex justify-content-between mb-1">
+                    <span className="text-muted fw-bold">Order Total</span>
                     <span className="fw-bold">${parseFloat(successOrder.total).toFixed(2)}</span>
                   </div>
                   <div className="d-flex justify-content-between mb-1">
@@ -797,6 +845,12 @@ export default function CheckoutPage() {
                       <span className="text-muted">Subtotal</span>
                       <span>${subtotal.toFixed(2)}</span>
                     </div>
+                    {platformFee > 0 && (
+                      <div className="d-flex justify-content-between mb-1 text-muted">
+                        <span>Platform Fee</span>
+                        <span>${platformFee.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="d-flex justify-content-between mb-1 text-muted">
                       <span>Tax ({TAX_RATE}%)</span>
                       <span>${tax.toFixed(2)}</span>
@@ -807,6 +861,70 @@ export default function CheckoutPage() {
                         <span>${deliveryFee.toFixed(2)}</span>
                       </div>
                     )}
+
+                    {/* ── Tip Selector ── */}
+                    {tipOptions && (
+                      <div className="mt-2 mb-2">
+                        <div className="d-flex justify-content-between align-items-center mb-1">
+                          <span className="text-muted small">Tip</span>
+                          {selectedTip && (
+                            <button
+                              type="button"
+                              className="btn btn-link btn-sm p-0 text-muted"
+                              style={{ fontSize: '0.75rem' }}
+                              onClick={() => { setSelectedTip(null); setCustomTip(''); }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <div className="d-flex flex-wrap gap-1 mb-1">
+                          {tipOptions.filter(o => o.type === 'percentage').map(opt => (
+                            <button
+                              key={opt.percent}
+                              type="button"
+                              className={`btn btn-sm ${selectedTip?.percent === opt.percent ? 'btn-primary' : 'btn-outline-secondary'}`}
+                              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+                              onClick={() => { setSelectedTip(opt); setCustomTip(''); }}
+                            >
+                              {opt.label}<br />
+                              <span style={{ fontSize: '0.65rem' }}>${opt.amount.toFixed(2)}</span>
+                            </button>
+                          ))}
+                          {tipOptions.some(o => o.type === 'custom') && (
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${selectedTip?.type === 'custom' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+                              onClick={() => setSelectedTip({ type: 'custom' })}
+                            >
+                              Custom
+                            </button>
+                          )}
+                        </div>
+                        {selectedTip?.type === 'custom' && (
+                          <div className="input-group input-group-sm">
+                            <span className="input-group-text">$</span>
+                            <input
+                              type="number"
+                              className="form-control"
+                              min="0"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={customTip}
+                              onChange={e => setCustomTip(e.target.value)}
+                            />
+                          </div>
+                        )}
+                        {tipAmount > 0 && (
+                          <div className="d-flex justify-content-between text-muted mt-1">
+                            <span style={{ fontSize: '0.85rem' }}>Tip</span>
+                            <span style={{ fontSize: '0.85rem' }}>${tipAmount.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <hr />
                     <div className="d-flex justify-content-between fw-bold fs-5 mb-3">
                       <span>Total</span>

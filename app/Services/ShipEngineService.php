@@ -71,8 +71,9 @@ class ShipEngineService
             $body = $response->body();
             Log::error("ShipEngine API error [{$method} {$path}] {$response->status()}: {$body}");
             $json = $response->json() ?? [];
+            $firstError = isset($json['errors'][0]['message']) ? $json['errors'][0]['message'] : null;
             throw new \RuntimeException(
-                $json['message'] ?? $json['error'] ?? "ShipEngine API error [{$response->status()}]",
+                $firstError ?? $json['message'] ?? $json['error'] ?? "ShipEngine API error [{$response->status()}]",
             );
         }
 

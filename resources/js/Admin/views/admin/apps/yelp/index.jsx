@@ -879,7 +879,7 @@ function RowDetailModal({ logId, rowId, onClose }) {
                                     </table>
                                 </div>
                             ) : (
-                                <p className="text-muted small">No source data stored (skipped/not-found rows don't capture source payload).</p>
+                                <p className="text-muted small">No source data found for this row.</p>
                             )}
                         </div>
 

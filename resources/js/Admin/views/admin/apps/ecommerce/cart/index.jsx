@@ -74,11 +74,21 @@ export default function CartPage() {
     return () => clearTimeout(searchTimer.current);
   }, [searchQuery, loadSellers]);
 
+  // Cart summary (subtotal, platform_fee, tip_options from API)
+  const [cartSummary, setCartSummary] = useState({ subtotal: 0, platform_fee: 0, tip_options: null });
+
   // Load cart
   const loadCart = useCallback(() => {
     setLoadingCart(true);
     api('get', '/api/ecommerce/cart')
-      .then(r => setCartItems(r.data.items || []))
+      .then(r => {
+        setCartItems(r.data.items || []);
+        setCartSummary({
+          subtotal:    r.data.subtotal    ?? 0,
+          platform_fee: r.data.platform_fee ?? 0,
+          tip_options: r.data.tip_options  ?? null,
+        });
+      })
       .finally(() => setLoadingCart(false));
   }, []);
 
@@ -90,16 +100,14 @@ export default function CartPage() {
     setLoadingMenu(true);
     setActiveCat(null);
     const bizId = selectedSeller.business_id;
-    Promise.all([
-      axios.get(`/api/ecommerce/businesses/${bizId}/menu-categories`),
-      axios.get(`/api/ecommerce/businesses/${bizId}/menu-items`),
-    ]).then(([catRes, itemRes]) => {
-      setMenuCategories(Array.isArray(catRes.data) ? catRes.data : []);
-      setMenuItems(Array.isArray(itemRes.data) ? itemRes.data : []);
-    }).catch(() => {
-      setMenuCategories([]);
-      setMenuItems([]);
-    }).finally(() => setLoadingMenu(false));
+    axios.get(`/api/ecommerce/businesses/${bizId}/menu-items`)
+      .then(r => {
+        setMenuCategories(Array.isArray(r.data.categories) ? r.data.categories : []);
+        setMenuItems(Array.isArray(r.data.items) ? r.data.items : []);
+      }).catch(() => {
+        setMenuCategories([]);
+        setMenuItems([]);
+      }).finally(() => setLoadingMenu(false));
   }, [selectedSeller]);
 
   const selectSeller = (seller) => {
@@ -154,10 +162,9 @@ export default function CartPage() {
     ? menuItems.filter(i => i.menu_category_id === activeCat)
     : menuItems;
 
-  const subtotal = cartItems.reduce(
-    (sum, i) => sum + parseFloat(i.menu_item?.price || 0) * i.quantity, 0
-  );
-  const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
+  const subtotal    = cartSummary.subtotal || cartItems.reduce((sum, i) => sum + parseFloat(i.menu_item?.price || 0) * i.quantity, 0);
+  const platformFee = cartSummary.platform_fee;
+  const cartCount   = cartItems.reduce((sum, i) => sum + i.quantity, 0);
   const inCart = (itemId) => cartItems.find(c => c.menu_item_id === itemId);
 
   return (
@@ -424,14 +431,20 @@ export default function CartPage() {
                     <span>Subtotal</span>
                     <span>${subtotal.toFixed(2)}</span>
                   </div>
+                  {platformFee > 0 && (
+                    <div className="d-flex justify-content-between mb-2 text-muted">
+                      <span>Platform Fee</span>
+                      <span>${platformFee.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="d-flex justify-content-between mb-2 text-muted">
-                    <span>Tax (est.)</span>
-                    <span>${(subtotal * 0.1).toFixed(2)}</span>
+                    <small className="text-muted fst-italic">+ Tax & tip at checkout</small>
+                    <span></span>
                   </div>
                   <hr />
                   <div className="d-flex justify-content-between fw-bold fs-5 mb-3">
-                    <span>Total</span>
-                    <span>${(subtotal * 1.1).toFixed(2)}</span>
+                    <span>Estimated</span>
+                    <span>${(subtotal + platformFee).toFixed(2)}</span>
                   </div>
                   <Button variant="primary" className="w-100" onClick={() => navigate('/apps/ecommerce/checkout')}>
                     <Icon icon="credit-card" size={16} className="me-2" />

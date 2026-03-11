@@ -67,8 +67,13 @@ class FeeService
      */
     private function calculateFromGlobal(float $subtotal): float
     {
-        $type  = EcommerceSetting::get('platform_fee_type', 'percentage');
-        $value = (float) EcommerceSetting::get('platform_fee_value', 0);
+        try {
+            $type  = EcommerceSetting::get('platform_fee_type', 'percentage');
+            $value = (float) EcommerceSetting::get('platform_fee_value', 0);
+        } catch (\Throwable) {
+            // ecommerce_settings table missing (migration not run) — return 0
+            return 0.0;
+        }
 
         if ($value <= 0) return 0.0;
 
@@ -111,11 +116,15 @@ class FeeService
         }
 
         // global
-        return [
-            'type'   => EcommerceSetting::get('platform_fee_type', 'percentage'),
-            'value'  => (float) EcommerceSetting::get('platform_fee_value', 0),
-            'source' => 'global',
-        ];
+        try {
+            return [
+                'type'   => EcommerceSetting::get('platform_fee_type', 'percentage'),
+                'value'  => (float) EcommerceSetting::get('platform_fee_value', 0),
+                'source' => 'global',
+            ];
+        } catch (\Throwable) {
+            return ['type' => 'none', 'value' => 0, 'source' => 'global'];
+        }
     }
 
     // ── Tip Options ──────────────────────────────────────────────────────────
@@ -136,11 +145,17 @@ class FeeService
      */
     public function getTipOptions(float $subtotal): ?array
     {
-        $enabled = filter_var(EcommerceSetting::get('tip_enabled', true), FILTER_VALIDATE_BOOLEAN);
-        if (! $enabled) return null;
+        try {
+            $enabled = filter_var(EcommerceSetting::get('tip_enabled', true), FILTER_VALIDATE_BOOLEAN);
+            if (! $enabled) return null;
 
-        $suggested    = EcommerceSetting::get('tip_suggested_percentages', [10, 20, 30]);
-        $allowCustom  = filter_var(EcommerceSetting::get('tip_allow_custom', true), FILTER_VALIDATE_BOOLEAN);
+            $suggested    = EcommerceSetting::get('tip_suggested_percentages', [10, 20, 30]);
+            $allowCustom  = filter_var(EcommerceSetting::get('tip_allow_custom', true), FILTER_VALIDATE_BOOLEAN);
+        } catch (\Throwable) {
+            // ecommerce_settings table missing — return default tip options
+            $suggested   = [10, 20, 30];
+            $allowCustom = true;
+        }
 
         if (! is_array($suggested)) $suggested = [10, 20, 30];
 

@@ -262,9 +262,23 @@ class YelpController extends Controller
             ->where('source_row_id', $rowId)
             ->first();
 
+        // For skipped/not-found rows there is no diff, so source_payload is null.
+        // Fall back to fetching the live row directly from the source table.
+        $sourcePayload = $diff?->source_payload;
+        if ($sourcePayload === null && $rowLog) {
+            $log->loadMissing('job.entity');
+            $tableName = $log->job?->entity?->table_name;
+            if ($tableName && Schema::hasTable($tableName)) {
+                $liveRow = DB::table($tableName)->where('id', $rowId)->first();
+                if ($liveRow) {
+                    $sourcePayload = (array) $liveRow;
+                }
+            }
+        }
+
         return response()->json([
             'row_log'        => $rowLog,
-            'source_payload' => $diff?->source_payload,
+            'source_payload' => $sourcePayload,
             'yelp_payload'   => $diff?->yelp_payload,
             'field_diffs'    => $diff?->field_diffs,
             'mapped_updates' => $diff?->mapped_updates,

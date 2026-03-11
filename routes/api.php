@@ -496,7 +496,9 @@ Route::prefix('ecommerce')->group(function () {
 
     // Cart — session-based (X-Session-Id header or cookie session)
     // No auth required; pass X-Session-Id UUID to keep same cart across requests.
+    // cart-data alias added as nginx-cache-bypass workaround (nginx cached /cart GET as HTML)
     Route::get('cart',              [CartController::class, 'index']);
+    Route::get('cart-data',         [CartController::class, 'index']);
     Route::post('cart',             [CartController::class, 'store']);
     Route::patch('cart/{cartItem}', [CartController::class, 'update']);
     Route::delete('cart/clear',     [CartController::class, 'clear']);

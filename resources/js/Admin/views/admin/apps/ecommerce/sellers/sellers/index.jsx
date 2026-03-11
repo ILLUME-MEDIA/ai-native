@@ -114,6 +114,7 @@ export default function SellersPage() {
   const [activeTab, setActiveTab]   = useState('basic');
   const [categories, setCategories] = useState([]);
   const [perPage, setPerPage]       = useState(25);
+  const [creatingBiz, setCreatingBiz] = useState(false);
 
   const toSlug = (str) => str.toLowerCase().trim()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -123,6 +124,18 @@ export default function SellersPage() {
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const createAndLinkBusiness = () => {
+    if (!form.name) { showToast('Enter a Business Name first', 'warning'); return; }
+    setCreatingBiz(true);
+    axios.post('/api/ecommerce/businesses', { name: form.name })
+      .then(r => {
+        set('business_id', r.data.id);
+        showToast(`Business #${r.data.id} created & linked!`);
+      })
+      .catch(e => showToast(e.response?.data?.message || 'Failed to create business', 'danger'))
+      .finally(() => setCreatingBiz(false));
   };
 
   const load = useCallback(() => {
@@ -426,13 +439,26 @@ export default function SellersPage() {
                       Linked Business ID
                       <small className="text-muted ms-1">(for menu &amp; orders)</small>
                     </FormLabel>
-                    <FormControl
-                      type="number"
-                      min="1"
-                      value={form.business_id}
-                      onChange={e => set('business_id', e.target.value)}
-                      placeholder="e.g. 3"
-                    />
+                    <div className="d-flex gap-2">
+                      <FormControl
+                        type="number"
+                        min="1"
+                        value={form.business_id}
+                        onChange={e => set('business_id', e.target.value)}
+                        placeholder="e.g. 3"
+                      />
+                      {!form.business_id && (
+                        <Button
+                          variant="outline-primary"
+                          size="sm"
+                          style={{ whiteSpace: 'nowrap' }}
+                          disabled={creatingBiz}
+                          onClick={createAndLinkBusiness}
+                        >
+                          {creatingBiz ? <Spinner size="sm" /> : <><Icon icon="plus" size={13} className="me-1" />Create</>}
+                        </Button>
+                      )}
+                    </div>
                     <small className="text-muted">Link to a Business record to enable menu and order flow.</small>
                   </Col>
 

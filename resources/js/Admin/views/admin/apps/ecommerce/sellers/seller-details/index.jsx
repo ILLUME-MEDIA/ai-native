@@ -258,7 +258,7 @@ export default function SellerDetailsPage() {
             {/* Stats row */}
             <Row className="g-3 mb-3">
               {[
-                { label: 'Rating',        value: biz.rating        || '—', icon: 'star',           color: 'warning' },
+                { label: 'Rating',        value: biz.rating && typeof biz.rating !== 'object' ? biz.rating : '—', icon: 'star', color: 'warning' },
                 { label: 'Reviews',       value: biz.review_count  || '0', icon: 'message-circle',  color: 'info' },
                 { label: 'Followers',     value: biz.followers     || '0', icon: 'users',           color: 'primary' },
                 { label: 'Total Ratings', value: biz.total_ratings || '0', icon: 'chart-bar',       color: 'success' },

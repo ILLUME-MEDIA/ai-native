@@ -229,5 +229,36 @@ Route::get('/admin/{any?}', [SectionBuilderController::class, 'index'])
     ->where('any', '.*')
     ->name('admin.spas.index');
 
+// TEMPORARY: one-time nginx proxy cache purge — hit this URL once then remove.
+Route::get('/purge-nginx-cache-7f3k9x', function () {
+    $deleted = 0;
+    $searched = [];
+    $paths = [
+        '/var/cache/nginx',
+        '/var/lib/nginx/cache',
+        '/tmp/nginx_cache',
+        '/home/' . (getenv('USER') ?: 'n111145') . '/tmp',
+        sys_get_temp_dir() . '/nginx_cache',
+    ];
+    foreach ($paths as $dir) {
+        $searched[] = $dir;
+        if (! is_dir($dir)) continue;
+        $files = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($files as $file) {
+            if ($file->isFile() && @unlink($file->getPathname())) {
+                $deleted++;
+            }
+        }
+    }
+    return response()->json([
+        'status'   => 'done',
+        'deleted'  => $deleted,
+        'searched' => $searched,
+        'note'     => 'Remove this route after use.',
+    ]);
+});
+
 require __DIR__.'/auth.php';
 
