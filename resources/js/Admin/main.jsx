@@ -4,6 +4,8 @@ import { BrowserRouter } from 'react-router';
 import App from './App';
 import AppProvidersWrapper from './components/wrappers/AppProvidersWrapper';
 import './assets/scss/app.scss';
+// Setup axios defaults: CSRF token + SITE_API_KEY Bearer token for unauthenticated access
+import '../bootstrap';
 // Global styles are loaded by Laravel Vite (resources/css/app.css)
 // Admin assets scss imports the admin theme so it gets bundled by Vite
 
