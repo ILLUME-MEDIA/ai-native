@@ -12,6 +12,7 @@ class Order extends Model
         'order_number','business_id','session_id','user_id','status',
         'payment_status','payment_method','stripe_payment_intent_id','paid_at',
         'doordash_delivery_id','doordash_status','doordash_tracking_url',
+        'uber_direct_delivery_id','uber_direct_status','uber_direct_tracking_url','uber_direct_fee',
         'subtotal','tax','delivery_fee','platform_fee','tip','total',
         'customer_name','customer_phone','customer_email',
         'delivery_address','notes','order_type',

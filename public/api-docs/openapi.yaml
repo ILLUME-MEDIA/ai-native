@@ -314,39 +314,42 @@ tags:
     description: |
       **Unified delivery fee quote API** — single endpoint for all vendors.
 
-      Pass `vendor` to get a quote from DoorDash, UberEats, Instacart, or your own delivery zones.
+      Pass `vendor` to get a quote from DoorDash, Uber Direct, or your own delivery zones.
 
       | Vendor | Quote source |
       |--------|-------------|
-      | `doordash` | Real DoorDash Drive API v2 quote |
-      | `ubereats` | Estimated from delivery zone config |
-      | `instacart` | Estimated from delivery zone config |
-      | `own` | Exact fee from delivery zone (checks min order) |
+      | `doordash`    | Real DoorDash Drive API v2 quote |
+      | `uber_direct` | Real Uber Direct API quote |
+      | `ubereats`    | Estimated from delivery zone config |
+      | `instacart`   | Estimated from delivery zone config |
+      | `own`         | Exact fee from delivery zone (checks min order) |
 
-  - name: UberEats Integration
+  - name: Uber Direct
     description: |
-      Receive and manage orders from **UberEats Merchant API**.
-
-      UberEats sends orders via webhook → admin accepts/rejects → internal order is created.
+      **Uber Direct (Delivery as a Service)** — dispatch on-demand couriers via Uber's DaaS platform.
 
       ### Setup
-      1. Log into [UberEats Merchant Portal](https://merchant.uber.com)
-      2. Settings → Developer → Webhook Configuration
-      3. Add webhook URL: `POST /api/webhooks/delivery/ubereats`
-      4. Events: `orders.notification`, `orders.cancel`
-      5. Admin Panel → Delivery Settings → UberEats → enter `ubereats_store_id` + credentials
+      1. Sign up at [Uber Direct Developer Portal](https://developer.uber.com/docs/deliveries)
+      2. Create OAuth2 credentials (Client ID + Secret)
+      3. Get your Customer ID (UUID or `cus_xxx`)
+      4. Add to Admin Panel → API Keys:
+         - `UBER_DIRECT_CLIENT_ID`
+         - `UBER_DIRECT_CLIENT_SECRET`
+         - `UBER_DIRECT_CUSTOMER_ID`
+         - `UBER_DIRECT_ENV` → `sandbox` or `production`
 
-  - name: Instacart Integration
+      ### Webhook
+      Register `POST /api/webhooks/delivery/uber-direct` in the Uber Direct developer portal.
+
+      > **Sandbox:** Only San Francisco area addresses are deliverable in sandbox mode.
+
+  - name: Uber Direct - CPP
     description: |
-      Receive and manage orders from **Instacart Connect API**.
+      **Courier Pick & Pack (CPP)** — courier picks individual items from your store shelves and packs them for delivery.
 
-      Instacart sends orders via webhook → admin accepts/rejects → internal order is created.
+      Requires a special CPP agreement with Uber Direct (separate from standard DaaS).
 
-      ### Setup
-      1. Log into [Instacart Connect Portal](https://connect.instacart.com)
-      2. Settings → Integrations → Webhooks
-      3. Add webhook URL: `POST /api/webhooks/delivery/instacart`
-      4. Admin Panel → Delivery Settings → Instacart → enter `instacart_retailer_id` + credentials
+      `manifest_items` must be an array of **objects** with `name`, `quantity`, and `price` (in cents).
 
   - name: Platform Orders
     description: |
@@ -4527,14 +4530,14 @@ paths:
               properties:
                 vendor:
                   type: string
-                  enum: [doordash, ubereats, instacart, own]
-                  example: doordash
+                  enum: [doordash, uber_direct, ubereats, instacart, own]
+                  example: uber_direct
                 pickup_address:
                   type: string
                   description: |
-                    Pickup address for doordash. Optional if `business_id` is provided —
-                    the business's saved address is used automatically.
-                  example: "123 Main St, Los Angeles, CA 90012"
+                    Pickup address. Optional if `business_id` is provided —
+                    the business's saved address is used automatically (works for doordash and uber_direct).
+                  example: '{"street_address":["100 Market St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}'
                 dropoff_address:
                   type: string
                   description: Dropoff (customer) address — required for doordash
@@ -5363,296 +5366,405 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeliveryAssignment"
 
-  # ── UBEREATS ─────────────────────────────────────────────────────────────────
 
-  /delivery/ubereats/config:
+  # ── Uber Direct (Delivery as a Service) ──────────────────────────────────────
+
+  /delivery/uber-direct/config:
     get:
-      tags:
-        - UberEats Integration
-      summary: Get webhook URL and setup instructions
+      tags: [Uber Direct]
+      summary: Get Uber Direct setup config and webhook URL
+      security: [{bearerAuth: []}]
       responses:
-        "200":
-          description: Config and setup steps
+        '200':
+          description: Config and setup instructions
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  webhook_url:
-                    type: string
-                    example: "https://yourdomain.com/api/webhooks/delivery/ubereats"
-                  setup_steps:
+                  env:            {type: string, example: "sandbox"}
+                  customer_id:    {type: string, example: "cus_xxxxxxxxxxxxxxxx"}
+                  webhook_url:    {type: string, example: "https://yourdomain.com/api/webhooks/delivery/uber-direct"}
+                  sandbox_note:   {type: string, example: "Sandbox only supports San Francisco addresses."}
+                  credentials_required:
                     type: array
-                    items:
-                      type: string
-                  platform:
-                    type: string
-                    example: ubereats
-                  docs_url:
-                    type: string
+                    items: {type: string}
+                    example: [UBER_DIRECT_CLIENT_ID, UBER_DIRECT_CLIENT_SECRET, UBER_DIRECT_CUSTOMER_ID, UBER_DIRECT_ENV]
 
-  /delivery/ubereats/orders:
-    get:
-      tags:
-        - UberEats Integration
-      summary: List UberEats platform orders
-      parameters:
-        - name: business_id
-          in: query
-          schema:
-            type: integer
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [received, accepted, rejected, preparing, ready, picked_up, delivered, cancelled, failed]
-        - name: per_page
-          in: query
-          schema:
-            type: integer
-            default: 20
-      responses:
-        "200":
-          description: Paginated UberEats orders
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PaginatedPlatformOrders"
-
-  /delivery/ubereats/orders/{platformOrder}/accept:
+  /delivery/uber-direct/quote:
     post:
-      tags:
-        - UberEats Integration
-      summary: Accept UberEats order → creates internal order
-      description: Accepts the incoming UberEats order, creates an internal `Order` record and links order items.
-      parameters:
-        - name: platformOrder
-          in: path
-          required: true
-          schema:
-            type: integer
+      tags: [Uber Direct]
+      summary: Get a delivery quote from Uber Direct
+      description: |
+        Get a real delivery fee estimate from Uber Direct (DaaS).
+
+        Pass `business_id` to automatically use the business address for pickup.
+        Only provide `pickup_address` to override the business address.
+
+        > **Sandbox note:** Only San Francisco area addresses are deliverable in sandbox mode.
+      security: [{bearerAuth: []}]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [dropoff_address]
               properties:
-                prep_time_minutes:
+                business_id:
                   type: integer
-                  example: 20
-                  description: Override estimated prep time
+                  description: Auto-fills pickup address from business (Muzzhub) record
+                  example: 1
+                pickup_address:
+                  type: string
+                  description: JSON-encoded Uber Direct address. Overrides business_id pickup.
+                  example: '{"street_address":["100 Market St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}'
+                dropoff_address:
+                  type: string
+                  description: JSON-encoded Uber Direct address (customer address)
+                  example: '{"street_address":["201 3rd St"],"city":"San Francisco","state":"CA","zip_code":"94103","country":"US"}'
+                order_value:
+                  type: number
+                  description: Order value in dollars
+                  example: 35.50
+                pickup_phone_number:
+                  type: string
+                  description: Pickup phone (auto-filled from business if business_id provided)
+                  example: "+14155551234"
+                dropoff_phone_number:
+                  type: string
+                  description: Customer phone number
+                  example: "+14155559876"
+                external_store_id:
+                  type: string
+                  description: Your Uber Direct store ID (optional)
       responses:
-        "200":
-          description: Order accepted and internal order created
+        '200':
+          description: Quote result
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  message:
-                    type: string
-                    example: UberEats order accepted.
-                  platform_order:
-                    $ref: "#/components/schemas/PlatformOrder"
-        "422":
-          description: Order already processed or wrong platform
+                  success:            {type: boolean, example: true}
+                  vendor:             {type: string, example: uber_direct}
+                  fee:                {type: number, example: 5.99}
+                  fee_cents:          {type: integer, example: 599}
+                  currency:           {type: string, example: USD}
+                  estimated_minutes:  {type: integer, example: 35}
+                  expires_at:         {type: string, nullable: true}
+                  quote_id:           {type: string, nullable: true, example: "dq_abc123"}
+                  raw:                {type: object}
+        '422':
+          description: Missing address or not in deliverable area
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean, example: false}
+                  vendor:  {type: string, example: uber_direct}
+                  message: {type: string, example: "Uber Direct error: The specified location is not in a deliverable area."}
 
-  /delivery/ubereats/orders/{platformOrder}/reject:
-    post:
-      tags:
-        - UberEats Integration
-      summary: Reject UberEats order
+  /delivery/uber-direct/deliveries:
+    get:
+      tags: [Uber Direct]
+      summary: List all Uber Direct deliveries
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: List of deliveries from Uber Direct
+
+  /delivery/uber-direct/stores:
+    get:
+      tags: [Uber Direct]
+      summary: Find Uber Direct stores near a location
+      security: [{bearerAuth: []}]
       parameters:
-        - name: platformOrder
-          in: path
-          required: true
-          schema:
-            type: integer
+        - {name: lat, in: query, required: true, schema: {type: number}, example: 37.7749}
+        - {name: lng, in: query, required: true, schema: {type: number}, example: -122.4194}
+        - {name: external_store_id, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: List of stores
+
+  /delivery/uber-direct/dispatch/{order}:
+    post:
+      tags: [Uber Direct]
+      summary: Dispatch Uber Direct delivery for an order
+      description: |
+        Creates a delivery with Uber Direct for an existing order.
+        Pickup is auto-filled from the order's business address.
+        Dropoff is the customer's delivery address from the order.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                reason:
-                  type: string
-                  example: Kitchen closed
+                tip_cents:   {type: integer, description: Tip in cents, example: 300}
+                requires_id: {type: boolean, description: Require ID verification at dropoff}
       responses:
-        "200":
-          description: Order rejected
+        '200':
+          description: Delivery dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:      {type: boolean, example: true}
+                  delivery_id:  {type: string, example: "del_abc123xyz"}
+                  status:       {type: string, example: "pending"}
+                  tracking_url: {type: string, nullable: true}
+                  fee:          {type: number, example: 5.99}
+        '404': {description: Order not found}
+        '422': {description: Order has no delivery address}
+        '502': {description: Uber Direct API error}
 
-  /delivery/ubereats/orders/{platformOrder}/status:
+  /delivery/uber-direct/status/{order}:
+    get:
+      tags: [Uber Direct]
+      summary: Get live delivery status from Uber Direct
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Current delivery status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_id:  {type: string}
+                  status:       {type: string, example: "dropoff"}
+                  status_label: {type: string, example: "Out for Delivery"}
+                  tracking_url: {type: string, nullable: true}
+                  courier:      {type: object, nullable: true}
+                  raw:          {type: object}
+        '404': {description: No Uber Direct delivery for this order}
+
+  /delivery/uber-direct/update/{order}:
     patch:
-      tags:
-        - UberEats Integration
-      summary: Update order status (sent back to UberEats)
+      tags: [Uber Direct]
+      summary: Update an active Uber Direct delivery
+      security: [{bearerAuth: []}]
       parameters:
-        - name: platformOrder
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                  enum: [preparing, ready, picked_up, delivered, cancelled]
-                  example: preparing
-      responses:
-        "200":
-          description: Status updated
-
-  /webhooks/delivery/ubereats:
-    post:
-      tags:
-        - UberEats Integration
-      summary: UberEats webhook receiver
-      description: |
-        UberEats posts order events here. Configure this URL in the UberEats Merchant Portal.
-
-        **Handled events:**
-        - `orders.notification` / `eats.order` → creates `PlatformOrder` (status=received)
-        - `orders.cancel` → marks order as cancelled
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              description: Raw UberEats webhook payload
-      responses:
-        "200":
-          description: Processed
-
-  # ── INSTACART ────────────────────────────────────────────────────────────────
-
-  /delivery/instacart/config:
-    get:
-      tags:
-        - Instacart Integration
-      summary: Get webhook URL and setup instructions
-      responses:
-        "200":
-          description: Config and setup steps
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  webhook_url:
-                    type: string
-                    example: "https://yourdomain.com/api/webhooks/delivery/instacart"
-                  setup_steps:
-                    type: array
-                    items:
-                      type: string
-                  platform:
-                    type: string
-                    example: instacart
-
-  /delivery/instacart/orders:
-    get:
-      tags:
-        - Instacart Integration
-      summary: List Instacart platform orders
-      parameters:
-        - name: business_id
-          in: query
-          schema:
-            type: integer
-        - name: status
-          in: query
-          schema:
-            type: string
-        - name: per_page
-          in: query
-          schema:
-            type: integer
-            default: 20
-      responses:
-        "200":
-          description: Paginated Instacart orders
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PaginatedPlatformOrders"
-
-  /delivery/instacart/orders/{platformOrder}/accept:
-    post:
-      tags:
-        - Instacart Integration
-      summary: Accept Instacart order → creates internal order
-      parameters:
-        - name: platformOrder
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Order accepted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                  platform_order:
-                    $ref: "#/components/schemas/PlatformOrder"
-
-  /delivery/instacart/orders/{platformOrder}/reject:
-    post:
-      tags:
-        - Instacart Integration
-      summary: Reject Instacart order
-      parameters:
-        - name: platformOrder
-          in: path
-          required: true
-          schema:
-            type: integer
+        - {name: order, in: path, required: true, schema: {type: integer}}
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                reason:
-                  type: string
+                dropoff_notes: {type: string}
+                tip:           {type: integer, description: Tip in cents}
       responses:
-        "200":
-          description: Order rejected
+        '200': {description: Delivery updated}
+        '404': {description: No Uber Direct delivery for this order}
 
-  /webhooks/delivery/instacart:
+  /delivery/uber-direct/cancel/{order}:
     post:
-      tags:
-        - Instacart Integration
-      summary: Instacart webhook receiver
-      description: |
-        Instacart posts order events here. Configure in Instacart Connect Portal.
+      tags: [Uber Direct]
+      summary: Cancel an active Uber Direct delivery
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200': {description: Delivery cancelled}
+        '404': {description: No Uber Direct delivery for this order}
 
-        **Handled events:**
-        - `order.created` / `order.placed` → creates `PlatformOrder`
-        - `order.cancelled` → marks cancelled
-        - `fulfillment.delivered` → marks delivered
-      security: []
+  /delivery/uber-direct/proof/{order}:
+    get:
+      tags: [Uber Direct]
+      summary: Get proof of delivery (signature / photo)
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Proof of delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signature_image_url: {type: string, nullable: true}
+                  photo_urls: {type: array, items: {type: string}}
+        '404': {description: No Uber Direct delivery for this order}
+
+  # ── Uber Direct: Courier Pick & Pack (CPP) ────────────────────────────────────
+
+  /delivery/uber-direct/cpp/quote:
+    post:
+      tags: [Uber Direct - CPP]
+      summary: Get a CPP (Courier Pick & Pack) quote
+      description: |
+        Courier Pick & Pack (CPP) — courier picks up individual items from your store and packs them.
+
+        CPP requires a special business agreement with Uber Direct.
+
+        `manifest_items` is required and must be an array of **item objects** (not strings).
+
+        > **Sandbox note:** Only San Francisco area addresses are deliverable.
+      security: [{bearerAuth: []}]
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [dropoff_address, manifest_items]
+              properties:
+                business_id:
+                  type: integer
+                  description: Auto-fills pickup address and phone from business record
+                  example: 1
+                pickup_address:
+                  type: string
+                  description: JSON-encoded pickup address. Overrides business_id.
+                  example: '{"street_address":["100 Market St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}'
+                dropoff_address:
+                  type: string
+                  example: '{"street_address":["201 3rd St"],"city":"San Francisco","state":"CA","zip_code":"94103","country":"US"}'
+                dropoff_phone_number:
+                  type: string
+                  example: "+14155559876"
+                pickup_phone_number:
+                  type: string
+                  example: "+14155551234"
+                manifest_total_value:
+                  type: integer
+                  description: Total order value in cents
+                  example: 3550
+                external_store_id:
+                  type: string
+                  description: Your registered Uber Direct store ID
+                manifest_items:
+                  type: array
+                  description: Items for the courier to pick and pack. Each item must be an object.
+                  items:
+                    type: object
+                    required: [name, quantity, price]
+                    properties:
+                      name:             {type: string, example: "Cheeseburger"}
+                      quantity:         {type: integer, example: 2}
+                      price:            {type: integer, description: "Price in cents (e.g. 1200 = $12.00)", example: 1200}
+                      size:             {type: string, enum: [small, medium, large], example: "small"}
+                      must_be_upright:  {type: boolean, example: false}
+                      replacement_type:
+                        type: string
+                        enum: [no_replacement, best_available, ask_customer]
+                        example: "no_replacement"
+                  example:
+                    - name: "Cheeseburger"
+                      quantity: 2
+                      price: 1200
+                      size: "small"
+                    - name: "Fries"
+                      quantity: 1
+                      price: 450
+                      size: "small"
       responses:
-        "200":
-          description: Processed
+        '200':
+          description: CPP quote result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:           {type: boolean, example: true}
+                  vendor:            {type: string, example: uber_direct}
+                  fee:               {type: number, example: 7.99}
+                  fee_cents:         {type: integer, example: 799}
+                  currency:          {type: string, example: USD}
+                  estimated_minutes: {type: integer, example: 40}
+                  quote_id:          {type: string, example: "dq_cpp123"}
+                  expires_at:        {type: string, nullable: true}
+                  raw:               {type: object}
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string, example: "The manifest_items.0.name field is required. (and 2 more errors)"}
+                  errors:
+                    type: object
+                    example:
+                      "manifest_items.0.name": ["The manifest_items.0.name field is required."]
+                      "manifest_items.0.quantity": ["The manifest_items.0.quantity field is required."]
+                      "manifest_items.0.price": ["The manifest_items.0.price field is required."]
+
+  /delivery/uber-direct/cpp/dispatch/{order}:
+    post:
+      tags: [Uber Direct - CPP]
+      summary: Dispatch a CPP delivery for an order
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tip_cents:   {type: integer, example: 300}
+                requires_id: {type: boolean}
+                manifest_items:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, quantity, price]
+                    properties:
+                      name:             {type: string, example: "Burger"}
+                      quantity:         {type: integer, example: 1}
+                      price:            {type: integer, example: 1200}
+                      size:             {type: string, example: "small"}
+                      replacement_type: {type: string, example: "no_replacement"}
+      responses:
+        '200': {description: CPP delivery dispatched}
+        '404': {description: Order not found}
+        '502': {description: Uber Direct API error}
+
+  # ── Uber Direct Webhook ───────────────────────────────────────────────────────
+
+  /webhooks/delivery/uber-direct:
+    post:
+      tags: [Uber Direct]
+      summary: Uber Direct webhook receiver
+      description: |
+        Register this URL in the Uber Direct developer portal to receive delivery status updates.
+
+        **Webhook URL:** `POST /api/webhooks/delivery/uber-direct`
+
+        **Events handled:**
+        - `delivery.status.pending` → order status: `preparing`
+        - `delivery.status.pickup` → order status: `out_for_delivery`
+        - `delivery.status.pickup_complete` → order status: `out_for_delivery`
+        - `delivery.status.dropoff` → order status: `out_for_delivery`
+        - `delivery.status.delivered` → order status: `delivered`
+        - `delivery.status.cancelled` → order status: `cancelled`
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type:  {type: string, example: "delivery.status.delivered"}
+                delivery_id: {type: string, example: "del_abc123xyz"}
+                status:      {type: string, example: "delivered"}
+                location:
+                  type: object
+                  properties:
+                    lat: {type: number, example: 37.7749}
+                    lng: {type: number, example: -122.4194}
+      responses:
+        '200': {description: Acknowledged}
 
   # ── PLATFORM ORDERS (UNIFIED) ─────────────────────────────────────────────────
 

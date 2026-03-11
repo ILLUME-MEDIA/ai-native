@@ -38,6 +38,7 @@ use App\Http\Controllers\Delivery\UberEatsController;
 use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
+use App\Http\Controllers\Delivery\UberDirectController;
 use App\Http\Controllers\Admin\AppSecretsController;
 use App\Http\Controllers\Admin\EcommerceSettingsController;
 use App\Http\Controllers\Admin\Cal\CalPlatformsController;
@@ -525,6 +526,25 @@ Route::prefix('delivery/doordash')->group(function () {
     Route::post('webhook',          [DoorDashController::class, 'webhook']);
 });
 
+// ── Uber Direct (DaaS) Delivery Routes ───────────────────────────────────────
+Route::prefix('delivery/uber-direct')->group(function () {
+    Route::get('config',              [UberDirectController::class, 'config']);
+    Route::post('quote',              [UberDirectController::class, 'quote']);
+    Route::get('deliveries',          [UberDirectController::class, 'listDeliveries']);
+    Route::get('stores',              [UberDirectController::class, 'findStores']);
+    Route::post('dispatch/{order}',   [UberDirectController::class, 'dispatch']);
+    Route::get('status/{order}',      [UberDirectController::class, 'status']);
+    Route::patch('update/{order}',    [UberDirectController::class, 'update']);
+    Route::post('cancel/{order}',     [UberDirectController::class, 'cancel']);
+    Route::get('proof/{order}',       [UberDirectController::class, 'proofOfDelivery']);
+    // CPP (Courier Pick & Pack)
+    Route::post('cpp/quote',          [UberDirectController::class, 'cppQuote']);
+    Route::post('cpp/dispatch/{order}',[UberDirectController::class, 'cppDispatch']);
+});
+// Uber Direct webhook (no auth — Uber sends unsigned HTTP POSTs)
+Route::post('webhooks/delivery/uber-direct', [UberDirectController::class, 'webhook'])
+    ->withoutMiddleware(['auth:sanctum']);
+
 // ── Discovery User Self-Service Routes (OTP Bearer token required) ───────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify (table=discovery_users)
 Route::prefix('ecommerce/discovery-users/me')->group(function () {
@@ -645,9 +665,26 @@ Route::prefix('delivery/instacart')->group(function () {
     Route::post('/orders/{platformOrder}/reject',  [InstacartController::class, 'reject']);
 });
 
+// ── Admin: Uber Direct (Delivery as a Service) ────────────────────────────────
+Route::prefix('delivery/uber-direct')->group(function () {
+    Route::get('/config',                      [UberDirectController::class, 'config']);
+    Route::post('/quote',                      [UberDirectController::class, 'quote']);
+    Route::get('/deliveries',                  [UberDirectController::class, 'listDeliveries']);
+    Route::post('/stores',                     [UberDirectController::class, 'findStores']);
+    Route::post('/dispatch/{order}',           [UberDirectController::class, 'dispatch']);
+    Route::get('/status/{order}',              [UberDirectController::class, 'status']);
+    Route::post('/update/{order}',             [UberDirectController::class, 'update']);
+    Route::post('/cancel/{order}',             [UberDirectController::class, 'cancel']);
+    Route::post('/proof/{order}',              [UberDirectController::class, 'proofOfDelivery']);
+    // Courier Pick and Pack (CPP)
+    Route::post('/cpp/quote',                  [UberDirectController::class, 'cppQuote']);
+    Route::post('/cpp/dispatch/{order}',       [UberDirectController::class, 'cppDispatch']);
+});
+
 // ── Platform Webhooks (no auth — signature verified internally) ───────────────
-Route::post('webhooks/delivery/ubereats',  [UberEatsController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
-Route::post('webhooks/delivery/instacart', [InstacartController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/ubereats',     [UberEatsController::class,   'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/instacart',    [InstacartController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/uber-direct',  [UberDirectController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
 
 // ── ShipEngine API Routes (admin auth required) ───────────────────────────────
 Route::prefix('shipengine')->group(function () {

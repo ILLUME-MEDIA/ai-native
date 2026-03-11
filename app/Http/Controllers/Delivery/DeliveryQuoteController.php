@@ -9,6 +9,7 @@ use App\Models\DeliverySetting;
 use App\Models\Muzzhub;
 use App\Models\DeliveryZone;
 use App\Services\DoorDashService;
+use App\Services\UberDirectService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -55,7 +56,7 @@ class DeliveryQuoteController extends Controller
     public function quote(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'vendor'          => 'required|string|in:doordash,ubereats,instacart,own',
+            'vendor'          => 'required|string|in:doordash,uber_direct,ubereats,instacart,own',
             'pickup_address'  => 'nullable|string',
             'dropoff_address' => 'nullable|string',
             'order_value'     => 'nullable|numeric|min:0',
@@ -66,10 +67,11 @@ class DeliveryQuoteController extends Controller
         ]);
 
         return match ($data['vendor']) {
-            'doordash'  => $this->quoteDoorDash($data),
-            'ubereats'  => $this->quoteUberEats($data),
-            'instacart' => $this->quoteInstacart($data),
-            'own'       => $this->quoteOwnDelivery($data),
+            'doordash'    => $this->quoteDoorDash($data),
+            'uber_direct' => $this->quoteUberDirect($data),
+            'ubereats'    => $this->quoteUberEats($data),
+            'instacart'   => $this->quoteInstacart($data),
+            'own'         => $this->quoteOwnDelivery($data),
         };
     }
 
@@ -169,6 +171,81 @@ class DeliveryQuoteController extends Controller
             }
         }
         return null;
+    }
+
+    // ── Uber Direct Quote ─────────────────────────────────────────────────────
+
+    private function quoteUberDirect(array $data): JsonResponse
+    {
+        $uber = app(UberDirectService::class);
+
+        // ── Resolve pickup address from business (same as DoorDash) ──────────
+        $muzzhub = !empty($data['business_id'])
+            ? Muzzhub::where('business_id', $data['business_id'])->first()
+            : null;
+
+        $pickupAddress = $data['pickup_address'] ?? null;
+
+        if (!$pickupAddress && $muzzhub) {
+            $pickupAddress = UberDirectService::encodeAddress(
+                implode(' ', array_filter([$muzzhub->address ?? '', $muzzhub->address_2 ?? ''])),
+                $muzzhub->city  ?? '',
+                $muzzhub->state ?? '',
+                $muzzhub->zip   ?? '',
+            );
+        }
+
+        $dropoffAddress = $data['dropoff_address'] ?? null;
+
+        if (!$pickupAddress || !$dropoffAddress) {
+            return response()->json([
+                'success' => false,
+                'vendor'  => 'uber_direct',
+                'message' => $pickupAddress
+                    ? 'dropoff_address is required for Uber Direct quotes.'
+                    : 'pickup_address is required (or provide business_id to auto-fill from muzzhub).',
+            ], 422);
+        }
+
+        $pickupPhone  = $muzzhub?->phone ?? $muzzhub?->mobile_phone ?? null;
+        $dropoffPhone = $data['customer_phone'] ?? null;
+
+        try {
+            $raw = $uber->createQuote(
+                $pickupAddress,
+                $dropoffAddress,
+                (int) round(($data['order_value'] ?? 0) * 100),
+                $pickupPhone,
+                $dropoffPhone,
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'vendor'  => 'uber_direct',
+                'message' => $e->getMessage(),
+            ], 502);
+        }
+
+        $feeCents = $raw['fee'] ?? null;
+        $etaStr   = $raw['dropoff']['eta'] ?? null;
+        $etaMins  = null;
+        if ($etaStr) {
+            try { $etaMins = max(1, (int) now()->diffInMinutes(\Carbon\Carbon::parse($etaStr))); } catch (\Throwable) {}
+        }
+
+        return response()->json([
+            'success'           => true,
+            'vendor'            => 'uber_direct',
+            'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
+            'fee_cents'         => $feeCents,
+            'currency'          => $raw['currency'] ?? 'USD',
+            'estimated_minutes' => $etaMins,
+            'expires_at'        => $raw['expires'] ?? null,
+            'quote_id'          => $raw['id'] ?? null,
+            'min_order_amount'  => 0,
+            'zone'              => null,
+            'raw'               => $raw,
+        ]);
     }
 
     // ── UberEats Quote ────────────────────────────────────────────────────────
