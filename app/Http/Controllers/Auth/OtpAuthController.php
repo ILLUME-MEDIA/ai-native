@@ -44,37 +44,38 @@ class OtpAuthController extends Controller
             ], 422);
         }
 
+        // TESTING MODE: all rate limits disabled — re-enable after testing
         // Rate-limit: max 3 OTPs per email per 10 minutes
-        $limitKey     = 'otp-send:' . $email;
-        $maxOtps      = 3;
-        $windowSeconds = 10 * 60; // 10 minutes
-
-        if (RateLimiter::tooManyAttempts($limitKey, $maxOtps)) {
-            $waitSeconds = RateLimiter::availableIn($limitKey);
-            $waitMinutes = (int) ceil($waitSeconds / 60);
-            return response()->json([
-                'success'     => false,
-                'message'     => "Too many OTP requests. Please wait {$waitMinutes} minute(s) before requesting a new OTP.",
-                'wait_seconds' => $waitSeconds,
-            ], 429);
-        }
-
+        // $limitKey     = 'otp-send:' . $email;
+        // $maxOtps      = 3;
+        // $windowSeconds = 10 * 60; // 10 minutes
+        //
+        // if (RateLimiter::tooManyAttempts($limitKey, $maxOtps)) {
+        //     $waitSeconds = RateLimiter::availableIn($limitKey);
+        //     $waitMinutes = (int) ceil($waitSeconds / 60);
+        //     return response()->json([
+        //         'success'     => false,
+        //         'message'     => "Too many OTP requests. Please wait {$waitMinutes} minute(s) before requesting a new OTP.",
+        //         'wait_seconds' => $waitSeconds,
+        //     ], 429);
+        // }
+        //
         // Per-request cooldown: check if a recent OTP was already sent
-        $cooldown = (int) config('otp_auth.resend_cooldown_seconds', 60);
-        $latest   = OtpVerification::where('email', $email)
-            ->whereNull('verified_at')
-            ->where('created_at', '>', now()->subSeconds($cooldown))
-            ->latest()
-            ->first();
-
-        if ($latest) {
-            $waitSeconds = $cooldown - now()->diffInSeconds($latest->created_at);
-            return response()->json([
-                'success' => false,
-                'message' => "Please wait {$waitSeconds} seconds before requesting a new OTP.",
-                'wait_seconds' => max(0, $waitSeconds),
-            ], 429);
-        }
+        // $cooldown = (int) config('otp_auth.resend_cooldown_seconds', 60);
+        // $latest   = OtpVerification::where('email', $email)
+        //     ->whereNull('verified_at')
+        //     ->where('created_at', '>', now()->subSeconds($cooldown))
+        //     ->latest()
+        //     ->first();
+        //
+        // if ($latest) {
+        //     $waitSeconds = $cooldown - now()->diffInSeconds($latest->created_at);
+        //     return response()->json([
+        //         'success' => false,
+        //         'message' => "Please wait {$waitSeconds} seconds before requesting a new OTP.",
+        //         'wait_seconds' => max(0, $waitSeconds),
+        //     ], 429);
+        // }
 
         // Invalidate any previous unverified OTPs for this email
         OtpVerification::where('email', $email)
@@ -91,8 +92,8 @@ class OtpAuthController extends Controller
             'ip_address' => $request->ip(),
         ]);
 
-        // Count this send against the 3-per-10-minute limit
-        RateLimiter::hit($limitKey, $windowSeconds);
+        // Count this send against the 3-per-10-minute limit (disabled for testing)
+        // RateLimiter::hit($limitKey, $windowSeconds);
 
         $sent = $this->resend->sendOtpEmail($email, $otp, $expMinutes);
 
