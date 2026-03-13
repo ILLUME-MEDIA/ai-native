@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 
 class OtpAuthController extends Controller
@@ -43,7 +44,22 @@ class OtpAuthController extends Controller
             ], 422);
         }
 
-        // Rate-limit: check if a recent OTP was already sent
+        // Rate-limit: max 3 OTPs per email per 10 minutes
+        $limitKey     = 'otp-send:' . $email;
+        $maxOtps      = 3;
+        $windowSeconds = 10 * 60; // 10 minutes
+
+        if (RateLimiter::tooManyAttempts($limitKey, $maxOtps)) {
+            $waitSeconds = RateLimiter::availableIn($limitKey);
+            $waitMinutes = (int) ceil($waitSeconds / 60);
+            return response()->json([
+                'success'     => false,
+                'message'     => "Too many OTP requests. Please wait {$waitMinutes} minute(s) before requesting a new OTP.",
+                'wait_seconds' => $waitSeconds,
+            ], 429);
+        }
+
+        // Per-request cooldown: check if a recent OTP was already sent
         $cooldown = (int) config('otp_auth.resend_cooldown_seconds', 60);
         $latest   = OtpVerification::where('email', $email)
             ->whereNull('verified_at')
@@ -74,6 +90,9 @@ class OtpAuthController extends Controller
             'expires_at' => now()->addMinutes($expMinutes),
             'ip_address' => $request->ip(),
         ]);
+
+        // Count this send against the 3-per-10-minute limit
+        RateLimiter::hit($limitKey, $windowSeconds);
 
         $sent = $this->resend->sendOtpEmail($email, $otp, $expMinutes);
 
@@ -296,7 +315,17 @@ class OtpAuthController extends Controller
                 $insertData['password'] = bcrypt($insertData['password']);
             }
 
-            $id     = DB::table($table)->insertGetId($insertData);
+            try {
+                $id = DB::table($table)->insertGetId($insertData);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to create user record.',
+                    'code'    => 'create_failed',
+                    'debug'   => $e->getMessage(),
+                ], 422);
+            }
+
             $record = DB::table($table)->find($id);
             $data   = (array) $record;
             unset($data['password'], $data['remember_token']);
