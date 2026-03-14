@@ -1160,6 +1160,12 @@ paths:
           schema:
             type: boolean
           description: If true, only featured sellers
+        - name: cuisine
+          in: query
+          schema:
+            type: string
+          description: "Filter by cuisine — OR logic across multiple values. Pass comma-separated (cuisine=american,afghani) or repeated (cuisine[]=american&cuisine[]=afghani). A record matches if its cuisine contains ANY of the given values."
+          example: american,afghani
         - name: page
           in: query
           schema:

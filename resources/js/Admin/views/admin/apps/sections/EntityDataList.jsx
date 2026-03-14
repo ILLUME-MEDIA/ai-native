@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
 import { Link, useParams } from 'react-router';
 import axios from 'axios';
@@ -27,6 +27,9 @@ const EntityDataList = () => {
   const [formData, setFormData] = useState({});
   const [saving, setSaving] = useState(false);
   const [relationOptions, setRelationOptions] = useState({});
+  const [fileInputMode, setFileInputMode] = useState({}); // { [columnName]: 'upload' | 'url' }
+  const [uploadingField, setUploadingField] = useState(null);
+  const fileInputRefs = useRef({});
 
   const listVisibleFields = entity?.fields?.filter((f) => f.list_visible !== false) ?? [];
   const detailVisibleFields = entity?.fields?.filter((f) => f.detail_visible !== false) ?? [];
@@ -152,6 +155,28 @@ const EntityDataList = () => {
       if (f.related_entity?.slug) loadRelationOptions(f.related_entity.slug);
     });
     setShowForm(true);
+  };
+
+  const getFileMode = (columnName) => fileInputMode[columnName] ?? 'upload';
+  const setFileMode = (columnName, mode) =>
+    setFileInputMode((prev) => ({ ...prev, [columnName]: mode }));
+
+  const handleFileUpload = async (columnName, file) => {
+    if (!file) return;
+    setUploadingField(columnName);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('folder', 'sections');
+      const { data } = await axios.post('/api/ecommerce/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setFormData((prev) => ({ ...prev, [columnName]: data.url }));
+    } catch (err) {
+      alert(err.response?.data?.message || 'Upload failed');
+    } finally {
+      setUploadingField(null);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -324,9 +349,22 @@ const EntityDataList = () => {
                           display = opt ? getRelationLabel(opt, relField) : val;
                         }
                         if (f.type === 'boolean') display = val ? 'Yes' : 'No';
+                        const isFileField = f.type === 'file';
+                        const isImageUrl = isFileField && val && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(val);
                         return (
                           <td key={f.id}>
-                            {display != null && display !== '' ? String(display) : '—'}
+                            {isImageUrl ? (
+                              <img
+                                src={val}
+                                alt=""
+                                style={{ height: 36, width: 36, objectFit: 'cover', borderRadius: 4, border: '1px solid #dee2e6' }}
+                              />
+                            ) : isFileField && val ? (
+                              <a href={val} target="_blank" rel="noreferrer" className="text-truncate d-inline-block" style={{ maxWidth: 140 }} onClick={(e) => e.stopPropagation()}>
+                                <Icon icon="file" className="me-1" />
+                                {val.split('/').pop()}
+                              </a>
+                            ) : display != null && display !== '' ? String(display) : '—'}
                           </td>
                         );
                       })}
@@ -454,6 +492,95 @@ const EntityDataList = () => {
                         setFormData({ ...formData, [f.column_name]: e.target.value })
                       }
                     />
+                  </Form.Group>
+                );
+              }
+
+              if (f.type === 'file') {
+                const mode = getFileMode(f.column_name);
+                const currentVal = formData[f.column_name] ?? '';
+                const isImage = currentVal && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(currentVal);
+                return (
+                  <Form.Group key={f.id} className="mb-3">
+                    <Form.Label className="d-flex align-items-center gap-2">
+                      {f.label || f.column_name}
+                      <div className="btn-group btn-group-sm">
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${mode === 'upload' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                          onClick={() => setFileMode(f.column_name, 'upload')}
+                        >
+                          <Icon icon="upload" className="me-1" />
+                          Upload
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${mode === 'url' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                          onClick={() => setFileMode(f.column_name, 'url')}
+                        >
+                          <Icon icon="link" className="me-1" />
+                          URL
+                        </button>
+                      </div>
+                    </Form.Label>
+
+                    {mode === 'upload' ? (
+                      <div
+                        className="border rounded p-3 text-center"
+                        style={{ cursor: 'pointer', background: '#f8f9fa' }}
+                        onClick={() => fileInputRefs.current[f.column_name]?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) handleFileUpload(f.column_name, file);
+                        }}
+                      >
+                        <input
+                          type="file"
+                          style={{ display: 'none' }}
+                          ref={(el) => { fileInputRefs.current[f.column_name] = el; }}
+                          onChange={(e) => handleFileUpload(f.column_name, e.target.files?.[0])}
+                        />
+                        {uploadingField === f.column_name ? (
+                          <Spinner size="sm" />
+                        ) : currentVal ? (
+                          <div className="d-flex flex-column align-items-center gap-2">
+                            {isImage && (
+                              <img
+                                src={currentVal}
+                                alt="preview"
+                                style={{ maxHeight: 80, maxWidth: '100%', objectFit: 'contain' }}
+                              />
+                            )}
+                            <small className="text-muted text-truncate" style={{ maxWidth: 300 }}>{currentVal}</small>
+                            <small className="text-primary">Click or drag to replace</small>
+                          </div>
+                        ) : (
+                          <div className="text-muted">
+                            <Icon icon="upload" className="me-1" />
+                            Click or drag & drop to upload
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Form.Control
+                        type="text"
+                        placeholder="https://..."
+                        value={currentVal}
+                        onChange={(e) => setFormData({ ...formData, [f.column_name]: e.target.value })}
+                      />
+                    )}
+
+                    {mode === 'url' && currentVal && isImage && (
+                      <div className="mt-2">
+                        <img
+                          src={currentVal}
+                          alt="preview"
+                          style={{ maxHeight: 80, maxWidth: '100%', objectFit: 'contain', borderRadius: 4 }}
+                        />
+                      </div>
+                    )}
                   </Form.Group>
                 );
               }

@@ -24,6 +24,22 @@ class MuzzhubController extends Controller
         if ($request->boolean('featured'))     $q->where('featured', true);
         if ($request->filled('category_id'))   $q->where('category_id', $request->category_id);
 
+        // cuisine filter — supports multiple values (CSV string or array), OR logic
+        $cuisineRaw = $request->input('cuisine');
+        if (!empty($cuisineRaw)) {
+            $cuisines = is_array($cuisineRaw)
+                ? $cuisineRaw
+                : array_map('trim', explode(',', $cuisineRaw));
+            $cuisines = array_filter($cuisines);
+            if (!empty($cuisines)) {
+                $q->where(function ($sub) use ($cuisines) {
+                    foreach ($cuisines as $c) {
+                        $sub->orWhere('cuisine', 'like', '%' . $c . '%');
+                    }
+                });
+            }
+        }
+
         return response()->json($q->paginate($request->input('per_page', 15)));
     }
 
