@@ -48,6 +48,42 @@ Route::get('/clear-cache', function () {
 })->name('clear-cache');
 
 Route::get('/run-migrations', function () {
+    // Clear OPcache FIRST so updated migration files are picked up, not cached old versions
+    if (function_exists('opcache_reset')) {
+        opcache_reset();
+    }
+
+    // Pre-flight fixes — idempotent raw SQL patches that run before the migration system.
+    // Safe to run multiple times. Fixes schema issues that cause migration runner to crash.
+    $preflightFixes = [];
+
+    // If openorg_users table is missing, delete its migration records so the runner recreates it
+    if (!\Illuminate\Support\Facades\Schema::hasTable('openorg_users')) {
+        \Illuminate\Support\Facades\DB::table('migrations')->whereIn('migration', [
+            '2026_03_05_200000_add_openorg_users_and_platform_links',
+            '2026_03_13_062901_make_cal_platform_id_nullable_in_openorg_users',
+        ])->delete();
+        $preflightFixes[] = 'openorg_users missing → migration records cleared for recreation';
+    } else {
+        // Table exists — ensure cal_platform_id and name are nullable
+        try {
+            \Illuminate\Support\Facades\DB::statement(
+                'ALTER TABLE openorg_users MODIFY COLUMN cal_platform_id BIGINT UNSIGNED NULL'
+            );
+            $preflightFixes[] = 'openorg_users.cal_platform_id → nullable OK';
+        } catch (\Throwable $e) {
+            $preflightFixes[] = 'openorg_users.cal_platform_id: ' . $e->getMessage();
+        }
+        try {
+            \Illuminate\Support\Facades\DB::statement(
+                'ALTER TABLE openorg_users MODIFY COLUMN name VARCHAR(255) NULL'
+            );
+            $preflightFixes[] = 'openorg_users.name → nullable OK';
+        } catch (\Throwable $e) {
+            $preflightFixes[] = 'openorg_users.name: ' . $e->getMessage();
+        }
+    }
+
     try {
         $allOutput = [];
         $skipped = [];
@@ -64,7 +100,9 @@ Route::get('/run-migrations', function () {
                 || str_contains($msg, 'duplicate key name')
                 || str_contains($msg, 'duplicate entry')
                 || str_contains($msg, 'duplicate index')
-                || in_array($code, ['42S01', '42S21', '1060', '1061', '1062'], true);
+                || str_contains($msg, "can't drop")
+                || str_contains($msg, 'check that it exists')
+                || in_array($code, ['42S01', '42S21', '1060', '1061', '1062', '1091'], true);
         };
 
         // Step 1: Best-effort bulk migrate.
@@ -76,6 +114,8 @@ Route::get('/run-migrations', function () {
                 throw $e;
             }
             $allOutput[] = 'Conflict detected on bulk migrate. Switching to per-migration mode.';
+        } catch (\Throwable $e) {
+            $allOutput[] = 'Bulk migrate error (switching to per-migration mode): ' . $e->getMessage();
         }
 
         // Step 2: Per-migration mode with smart replay for missing create-table migrations.
@@ -129,8 +169,12 @@ Route::get('/run-migrations', function () {
         }
 
         // Step 2b: One final full pass in case dependencies resolved during replay.
-        Artisan::call('migrate', ['--force' => true]);
-        $allOutput[] = trim(Artisan::output());
+        try {
+            Artisan::call('migrate', ['--force' => true]);
+            $allOutput[] = trim(Artisan::output());
+        } catch (\Throwable $e) {
+            $errors[] = 'final-pass: ' . $e->getMessage();
+        }
 
         // Step 3: Storage symlink.
         Artisan::call('storage:link');
@@ -156,9 +200,6 @@ Route::get('/run-migrations', function () {
             }
         }
 
-        // Clear OPcache so newly deployed PHP files take effect immediately.
-        $opcacheCleared = function_exists('opcache_reset') ? opcache_reset() : false;
-
         // Clear Laravel config/route/view caches.
         Artisan::call('config:clear');
         Artisan::call('route:clear');
@@ -166,6 +207,7 @@ Route::get('/run-migrations', function () {
 
         return response()->json([
             'message' => 'Migrations + Seeders completed.',
+            'preflight_fixes' => $preflightFixes,
             'migrate_output' => $allOutput,
             'skipped' => $skipped,
             'errors' => $errors,
@@ -174,7 +216,6 @@ Route::get('/run-migrations', function () {
             'storage_link_output' => $storageLinkOutput,
             'seeders' => $seederOutput,
             'seeder_errors' => $seederErrors,
-            'opcache_reset' => $opcacheCleared,
         ]);
     } catch (\Throwable $e) {
         $code = method_exists($e, 'getCode') ? $e->getCode() : 0;

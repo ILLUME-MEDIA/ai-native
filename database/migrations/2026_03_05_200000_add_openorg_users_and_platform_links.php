@@ -11,8 +11,8 @@ return new class extends Migration
         // 1. openorg_users — platform-scoped user directory
         Schema::create('openorg_users', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('cal_platform_id')->constrained('cal_platforms')->cascadeOnDelete();
-            $table->string('name');
+            $table->foreignId('cal_platform_id')->nullable()->constrained('cal_platforms')->nullOnDelete();
+            $table->string('name')->nullable();
             $table->string('email');
             $table->string('phone')->nullable();
             $table->boolean('is_active')->default(true);
