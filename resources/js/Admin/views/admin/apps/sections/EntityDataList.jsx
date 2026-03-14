@@ -196,10 +196,10 @@ const EntityDataList = () => {
       } else {
         await axios.post(`/api/entities/${slug}`, formData);
       }
+      const wasEditing = !!editingRecord;
       setShowForm(false);
-      showToast(editingRecord ? 'Record updated successfully.' : 'Record created successfully.');
-      const { data } = await axios.get(`/api/entities/${slug}`, { params: { per_page: 100 } });
-      setRows(data.data ?? []);
+      showToast(wasEditing ? 'Record updated successfully.' : 'Record created successfully.');
+      fetchData(wasEditing ? pagination.page : 1);
     } catch (err) {
       console.error(err);
       showToast(err.response?.data?.message || 'Failed to save', 'danger');
