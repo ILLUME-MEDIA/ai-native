@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
+import { Alert, Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
 import { Link, useParams } from 'react-router';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
@@ -30,6 +30,14 @@ const EntityDataList = () => {
   const [fileInputMode, setFileInputMode] = useState({}); // { [columnName]: 'upload' | 'url' }
   const [uploadingField, setUploadingField] = useState(null);
   const fileInputRefs = useRef({});
+  const [toast, setToast] = useState(null); // { type: 'success'|'danger', msg: string }
+  const toastTimer = useRef(null);
+
+  const showToast = (msg, type = 'success') => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
 
   const listVisibleFields = entity?.fields?.filter((f) => f.list_visible !== false) ?? [];
   const detailVisibleFields = entity?.fields?.filter((f) => f.detail_visible !== false) ?? [];
@@ -189,11 +197,12 @@ const EntityDataList = () => {
         await axios.post(`/api/entities/${slug}`, formData);
       }
       setShowForm(false);
+      showToast(editingRecord ? 'Record updated successfully.' : 'Record created successfully.');
       const { data } = await axios.get(`/api/entities/${slug}`, { params: { per_page: 100 } });
       setRows(data.data ?? []);
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Failed to save');
+      showToast(err.response?.data?.message || 'Failed to save', 'danger');
     } finally {
       setSaving(false);
     }
@@ -203,10 +212,10 @@ const EntityDataList = () => {
     if (!confirm('Delete this record?')) return;
     try {
       await axios.delete(`/api/entities/${slug}/${record.id}`);
-      // Reload current page after delete to keep pagination accurate
+      showToast('Record deleted successfully.');
       fetchData(pagination.page);
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to delete');
+      showToast(err.response?.data?.message || 'Failed to delete', 'danger');
     }
   };
 
@@ -230,6 +239,19 @@ const EntityDataList = () => {
 
   return (
     <>
+      {toast && (
+        <Alert
+          variant={toast.type}
+          className="position-fixed top-0 end-0 m-3 shadow"
+          style={{ zIndex: 9999, minWidth: 280 }}
+          dismissible
+          onClose={() => setToast(null)}
+        >
+          <Icon icon={toast.type === 'success' ? 'circle-check' : 'alert-circle'} className="me-2" />
+          {toast.msg}
+        </Alert>
+      )}
+
       <PageBreadcrumb
         title={entity.name}
         subtitle="Table data"

@@ -177,7 +177,7 @@ class DynamicEntityController extends Controller
         $resolved = $this->resolveEntityOrFail($entity);
         try {
             $this->service->destroy($resolved, $id, ['actor' => 'user']);
-            return response()->noContent();
+            return response()->json(['message' => 'Record deleted successfully.']);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'Record not found.'], 404);
         } catch (\RuntimeException $e) {
