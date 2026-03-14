@@ -226,7 +226,7 @@ const EntityDataList = () => {
     if (!result.isConfirmed) return;
     try {
       await axios.delete(`/api/entities/${slug}/${record.id}`);
-      fetchData(pagination.page);
+      await fetchData(pagination.page);
       Swal.fire({
         title: 'Deleted!',
         text: 'Record has been deleted.',
