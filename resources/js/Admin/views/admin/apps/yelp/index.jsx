@@ -51,6 +51,8 @@ function AccountsTab() {
     const [verifying, setVerifying]       = useState(false);
     const [verifyResult, setVerifyResult] = useState(null);
     const [cardVerify, setCardVerify]     = useState({});
+    const [revealing, setRevealing]       = useState(false);
+    const [keyRevealed, setKeyRevealed]   = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -63,11 +65,24 @@ function AccountsTab() {
 
     const openAdd = () => {
         setForm({ name: '', api_key: '', daily_limit: 500, is_active: true });
-        setFormError(''); setVerifyResult(null); setEditTarget(null); setShowModal(true);
+        setFormError(''); setVerifyResult(null); setEditTarget(null); setKeyRevealed(false); setShowModal(true);
     };
     const openEdit = (a) => {
         setForm({ name: a.name, api_key: '', daily_limit: a.daily_limit, is_active: a.is_active });
-        setFormError(''); setVerifyResult(null); setEditTarget(a); setShowModal(true);
+        setFormError(''); setVerifyResult(null); setEditTarget(a); setKeyRevealed(false); setShowModal(true);
+    };
+
+    const revealKey = async () => {
+        setRevealing(true);
+        try {
+            const { data } = await api(`accounts/${editTarget.id}/reveal`, { method: 'post' });
+            setForm(f => ({ ...f, api_key: data.api_key }));
+            setKeyRevealed(true);
+        } catch {
+            setFormError('Could not reveal API key.');
+        } finally {
+            setRevealing(false);
+        }
     };
 
     const save = async (e) => {
@@ -245,18 +260,37 @@ function AccountsTab() {
                         <Form.Group className="mb-3">
                             <Form.Label>
                                 Yelp API Key{' '}
-                                {editTarget && <small className="text-muted fw-normal">(leave blank to keep existing)</small>}
+                                {editTarget && !keyRevealed && <small className="text-muted fw-normal">(leave blank to keep existing)</small>}
                             </Form.Label>
-                            <div className="d-flex gap-2">
-                                <Form.Control className="font-monospace"
-                                    value={form.api_key}
-                                    onChange={e => { setForm(f => ({ ...f, api_key: e.target.value })); setVerifyResult(null); }}
-                                    placeholder="Bearer token from Yelp Fusion" />
-                                <button type="button" className="btn btn-soft-info btn-sm text-nowrap"
-                                    onClick={verifyForm} disabled={verifying || !form.api_key}>
-                                    {verifying ? <Spinner animation="border" size="sm" /> : <><Icon icon="circle-check" className="me-1" />Test Key</>}
-                                </button>
-                            </div>
+                            {editTarget && !keyRevealed ? (
+                                <div className="d-flex gap-2">
+                                    <div className="form-control font-monospace bg-light text-muted" style={{ letterSpacing: '0.15em' }}>
+                                        ••••••••••••••••••••••••••••••
+                                    </div>
+                                    <button type="button" className="btn btn-soft-warning btn-sm text-nowrap"
+                                        onClick={revealKey} disabled={revealing}>
+                                        {revealing ? <Spinner animation="border" size="sm" /> : <><Icon icon="eye" className="me-1" />Reveal</>}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="d-flex gap-2">
+                                    <Form.Control className="font-monospace"
+                                        value={form.api_key}
+                                        onChange={e => { setForm(f => ({ ...f, api_key: e.target.value })); setVerifyResult(null); }}
+                                        placeholder="Bearer token from Yelp Fusion"
+                                        autoFocus={keyRevealed} />
+                                    <button type="button" className="btn btn-soft-info btn-sm text-nowrap"
+                                        onClick={verifyForm} disabled={verifying || !form.api_key}>
+                                        {verifying ? <Spinner animation="border" size="sm" /> : <><Icon icon="circle-check" className="me-1" />Test Key</>}
+                                    </button>
+                                    {editTarget && keyRevealed && (
+                                        <button type="button" className="btn btn-light btn-sm text-nowrap"
+                                            onClick={() => { setKeyRevealed(false); setForm(f => ({ ...f, api_key: '' })); setVerifyResult(null); }}>
+                                            <Icon icon="eye-off" className="me-1" />Hide
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                             {verifyResult && (
                                 <Alert variant={verifyResult.ok ? 'success' : 'danger'} className="mt-2 py-2 mb-0 fs-sm">
                                     {verifyResult.ok ? '✓ ' : '✗ '}{verifyResult.msg}

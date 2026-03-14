@@ -270,6 +270,10 @@ Route::get('/admin/{any?}', [SectionBuilderController::class, 'index'])
     ->where('any', '.*')
     ->name('admin.spas.index');
 
+// Redirect bare /apps/* to /admin/apps/* so React Router basename="/admin" can handle it
+Route::get('/apps/{any}', fn($any) => redirect("/admin/apps/{$any}"))
+    ->where('any', '.*');
+
 // TEMPORARY: one-time nginx proxy cache purge — hit this URL once then remove.
 Route::get('/purge-nginx-cache-7f3k9x', function () {
     $deleted = 0;

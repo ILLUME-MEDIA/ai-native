@@ -80,6 +80,11 @@ class YelpController extends Controller
         return response()->json(['status' => 'deleted']);
     }
 
+    public function accountsReveal(YelpAccount $account): JsonResponse
+    {
+        return response()->json(['api_key' => $account->api_key]);
+    }
+
     /**
      * Verify a Yelp API key by making a lightweight test search.
      * Accepts either a saved account ID or a raw api_key string.
@@ -320,13 +325,17 @@ class YelpController extends Controller
             $menuQuery->where('job_id', $jobId);
         }
 
+        $skippedSyncQuery = YelpRowLog::whereHas('log', fn ($q) => $q->when($jobId, fn ($q2) => $q2->where('job_id', $jobId)))
+            ->where('status', 'skipped');
+
         return response()->json([
-            'pending_diffs'  => (clone $diffQuery)->where('merge_status', 'pending')->count(),
-            'merged_diffs'   => (clone $diffQuery)->where('merge_status', 'merged')->count(),
-            'skipped_diffs'  => (clone $diffQuery)->where('merge_status', 'skipped')->count(),
-            'closed_rows'    => $closedQuery->count(),
-            'not_found_rows' => $notFoundQuery->count(),
-            'menu_items'     => $menuQuery->count(),
+            'pending_diffs'    => (clone $diffQuery)->where('merge_status', 'pending')->count(),
+            'merged_diffs'     => (clone $diffQuery)->where('merge_status', 'merged')->count(),
+            'skipped_diffs'    => (clone $diffQuery)->where('merge_status', 'skipped')->count(),
+            'closed_rows'      => $closedQuery->count(),
+            'not_found_rows'   => $notFoundQuery->count(),
+            'skipped_sync_rows'=> $skippedSyncQuery->count(),
+            'menu_items'       => $menuQuery->count(),
         ]);
     }
 
@@ -379,6 +388,18 @@ class YelpController extends Controller
         if ($request->filled('job_id')) {
             $query->where('job_id', $request->integer('job_id'));
         }
+
+        return response()->json($query->paginate(100));
+    }
+
+    public function reconciliationSkipped(Request $request): JsonResponse
+    {
+        $jobId = $request->integer('job_id');
+
+        $query = YelpRowLog::with(['log:id,job_id'])
+            ->whereHas('log', fn ($q) => $q->when($jobId, fn ($q2) => $q2->where('job_id', $jobId)))
+            ->where('status', 'skipped')
+            ->orderByDesc('id');
 
         return response()->json($query->paginate(100));
     }
@@ -518,6 +539,7 @@ class YelpController extends Controller
         $hasYelpSourceTable = Schema::hasColumn('menu_items', 'yelp_source_table');
         $hasYelpSourceRow = Schema::hasColumn('menu_items', 'yelp_source_row_id');
         $hasYelpSyncedAt = Schema::hasColumn('menu_items', 'yelp_synced_at');
+        $hasModifiersJson = Schema::hasColumn('menu_items', 'modifiers_json');
 
         foreach ($menuRows as $menuRow) {
             $categoryName = trim((string) ($menuRow->category ?: 'Yelp Imported'));
@@ -551,6 +573,11 @@ class YelpController extends Controller
             if ($hasYelpSyncedAt) {
                 $payload['yelp_synced_at'] = now();
             }
+            if ($hasModifiersJson && $menuRow->modifiers_json !== null) {
+                $payload['modifiers_json'] = is_array($menuRow->modifiers_json)
+                    ? json_encode($menuRow->modifiers_json)
+                    : $menuRow->modifiers_json;
+            }
 
             $existingQuery = MenuItem::where('business_id', $businessId);
             if ($menuRow->yelp_menu_item_id && $hasYelpMenuItemId) {
@@ -579,6 +606,26 @@ class YelpController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // Meta
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * On-demand: scrape Yelp menu page for a given alias.
+     * POST /api/yelp/scrape-menu   { alias: "mirchi-cafe-fremont" }
+     */
+    public function scrapeMenu(Request $request): JsonResponse
+    {
+        $alias = $request->validate(['alias' => ['required', 'string', 'max:255']])['alias'];
+
+        $items = (new \App\Services\YelpScraperService())->scrapeMenu($alias);
+
+        $categories = collect($items)->pluck('category')->filter()->unique()->values();
+
+        return response()->json([
+            'alias'       => $alias,
+            'item_count'  => count($items),
+            'categories'  => $categories,
+            'items'       => $items,
+        ]);
+    }
 
     /** Return all available Yelp fields for the mapping UI */
     public function yelpFields(): JsonResponse

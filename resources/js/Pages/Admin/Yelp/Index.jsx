@@ -46,6 +46,8 @@ function AccountsTab() {
     const [form, setForm] = useState({ name: '', api_key: '', daily_limit: 500, is_active: true });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [revealing, setRevealing] = useState(false);
+    const [keyVisible, setKeyVisible] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -55,6 +57,25 @@ function AccountsTab() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    const openEdit = (acc) => {
+        setForm({ name: acc.name, api_key: '', daily_limit: acc.daily_limit, is_active: acc.is_active });
+        setKeyVisible(false);
+        setModal(acc);
+    };
+
+    const revealKey = async () => {
+        setRevealing(true);
+        try {
+            const { data } = await api(`accounts/${modal.id}/reveal`, { method: 'post' });
+            setForm(f => ({ ...f, api_key: data.api_key }));
+            setKeyVisible(true);
+        } catch {
+            setError('Could not reveal API key.');
+        } finally {
+            setRevealing(false);
+        }
+    };
 
     const save = async () => {
         setSaving(true);
@@ -80,7 +101,7 @@ function AccountsTab() {
         <div>
             <div className="flex justify-between items-center mb-4">
                 <p className="text-sm text-gray-600">Manage Yelp API accounts.</p>
-                <Btn onClick={() => { setForm({ name: '', api_key: '', daily_limit: 500, is_active: true }); setModal('add'); }}>+ Add Account</Btn>
+                <Btn onClick={() => { setForm({ name: '', api_key: '', daily_limit: 500, is_active: true }); setKeyVisible(false); setModal('add'); }}>+ Add Account</Btn>
             </div>
             {loading ? <p className="text-sm text-gray-500">Loading...</p> : (
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -94,7 +115,7 @@ function AccountsTab() {
                                 <td className="px-4 py-2">{acc.remaining_requests}</td>
                                 <td className="px-4 py-2"><Badge color={acc.is_active ? 'green' : 'gray'}>{acc.is_active ? 'Active' : 'Inactive'}</Badge></td>
                                 <td className="px-4 py-2 flex gap-2">
-                                    <Btn variant="ghost" onClick={() => { setForm({ name: acc.name, api_key: '', daily_limit: acc.daily_limit, is_active: acc.is_active }); setModal(acc); }}>Edit</Btn>
+                                    <Btn variant="ghost" onClick={() => openEdit(acc)}>Edit</Btn>
                                     <Btn variant="danger" onClick={async () => { if (confirm(`Delete "${acc.name}"?`)) { await api(`accounts/${acc.id}`, { method: 'delete' }); load(); } }}>Delete</Btn>
                                 </td>
                             </tr>
@@ -104,12 +125,36 @@ function AccountsTab() {
             )}
 
             {modal && (
-                <Modal title={modal === 'add' ? 'Add Yelp Account' : 'Edit Account'} onClose={() => setModal(null)}>
+                <Modal title={modal === 'add' ? 'Add Yelp Account' : `Edit: ${modal.name}`} onClose={() => setModal(null)}>
                     {error && <p className="mb-3 text-red-600 text-sm">{error}</p>}
                     <div className="space-y-4">
                         <input className="w-full border rounded-md px-3 py-2 text-sm" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Account name" />
-                        <input className="w-full border rounded-md px-3 py-2 text-sm font-mono" value={form.api_key} onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))} placeholder="Yelp API key" />
-                        <input type="number" min="1" className="w-full border rounded-md px-3 py-2 text-sm" value={form.daily_limit} onChange={e => setForm(f => ({ ...f, daily_limit: parseInt(e.target.value, 10) || 500 }))} />
+                        <div>
+                            <label className="block text-xs text-gray-500 mb-1">
+                                API Key {modal !== 'add' && !keyVisible && <span className="text-gray-400">(leave blank to keep existing)</span>}
+                            </label>
+                            {modal !== 'add' && !keyVisible ? (
+                                <div className="flex gap-2">
+                                    <div className="flex-1 border rounded-md px-3 py-2 text-sm font-mono bg-gray-50 text-gray-400 tracking-widest">••••••••••••••••••••</div>
+                                    <Btn variant="ghost" onClick={revealKey} disabled={revealing}>{revealing ? 'Loading...' : 'Reveal Key'}</Btn>
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <input
+                                        className="flex-1 border rounded-md px-3 py-2 text-sm font-mono"
+                                        type="text"
+                                        value={form.api_key}
+                                        onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+                                        placeholder={modal === 'add' ? 'Enter Yelp API key' : 'Enter new key to replace'}
+                                        autoFocus={keyVisible}
+                                    />
+                                    {modal !== 'add' && (
+                                        <Btn variant="ghost" onClick={() => { setKeyVisible(false); setForm(f => ({ ...f, api_key: '' })); }}>Hide</Btn>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <input type="number" min="1" className="w-full border rounded-md px-3 py-2 text-sm" value={form.daily_limit} onChange={e => setForm(f => ({ ...f, daily_limit: parseInt(e.target.value, 10) || 500 }))} placeholder="Daily limit" />
                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} /> Active</label>
                         <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setModal(null)}>Cancel</Btn><Btn onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Btn></div>
                     </div>
@@ -379,7 +424,7 @@ function LogsTab() {
                             <tr key={log.id}>
                                 <td className="px-4 py-2">{log.job?.name ?? `Job #${log.job_id}`}</td>
                                 <td className="px-4 py-2"><Badge color={{ completed: 'green', failed: 'red', running: 'blue', paused: 'yellow', pending: 'gray' }[log.status] ?? 'gray'}>{log.status}</Badge></td>
-                                <td className="px-4 py-2 text-xs">{log.processed_rows} done, {log.closed_rows} closed, {log.not_found_rows} not-found, {log.failed_rows} failed</td>
+                                <td className="px-4 py-2 text-xs">{log.processed_rows} done, {log.closed_rows} closed, {log.not_found_rows} not-found, {log.skipped_rows ?? 0} skipped, {log.failed_rows} failed</td>
                                 <td className="px-4 py-2 text-xs text-gray-500">{log.started_at ? new Date(log.started_at).toLocaleString() : '-'}</td>
                             </tr>
                         ))}
@@ -397,24 +442,31 @@ function ReconciliationTab() {
     const [matches, setMatches] = useState([]);
     const [closedRows, setClosedRows] = useState([]);
     const [notFoundRows, setNotFoundRows] = useState([]);
+    const [skippedRows, setSkippedRows] = useState([]);
+    const [menuItems, setMenuItems] = useState([]);
+    const [expandedDiff, setExpandedDiff] = useState(null);
     const [loading, setLoading] = useState(true);
     const [mergeLoading, setMergeLoading] = useState(false);
 
     const params = jobFilter ? `?job_id=${jobFilter}` : '';
     const load = useCallback(async () => {
         setLoading(true);
-        const [j, s, m, c, n] = await Promise.all([
+        const [j, s, m, c, n, sk, mi] = await Promise.all([
             api('jobs'),
             api(`reconciliation/summary${params}`),
             api(`reconciliation/matches${params}`),
             api(`reconciliation/closed${params}`),
             api(`reconciliation/not-found${params}`),
+            api(`reconciliation/skipped${params}`),
+            api(`reconciliation/menu-items${params}`),
         ]);
         setJobs(j.data);
         setSummary(s.data);
         setMatches(m.data.data || []);
         setClosedRows(c.data.data || []);
         setNotFoundRows(n.data.data || []);
+        setSkippedRows(sk.data.data || []);
+        setMenuItems(mi.data.data || []);
         setLoading(false);
     }, [params]);
 
@@ -432,6 +484,17 @@ function ReconciliationTab() {
         }
     };
 
+    // Group menu items by match_diff_id for expandable rows
+    const menuByDiff = useMemo(() => {
+        const map = {};
+        menuItems.forEach(item => {
+            const key = item.match_diff_id;
+            if (!map[key]) map[key] = [];
+            map[key].push(item);
+        });
+        return map;
+    }, [menuItems]);
+
     return (
         <div className="space-y-5">
             <div className="flex items-center gap-3">
@@ -444,48 +507,104 @@ function ReconciliationTab() {
             </div>
 
             {summary && (
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-3 text-sm">
-                    <div className="border rounded p-3 bg-yellow-50">Pending diffs: <b>{summary.pending_diffs}</b></div>
-                    <div className="border rounded p-3 bg-green-50">Merged diffs: <b>{summary.merged_diffs}</b></div>
-                    <div className="border rounded p-3 bg-gray-50">Skipped diffs: <b>{summary.skipped_diffs}</b></div>
-                    <div className="border rounded p-3 bg-amber-50">Closed moved: <b>{summary.closed_rows}</b></div>
-                    <div className="border rounded p-3 bg-red-50">Not found moved: <b>{summary.not_found_rows}</b></div>
-                    <div className="border rounded p-3 bg-blue-50">Menu snapshots: <b>{summary.menu_items ?? 0}</b></div>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-sm">
+                    <div className="border rounded p-3 bg-yellow-50">Pending: <b>{summary.pending_diffs}</b></div>
+                    <div className="border rounded p-3 bg-green-50">Merged: <b>{summary.merged_diffs}</b></div>
+                    <div className="border rounded p-3 bg-gray-50">Diff skipped: <b>{summary.skipped_diffs}</b></div>
+                    <div className="border rounded p-3 bg-amber-50">Closed: <b>{summary.closed_rows}</b></div>
+                    <div className="border rounded p-3 bg-red-50">Not found: <b>{summary.not_found_rows}</b></div>
+                    <div className="border rounded p-3 bg-orange-50">Sync skipped: <b>{summary.skipped_sync_rows ?? 0}</b></div>
+                    <div className="border rounded p-3 bg-blue-50">Menu items: <b>{summary.menu_items ?? 0}</b></div>
                 </div>
             )}
 
             {loading ? <p className="text-sm text-gray-500">Loading...</p> : (
                 <>
+                    {/* Matched Diffs with expandable menu items */}
                     <div>
                         <h3 className="text-sm font-semibold text-gray-900 mb-2">Matched Diffs</h3>
                         <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50"><tr>{['Job', 'Row', 'Yelp', 'Diff', 'Menu', 'Merge'].map(h => <th key={h} className="px-4 py-2 text-left font-semibold text-gray-700">{h}</th>)}</tr></thead>
+                            <thead className="bg-gray-50"><tr>{['Job', 'Row', 'Yelp Business', 'Diff', 'Menu', 'Merge'].map(h => <th key={h} className="px-4 py-2 text-left font-semibold text-gray-700">{h}</th>)}</tr></thead>
                             <tbody className="divide-y divide-gray-200 bg-white">
                                 {matches.map(row => {
                                     const changed = (row.field_diffs || []).filter(d => d.changed);
+                                    const diffMenuItems = menuByDiff[row.id] || [];
+                                    const isExpanded = expandedDiff === row.id;
                                     return (
-                                        <tr key={row.id}>
-                                            <td className="px-4 py-2">{row.job?.name ?? `Job #${row.job_id}`}</td>
-                                            <td className="px-4 py-2 font-mono text-xs">{row.source_table}#{row.source_row_id}</td>
-                                            <td className="px-4 py-2">{row.yelp_business_name ?? '-'}</td>
-                                            <td className="px-4 py-2 text-xs">{changed.slice(0, 2).map((d, i) => <div key={i}>{d.db_column}: "{String(d.local_value ?? '')}" -&gt; "{String(d.yelp_value ?? '')}"</div>)}</td>
-                                            <td className="px-4 py-2 text-xs">{row.menu_items_count ?? 0} items</td>
-                                            <td className="px-4 py-2"><Badge color={{ pending: 'yellow', merged: 'green', skipped: 'gray' }[row.merge_status] ?? 'gray'}>{row.merge_status}</Badge></td>
-                                        </tr>
+                                        <React.Fragment key={row.id}>
+                                            <tr className={isExpanded ? 'bg-blue-50' : ''}>
+                                                <td className="px-4 py-2">{row.job?.name ?? `Job #${row.job_id}`}</td>
+                                                <td className="px-4 py-2 font-mono text-xs">{row.source_table}#{row.source_row_id}</td>
+                                                <td className="px-4 py-2 font-medium">{row.yelp_business_name ?? <span className="text-gray-400">-</span>}</td>
+                                                <td className="px-4 py-2 text-xs">{changed.slice(0, 2).map((d, i) => <div key={i}>{d.db_column}: "{String(d.local_value ?? '')}" → "{String(d.yelp_value ?? '')}"</div>)}</td>
+                                                <td className="px-4 py-2 text-xs">
+                                                    {diffMenuItems.length > 0
+                                                        ? <button onClick={() => setExpandedDiff(isExpanded ? null : row.id)} className="text-blue-600 hover:underline font-medium">{diffMenuItems.length} items {isExpanded ? '▲' : '▼'}</button>
+                                                        : <span className="text-gray-400">0</span>
+                                                    }
+                                                </td>
+                                                <td className="px-4 py-2"><Badge color={{ pending: 'yellow', merged: 'green', skipped: 'gray' }[row.merge_status] ?? 'gray'}>{row.merge_status}</Badge></td>
+                                            </tr>
+                                            {isExpanded && diffMenuItems.length > 0 && (
+                                                <tr>
+                                                    <td colSpan={6} className="px-4 py-3 bg-blue-50">
+                                                        <p className="text-xs font-semibold text-blue-800 mb-2">Menu Items from Yelp — {row.yelp_business_name}</p>
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                            {diffMenuItems.map(item => (
+                                                                <div key={item.id} className="bg-white border rounded p-2 text-xs flex gap-2">
+                                                                    {item.image && <img src={item.image} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
+                                                                    <div className="min-w-0">
+                                                                        <div className="font-medium truncate">{item.name}</div>
+                                                                        {item.category && <div className="text-gray-500">{item.category}</div>}
+                                                                        {item.price != null && <div className="text-green-700 font-semibold">${Number(item.price).toFixed(2)}</div>}
+                                                                        {item.description && <div className="text-gray-400 truncate">{item.description}</div>}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </React.Fragment>
                                     );
                                 })}
                             </tbody>
                         </table>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div>
-                            <h3 className="text-sm font-semibold text-gray-900 mb-2">Closed on Yelp</h3>
-                            <div className="border rounded p-3 text-xs max-h-64 overflow-y-auto">{closedRows.map(r => <div key={r.id} className="py-1 border-b last:border-b-0">{r.search_term} ({r.source_table}#{r.source_row_id})</div>)}</div>
+                            <h3 className="text-sm font-semibold text-gray-900 mb-2">Closed on Yelp <span className="text-gray-400 font-normal">({closedRows.length})</span></h3>
+                            <div className="border rounded p-3 text-xs max-h-64 overflow-y-auto">
+                                {closedRows.length === 0 ? <span className="text-gray-400">None</span> : closedRows.map(r => (
+                                    <div key={r.id} className="py-1 border-b last:border-b-0">
+                                        <span className="font-medium">{r.search_term || <span className="text-gray-400">—</span>}</span>
+                                        <span className="text-gray-400 ml-1">({r.source_table}#{r.source_row_id})</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                         <div>
-                            <h3 className="text-sm font-semibold text-gray-900 mb-2">Not Found on Yelp</h3>
-                            <div className="border rounded p-3 text-xs max-h-64 overflow-y-auto">{notFoundRows.map(r => <div key={r.id} className="py-1 border-b last:border-b-0">{r.search_term} ({r.source_table}#{r.source_row_id})</div>)}</div>
+                            <h3 className="text-sm font-semibold text-gray-900 mb-2">Not Found on Yelp <span className="text-gray-400 font-normal">({notFoundRows.length})</span></h3>
+                            <div className="border rounded p-3 text-xs max-h-64 overflow-y-auto">
+                                {notFoundRows.length === 0 ? <span className="text-gray-400">None</span> : notFoundRows.map(r => (
+                                    <div key={r.id} className="py-1 border-b last:border-b-0">
+                                        <span className="font-medium">{r.search_term || <span className="text-gray-400">—</span>}</span>
+                                        <span className="text-gray-400 ml-1">({r.source_table}#{r.source_row_id})</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-semibold text-gray-900 mb-2">Skipped (sync) <span className="text-gray-400 font-normal">({skippedRows.length})</span></h3>
+                            <div className="border rounded p-3 text-xs max-h-64 overflow-y-auto">
+                                {skippedRows.length === 0 ? <span className="text-gray-400">None</span> : skippedRows.map(r => (
+                                    <div key={r.id} className="py-1 border-b last:border-b-0">
+                                        <span className="font-medium">{r.search_term || <span className="italic text-gray-400">Row #{r.row_id}</span>}</span>
+                                        <span className="text-gray-400 ml-1 block">{r.error}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </>

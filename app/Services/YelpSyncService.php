@@ -127,34 +127,38 @@ class YelpSyncService
                     $lastProcessedId = (int) ($rowId ?: $lastProcessedId);
 
                     try {
+                        // Extract all search fields upfront so they're available for any skip/log path.
+                        $term    = $this->colValue($rowArr, $searchCols['term']    ?? null);
+                        $address = $this->colValue($rowArr, $searchCols['address'] ?? null);
+                        $city    = $this->colValue($rowArr, $searchCols['city']    ?? null);
+                        $state   = $this->colValue($rowArr, $searchCols['state']   ?? null);
+                        $zip     = $this->colValue($rowArr, $searchCols['zip']     ?? null);
+                        $location = implode(', ', array_filter([$address, $city, $state, $zip]));
+
                         $country = $this->resolveCountry($rowArr, $searchCols);
                         if (!$this->isUsCountry($country)) {
                             $skipped++;
                             YelpRowLog::create([
-                                'log_id' => $log->id,
-                                'row_id' => $rowId,
-                                'status' => 'skipped',
-                                'error' => 'Country is not US/USA or country is missing.',
+                                'log_id'          => $log->id,
+                                'row_id'          => $rowId,
+                                'search_term'     => $term,
+                                'search_location' => $location ?: null,
+                                'status'          => 'skipped',
+                                'error'           => 'Country is not US/USA or country is missing.',
                             ]);
                             $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
                             continue;
                         }
 
-                        $term = $this->colValue($rowArr, $searchCols['term'] ?? null);
-                        $address = $this->colValue($rowArr, $searchCols['address'] ?? null);
-                        $city = $this->colValue($rowArr, $searchCols['city'] ?? null);
-                        $state = $this->colValue($rowArr, $searchCols['state'] ?? null);
-                        $zip = $this->colValue($rowArr, $searchCols['zip'] ?? null);
-                        $location = implode(', ', array_filter([$address, $city, $state, $zip]));
-
                         if (!$term) {
                             $termCol = $searchCols['term'] ?? null;
                             $skipped++;
                             YelpRowLog::create([
-                                'log_id' => $log->id,
-                                'row_id' => $rowId,
-                                'status' => 'skipped',
-                                'error' => $termCol
+                                'log_id'          => $log->id,
+                                'row_id'          => $rowId,
+                                'search_location' => $location ?: null,
+                                'status'          => 'skipped',
+                                'error'           => $termCol
                                     ? "Business Name column \"{$termCol}\" is empty for this row. Edit the job and ensure the column has data."
                                     : 'Business Name column is not mapped. Edit the job and select a column for "Business Name".',
                             ]);
@@ -571,7 +575,22 @@ class YelpSyncService
             $callsMade++;
         }
 
-        return $yelp->extractMenuItems($details, $menuPayload);
+        // API returned items → use them
+        $apiItems = $yelp->extractMenuItems($details, $menuPayload);
+        if (!empty($apiItems) && ($apiItems[0]['source_type'] ?? '') !== 'details_fallback') {
+            return $apiItems;
+        }
+
+        // API menu empty or only fallback categories — try web scraper on /menu/{alias}
+        $alias = $details['alias'] ?? null;
+        if ($alias) {
+            $scraped = (new \App\Services\YelpScraperService())->scrapeMenu($alias);
+            if (!empty($scraped)) {
+                return $scraped;
+            }
+        }
+
+        return $apiItems; // fallback categories if scraper also failed
     }
 
     protected function resolveBusinessId(string $sourceTable, array $rowArr, ?int $rowId): ?int
@@ -628,6 +647,7 @@ class YelpSyncService
                 'sort_order'       => (int) ($item['sort_order'] ?? $idx),
                 'source_type'      => $item['source_type'] ?? 'details_fallback',
                 'raw_payload'      => $item['raw_payload'] ?? null,
+                'modifiers_json'   => $item['modifiers_json'] ?? null,
             ]);
         }
     }

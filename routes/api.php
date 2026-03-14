@@ -49,6 +49,9 @@ use App\Http\Controllers\Admin\PlatformUsersController;
 use App\Http\Controllers\Admin\PlatformGenresController;
 use App\Http\Controllers\Webhook\CalWebhookController;
 use App\Http\Controllers\ShipEngine\ShipEngineController;
+use App\Http\Controllers\Admin\DesignSystem\DsThemeController;
+use App\Http\Controllers\Admin\DesignSystem\DsTokenController;
+use App\Http\Controllers\Admin\DesignSystem\DsComponentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -142,6 +145,43 @@ Route::prefix('admin/ecommerce-settings')->group(function () {
     Route::get('/',           [EcommerceSettingsController::class, 'index']);
     Route::get('/{group}',    [EcommerceSettingsController::class, 'byGroup']);
     Route::put('/',           [EcommerceSettingsController::class, 'update']);
+});
+
+// ── Design System Manager ─────────────────────────────────────────────────────
+Route::prefix('admin/design-system')->group(function () {
+    // Themes
+    Route::get('/themes',                        [DsThemeController::class, 'index']);
+    Route::post('/themes',                       [DsThemeController::class, 'store']);
+    Route::get('/themes/{dsTheme}',              [DsThemeController::class, 'show']);
+    Route::put('/themes/{dsTheme}',              [DsThemeController::class, 'update']);
+    Route::delete('/themes/{dsTheme}',           [DsThemeController::class, 'destroy']);
+    Route::post('/themes/{dsTheme}/duplicate',   [DsThemeController::class, 'duplicate']);
+    // Exports
+    Route::get('/themes/{dsTheme}/export/json',     [DsThemeController::class, 'exportJson']);
+    Route::get('/themes/{dsTheme}/export/css',      [DsThemeController::class, 'exportCss']);
+    Route::get('/themes/{dsTheme}/export/tailwind', [DsThemeController::class, 'exportTailwind']);
+    Route::get('/themes/{dsTheme}/export/dts',      [DsThemeController::class, 'exportDts']);
+
+    // Tokens
+    Route::get('/tokens',              [DsTokenController::class, 'index']);
+    Route::post('/tokens',             [DsTokenController::class, 'store']);
+    Route::put('/tokens/{dsToken}',    [DsTokenController::class, 'update']);
+    Route::delete('/tokens/{dsToken}', [DsTokenController::class, 'destroy']);
+    Route::post('/tokens/bulk',        [DsTokenController::class, 'bulkUpsert']);
+
+    // Components
+    Route::get('/components',                   [DsComponentController::class, 'index']);
+    Route::post('/components',                  [DsComponentController::class, 'store']);
+    Route::get('/components/{dsComponent}',     [DsComponentController::class, 'show']);
+    Route::put('/components/{dsComponent}',     [DsComponentController::class, 'update']);
+    Route::delete('/components/{dsComponent}',  [DsComponentController::class, 'destroy']);
+    // Component variant resolution (called by React token engine)
+    Route::get('/components/{slug}/resolve',    [DsComponentController::class, 'resolve'])->where('slug', '[a-z\-]+');
+
+    // Variants (nested under component)
+    Route::post('/components/{dsComponent}/variants',                    [DsComponentController::class, 'storeVariant']);
+    Route::put('/components/{dsComponent}/variants/{variant}',           [DsComponentController::class, 'updateVariant']);
+    Route::delete('/components/{dsComponent}/variants/{variant}',        [DsComponentController::class, 'destroyVariant']);
 });
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
@@ -296,6 +336,7 @@ Route::group([], function () {
         Route::get('accounts',                      [YelpController::class, 'accountsIndex']);
         Route::post('accounts',                     [YelpController::class, 'accountsStore']);
         Route::post('accounts/verify',              [YelpController::class, 'accountsVerify']);
+        Route::post('accounts/{account}/reveal',    [YelpController::class, 'accountsReveal']);
         Route::patch('accounts/{account}',          [YelpController::class, 'accountsUpdate']);
         Route::delete('accounts/{account}',         [YelpController::class, 'accountsDestroy']);
 
@@ -319,7 +360,11 @@ Route::group([], function () {
         Route::get('reconciliation/menu-items',     [YelpController::class, 'reconciliationMenuItems']);
         Route::get('reconciliation/closed',         [YelpController::class, 'reconciliationClosed']);
         Route::get('reconciliation/not-found',      [YelpController::class, 'reconciliationNotFound']);
+        Route::get('reconciliation/skipped',        [YelpController::class, 'reconciliationSkipped']);
         Route::post('reconciliation/merge',         [YelpController::class, 'reconciliationMerge']);
+
+        // On-demand menu scraper
+        Route::post('scrape-menu',                  [YelpController::class, 'scrapeMenu']);
     });
 
     //

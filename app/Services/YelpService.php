@@ -102,6 +102,144 @@ class YelpService
         return round($h + ($m / 60), 4);
     }
 
+    // ── Amenity icon mapping ───────────────────────────────────────────────────
+    protected static array $AMENITY_MAP = [
+        'wifi'                        => ['label' => 'WiFi',                    'icon' => 'wifi'],
+        'outdoor_seating'             => ['label' => 'Outdoor Seating',         'icon' => 'tree'],
+        'has_tv'                      => ['label' => 'TV',                      'icon' => 'tv'],
+        'takes_reservations'          => ['label' => 'Reservations',            'icon' => 'calendar-check'],
+        'caters'                      => ['label' => 'Catering',                'icon' => 'truck'],
+        'waiter_service'              => ['label' => 'Waiter Service',          'icon' => 'user-tie'],
+        'wheelchair_accessible'       => ['label' => 'Wheelchair Accessible',   'icon' => 'wheelchair'],
+        'bike_parking'                => ['label' => 'Bike Parking',            'icon' => 'bicycle'],
+        'dogs_allowed'                => ['label' => 'Dogs Allowed',            'icon' => 'dog'],
+        'businessacceptscreditcards'  => ['label' => 'Credit Cards',            'icon' => 'credit-card'],
+        'accepts_apple_pay'           => ['label' => 'Apple Pay',               'icon' => 'apple'],
+        'accepts_android_pay'         => ['label' => 'Android Pay',             'icon' => 'google'],
+        'accepts_cryptocurrency'      => ['label' => 'Cryptocurrency',          'icon' => 'bitcoin-sign'],
+        'gender_neutral_restrooms'    => ['label' => 'Gender Neutral Restrooms','icon' => 'restroom'],
+        'coat_check'                  => ['label' => 'Coat Check',              'icon' => 'shirt'],
+        'open_24_hours'               => ['label' => 'Open 24 Hours',           'icon' => 'clock'],
+        'drive_thru'                  => ['label' => 'Drive-Thru',              'icon' => 'car-side'],
+        'happy_hour'                  => ['label' => 'Happy Hour',              'icon' => 'beer-mug-empty'],
+        'restaurants_take_out'        => ['label' => 'Takeout',                 'icon' => 'bag-shopping'],
+        'restaurants_delivery'        => ['label' => 'Delivery',                'icon' => 'motorcycle'],
+        'restaurants_good_for_groups' => ['label' => 'Good for Groups',         'icon' => 'users'],
+        'restaurants_table_service'   => ['label' => 'Table Service',           'icon' => 'utensils'],
+        'noise_level'                 => ['label' => 'Noise Level',             'icon' => 'volume-high'],
+        'alcohol'                     => ['label' => 'Alcohol',                 'icon' => 'wine-glass'],
+        'smoking'                     => ['label' => 'Smoking',                 'icon' => 'smoking'],
+    ];
+
+    /**
+     * Build a structured amenities array from Yelp API attributes.
+     * Returns an array of {key, label, icon, value, display} objects.
+     */
+    public function extractAmenities(array $details): array
+    {
+        $attrs    = $details['attributes'] ?? [];
+        $trans    = $details['transactions'] ?? [];
+        $amenities = [];
+
+        // Transactions (delivery, pickup, restaurant_reservation)
+        $transMap = [
+            'delivery'                => ['label' => 'Delivery',             'icon' => 'motorcycle'],
+            'pickup'                  => ['label' => 'Takeout / Pickup',     'icon' => 'bag-shopping'],
+            'restaurant_reservation'  => ['label' => 'Reservations',         'icon' => 'calendar-check'],
+        ];
+        foreach ($trans as $t) {
+            if (isset($transMap[$t])) {
+                $amenities[] = array_merge(['key' => $t, 'value' => true, 'display' => 'Yes'], $transMap[$t]);
+            }
+        }
+
+        // Flat boolean / string attributes
+        foreach ($attrs as $key => $value) {
+            if ($key === 'ambience' || $key === 'good_for_meal' || $key === 'parking') {
+                continue; // handled separately below
+            }
+
+            $meta = static::$AMENITY_MAP[$key] ?? null;
+            if (!$meta) {
+                continue;
+            }
+
+            // Skip false booleans
+            if ($value === false || $value === null) {
+                continue;
+            }
+
+            $display = match (true) {
+                $value === true             => 'Yes',
+                $key === 'wifi'             => ucfirst((string) $value), // free / paid / no
+                $key === 'alcohol'          => match ((string) $value) {
+                    'full_bar'       => 'Full Bar',
+                    'beer_and_wine'  => 'Beer & Wine',
+                    'none'           => null,
+                    default          => ucfirst((string) $value),
+                },
+                $key === 'noise_level'      => ucfirst(str_replace('_', ' ', (string) $value)),
+                $key === 'smoking'          => (string) $value !== 'no' ? ucfirst((string) $value) : null,
+                default                     => (string) $value,
+            };
+
+            if ($display === null) {
+                continue; // negative value — skip
+            }
+
+            $amenities[] = [
+                'key'     => $key,
+                'label'   => $meta['label'],
+                'icon'    => $meta['icon'],
+                'value'   => $value,
+                'display' => $display,
+            ];
+        }
+
+        // Ambience sub-keys
+        foreach ($attrs['ambience'] ?? [] as $k => $v) {
+            if ($v === true) {
+                $amenities[] = [
+                    'key'     => "ambience_{$k}",
+                    'label'   => ucfirst($k) . ' Atmosphere',
+                    'icon'    => 'masks-theater',
+                    'value'   => true,
+                    'display' => 'Yes',
+                ];
+            }
+        }
+
+        // Parking sub-keys
+        $parkingIcons = ['garage' => 'warehouse', 'street' => 'road', 'lot' => 'square-parking', 'valet' => 'car'];
+        foreach ($attrs['parking'] ?? [] as $k => $v) {
+            if ($v === true) {
+                $amenities[] = [
+                    'key'     => "parking_{$k}",
+                    'label'   => ucfirst($k) . ' Parking',
+                    'icon'    => $parkingIcons[$k] ?? 'parking',
+                    'value'   => true,
+                    'display' => 'Yes',
+                ];
+            }
+        }
+
+        // Good for meal sub-keys
+        $mealIcons = ['breakfast' => 'egg', 'brunch' => 'mug-hot', 'lunch' => 'sun', 'dinner' => 'moon', 'latenight' => 'moon', 'dessert' => 'ice-cream'];
+        foreach ($attrs['good_for_meal'] ?? [] as $k => $v) {
+            if ($v === true) {
+                $amenities[] = [
+                    'key'     => "meal_{$k}",
+                    'label'   => 'Good for ' . ucfirst($k),
+                    'icon'    => $mealIcons[$k] ?? 'utensils',
+                    'value'   => true,
+                    'display' => 'Yes',
+                ];
+            }
+        }
+
+        return $amenities;
+    }
+
     /**
      * Extract normalized flat values from a Yelp business DETAILS response.
      *
@@ -209,6 +347,8 @@ class YelpService
             'attributes_json'     => $attributesJson,
             // ── Recent Reviews ────────────────────────────────────────────────
             'recent_reviews_json' => $recentReviewsJson,
+            // ── Amenities (structured with icons) ─────────────────────────────
+            'amenities_json'      => json_encode($this->extractAmenities($details)) ?: null,
         ], $hoursFields);
     }
 
@@ -341,6 +481,8 @@ class YelpService
             'attributes_json'     => ['label' => 'All Attributes (JSON)',           'type' => 'text'],
             // ── Recent Reviews ────────────────────────────────────────────────
             'recent_reviews_json' => ['label' => 'Recent Reviews — up to 3 (JSON)', 'type' => 'text'],
+            // ── Amenities ─────────────────────────────────────────────────────
+            'amenities_json'      => ['label' => 'Amenities with Icons (JSON)',      'type' => 'text'],
         ];
     }
 }

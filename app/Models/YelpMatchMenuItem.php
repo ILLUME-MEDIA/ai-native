@@ -25,13 +25,15 @@ class YelpMatchMenuItem extends Model
         'sort_order',
         'source_type',
         'raw_payload',
+        'modifiers_json',
     ];
 
     protected $casts = [
-        'price'        => 'float',
-        'is_available' => 'boolean',
-        'sort_order'   => 'integer',
-        'raw_payload'  => 'array',
+        'price'          => 'float',
+        'is_available'   => 'boolean',
+        'sort_order'     => 'integer',
+        'raw_payload'    => 'array',
+        'modifiers_json' => 'array',
     ];
 
     public function matchDiff(): BelongsTo
