@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
 import { Link, useParams } from 'react-router';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 
@@ -209,13 +210,39 @@ const EntityDataList = () => {
   };
 
   const handleDelete = async (record) => {
-    if (!confirm('Delete this record?')) return;
+    const result = await Swal.fire({
+      title: 'Delete this record?',
+      text: 'This action cannot be undone.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete it',
+      cancelButtonText: 'Cancel',
+      buttonsStyling: false,
+      customClass: {
+        confirmButton: 'btn btn-danger me-2',
+        cancelButton: 'btn btn-secondary',
+      },
+    });
+    if (!result.isConfirmed) return;
     try {
       await axios.delete(`/api/entities/${slug}/${record.id}`);
-      showToast('Record deleted successfully.');
       fetchData(pagination.page);
+      Swal.fire({
+        title: 'Deleted!',
+        text: 'Record has been deleted.',
+        icon: 'success',
+        timer: 2000,
+        showConfirmButton: false,
+        buttonsStyling: false,
+      });
     } catch (err) {
-      showToast(err.response?.data?.message || 'Failed to delete', 'danger');
+      Swal.fire({
+        title: 'Error',
+        text: err.response?.data?.message || 'Failed to delete',
+        icon: 'error',
+        buttonsStyling: false,
+        customClass: { confirmButton: 'btn btn-primary' },
+      });
     }
   };
 
