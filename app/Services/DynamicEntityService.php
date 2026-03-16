@@ -506,8 +506,12 @@ class DynamicEntityService
             return;
         }
 
-        // 1. Try is_searchable=true fields
-        $searchable = $entity->fields->where('is_searchable', true)->pluck('column_name')->all();
+        // 1. Try is_searchable=true fields — but only string/text types (not numbers)
+        $searchable = $entity->fields
+            ->where('is_searchable', true)
+            ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+            ->pluck('column_name')
+            ->all();
 
         // 2. Fall back to fields with string/text type
         if (empty($searchable)) {
