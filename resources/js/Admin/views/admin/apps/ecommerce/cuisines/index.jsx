@@ -57,7 +57,7 @@ export default function CuisinesPage() {
 
   const load = () => {
     setLoading(true);
-    axios.get('/api/admin/ecommerce/cuisines')
+    axios.get('/api/ecommerce/cuisines')
       .then(r => {
         const data = Array.isArray(r.data) ? r.data : (r.data.data || []);
         setRows(data);
@@ -82,22 +82,22 @@ export default function CuisinesPage() {
   const handleSave = () => {
     setSaving(true);
     const req = editRow
-      ? axios.patch(`/api/admin/ecommerce/cuisines/${editRow.id}`, form)
-      : axios.post('/api/admin/ecommerce/cuisines', form);
+      ? axios.patch(`/api/ecommerce/cuisines/${editRow.id}`, form)
+      : axios.post('/api/ecommerce/cuisines', form);
     req.then(() => { showToast(editRow ? 'Updated!' : 'Created!'); setShowModal(false); load(); })
        .catch(e => showToast(e.response?.data?.message || 'Error saving', 'danger'))
        .finally(() => setSaving(false));
   };
 
   const handleDelete = () => {
-    axios.delete(`/api/admin/ecommerce/cuisines/${deleteId}`)
+    axios.delete(`/api/ecommerce/cuisines/${deleteId}`)
       .then(() => { showToast('Deleted'); load(); })
       .catch(() => showToast('Delete failed', 'danger'))
       .finally(() => setDeleteId(null));
   };
 
   const toggleActive = (row) => {
-    axios.patch(`/api/admin/ecommerce/cuisines/${row.id}`, { is_active: !row.is_active })
+    axios.patch(`/api/ecommerce/cuisines/${row.id}`, { is_active: !row.is_active })
       .then(() => load())
       .catch(() => showToast('Update failed', 'danger'));
   };
