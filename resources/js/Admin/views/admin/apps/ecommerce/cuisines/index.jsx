@@ -3,8 +3,9 @@ import Icon from '@admin/components/wrappers/Icon';
 import DataTable from '@admin/components/table/DataTable';
 import TablePagination from '@admin/components/table/TablePagination';
 import DeleteConfirmationModal from '@admin/components/table/DeleteConfirmationModal';
+import MediaUpload from '../_components/MediaUpload';
 import axios from 'axios';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   Alert, Badge, Button, Card, CardBody, CardFooter, CardHeader,
@@ -15,38 +16,99 @@ const emptyForm = { name: '', icon: '', hover_icon: '', is_active: true, sort_or
 
 const columnHelper = createColumnHelper();
 
-// Small icon preview box
-const IconBox = ({ icon, hoverIcon, size = 36 }) => {
+/** Detect if a value is an image URL or a Tabler icon name */
+const isUrl = (val) => val && (val.startsWith('http') || val.startsWith('/') || val.startsWith('data:'));
+
+/** Renders either an uploaded image or a Tabler icon, with hover swap */
+const IconPreview = ({ icon, hoverIcon, size = 36 }) => {
   const [hovered, setHovered] = useState(false);
   const current = hovered && hoverIcon ? hoverIcon : icon;
+  const s = size;
   return (
     <div
       className="d-flex align-items-center justify-content-center rounded border bg-light"
-      style={{ width: size, height: size, flexShrink: 0, cursor: hoverIcon ? 'pointer' : 'default', transition: 'background 0.2s' }}
+      style={{ width: s, height: s, flexShrink: 0, cursor: hoverIcon ? 'pointer' : 'default', overflow: 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      title={hoverIcon ? `Hover: ${hoverIcon}` : undefined}
+      title={hoverIcon ? 'Hover to see hover icon' : undefined}
     >
-      {current
-        ? <Icon icon={current} size={size * 0.5} className="text-primary" />
-        : <Icon icon="tools-kitchen-2" size={size * 0.5} className="text-muted" />
-      }
+      {current ? (
+        isUrl(current)
+          ? <img src={current} alt="" style={{ width: s - 8, height: s - 8, objectFit: 'contain' }} />
+          : <Icon icon={current} size={s * 0.5} className="text-primary" />
+      ) : (
+        <Icon icon="tools-kitchen-2" size={s * 0.5} className="text-muted" />
+      )}
+    </div>
+  );
+};
+
+/** Small upload + text input combo for icon field */
+const IconField = ({ label, value, onChange }) => {
+  const fileRef = useRef();
+  const [uploading, setUploading] = useState(false);
+
+  const doUpload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('folder', 'cuisines');
+    try {
+      const { data } = await axios.post('/api/ecommerce/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onChange(data.url);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <FormLabel>{label}</FormLabel>
+      <div className="d-flex gap-2 align-items-start">
+        {/* Preview */}
+        <IconPreview icon={value} size={38} />
+        <div className="flex-grow-1">
+          <FormControl
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            placeholder="Icon name (e.g. flame) or paste URL"
+            size="sm"
+          />
+          <div className="d-flex gap-1 mt-1">
+            <Button size="sm" variant="outline-secondary" onClick={() => fileRef.current?.click()}
+              disabled={uploading} style={{ fontSize: 11 }}>
+              {uploading ? <Spinner size="sm" /> : <><Icon icon="upload" size={12} className="me-1" />Upload SVG/PNG</>}
+            </Button>
+            {value && (
+              <Button size="sm" variant="outline-danger" onClick={() => onChange('')} style={{ fontSize: 11 }}>
+                <Icon icon="x" size={12} />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      <input ref={fileRef} type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp" className="d-none"
+        onChange={e => doUpload(e.target.files?.[0])} />
     </div>
   );
 };
 
 export default function CuisinesPage() {
-  const [rows, setRows]           = useState([]);
-  const [loading, setLoading]     = useState(true);
+  const [rows, setRows]             = useState([]);
+  const [loading, setLoading]       = useState(true);
   const [pagination, setPagination] = useState({});
-  const [page, setPage]           = useState(1);
-  const [search, setSearch]       = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [editRow, setEditRow]     = useState(null);
-  const [form, setForm]           = useState(emptyForm);
-  const [saving, setSaving]       = useState(false);
-  const [toast, setToast]         = useState(null);
-  const [deleteId, setDeleteId]   = useState(null);
+  const [page, setPage]             = useState(1);
+  const [search, setSearch]         = useState('');
+  const [showModal, setShowModal]   = useState(false);
+  const [editRow, setEditRow]       = useState(null);
+  const [form, setForm]             = useState(emptyForm);
+  const [saving, setSaving]         = useState(false);
+  const [toast, setToast]           = useState(null);
+  const [deleteId, setDeleteId]     = useState(null);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -60,14 +122,12 @@ export default function CuisinesPage() {
     const params = new URLSearchParams({ admin: 1, page, per_page: 15 });
     if (search) params.set('search', search);
     axios.get(`/api/ecommerce/cuisines?${params}`)
-      .then(r => {
-        setRows(r.data.data || []);
-        setPagination(r.data);
-      })
+      .then(r => { setRows(r.data.data || []); setPagination(r.data); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [page]);
+  // Only reload table when page changes AND modal is closed
+  useEffect(() => { if (!showModal) load(); }, [page, showModal]);
 
   const handleActivateAll = () => {
     axios.put('/api/ecommerce/cuisines/activate-all')
@@ -75,10 +135,11 @@ export default function CuisinesPage() {
       .catch(() => showToast('Failed', 'danger'));
   };
 
-  const openAdd = () => { setEditRow(null); setForm(emptyForm); setShowModal(true); };
+  const openAdd  = () => { setEditRow(null); setForm(emptyForm); setShowModal(true); };
   const openEdit = (row) => {
     setEditRow(row);
-    setForm({ name: row.name || '', icon: row.icon || '', hover_icon: row.hover_icon || '', is_active: row.is_active ?? true, sort_order: row.sort_order ?? 0 });
+    setForm({ name: row.name || '', icon: row.icon || '', hover_icon: row.hover_icon || '',
+      is_active: row.is_active ?? true, sort_order: row.sort_order ?? 0 });
     setShowModal(true);
   };
 
@@ -101,7 +162,7 @@ export default function CuisinesPage() {
 
   const toggleActive = (row) => {
     axios.patch(`/api/ecommerce/cuisines/${row.id}`, { is_active: !row.is_active })
-      .then(() => load())
+      .then(() => { if (!showModal) load(); })
       .catch(() => showToast('Update failed', 'danger'));
   };
 
@@ -112,7 +173,7 @@ export default function CuisinesPage() {
         const r = row.original;
         return (
           <div className="d-flex align-items-center gap-3">
-            <IconBox icon={r.icon} hoverIcon={r.hover_icon} size={40} />
+            <IconPreview icon={r.icon} hoverIcon={r.hover_icon} size={40} />
             <div>
               <div className="fw-semibold">{r.name}</div>
               <small className="text-muted">{r.slug}</small>
@@ -122,35 +183,33 @@ export default function CuisinesPage() {
       },
     }),
     columnHelper.accessor('icon', {
-      header: 'Icons',
+      header: 'Default Icon',
       enableSorting: false,
-      cell: ({ row }) => {
-        const r = row.original;
-        return (
-          <div className="d-flex align-items-center gap-2">
-            <div className="text-center">
-              <small className="text-muted d-block" style={{ fontSize: 10 }}>Default</small>
-              <code className="small">{r.icon || '—'}</code>
-            </div>
-            {r.hover_icon && (
-              <>
-                <Icon icon="arrow-right" size={12} className="text-muted" />
-                <div className="text-center">
-                  <small className="text-muted d-block" style={{ fontSize: 10 }}>Hover</small>
-                  <code className="small">{r.hover_icon}</code>
-                </div>
-              </>
-            )}
-          </div>
-        );
+      cell: ({ getValue }) => {
+        const v = getValue();
+        return v ? (
+          isUrl(v)
+            ? <img src={v} alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+            : <code className="small">{v}</code>
+        ) : <span className="text-muted">—</span>;
+      },
+    }),
+    columnHelper.accessor('hover_icon', {
+      header: 'Hover Icon',
+      enableSorting: false,
+      cell: ({ getValue }) => {
+        const v = getValue();
+        return v ? (
+          isUrl(v)
+            ? <img src={v} alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+            : <code className="small">{v}</code>
+        ) : <span className="text-muted">—</span>;
       },
     }),
     columnHelper.accessor('muzzs_count', {
       header: 'Restaurants',
       enableSorting: false,
-      cell: ({ getValue }) => (
-        <Badge bg="secondary" className="fw-normal">{getValue() ?? 0}</Badge>
-      ),
+      cell: ({ getValue }) => <Badge bg="secondary" className="fw-normal">{getValue() ?? 0}</Badge>,
     }),
     columnHelper.accessor('sort_order', {
       header: 'Order',
@@ -169,9 +228,7 @@ export default function CuisinesPage() {
       ),
     }),
     {
-      id: 'actions',
-      header: 'Actions',
-      enableSorting: false,
+      id: 'actions', header: 'Actions', enableSorting: false,
       cell: ({ row }) => (
         <div className="d-flex gap-1">
           <Button size="sm" variant="outline-primary" onClick={() => openEdit(row.original)}>
@@ -185,12 +242,7 @@ export default function CuisinesPage() {
     },
   ];
 
-  const table = useReactTable({
-    data: rows,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    manualPagination: true,
-  });
+  const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel(), manualPagination: true });
 
   const totalPages = pagination.last_page || 1;
   const totalItems = pagination.total || rows.length;
@@ -210,40 +262,31 @@ export default function CuisinesPage() {
       <Card>
         <CardHeader className="d-flex flex-wrap gap-2 align-items-center justify-content-between">
           <div style={{ position: 'relative' }}>
-            <FormControl
-              placeholder="Search cuisines..."
-              value={search}
+            <FormControl placeholder="Search cuisines..." value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { setPage(1); load(); } }}
-              style={{ paddingRight: 36, minWidth: 220 }}
-            />
+              style={{ paddingRight: 36, minWidth: 220 }} />
             <Icon icon="search" size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
           </div>
           <div className="d-flex gap-2">
             <Button variant="outline-success" onClick={handleActivateAll} title="Set all cuisines active">
-              <Icon icon="check-all" size={15} className="me-1" />
-              Activate All
+              <Icon icon="check-all" size={15} className="me-1" />Activate All
             </Button>
             <Button variant="primary" onClick={openAdd}>
-              <Icon icon="plus" size={15} className="me-1" />
-              Add Cuisine
+              <Icon icon="plus" size={15} className="me-1" />Add Cuisine
             </Button>
           </div>
         </CardHeader>
 
         <CardBody className="p-0">
-          {loading ? (
-            <div className="text-center py-5"><Spinner /></div>
-          ) : (
-            <DataTable table={table} emptyMessage="No cuisines found." />
-          )}
+          {loading ? <div className="text-center py-5"><Spinner /></div>
+            : <DataTable table={table} emptyMessage="No cuisines found." />}
         </CardBody>
 
         {totalPages > 1 && (
           <CardFooter className="border-0">
             <TablePagination
-              totalItems={totalItems} start={start} end={end}
-              itemsName="cuisines" showInfo
+              totalItems={totalItems} start={start} end={end} itemsName="cuisines" showInfo
               previousPage={() => setPage(p => p - 1)} canPreviousPage={page > 1}
               pageCount={totalPages} pageIndex={page - 1}
               setPageIndex={(idx) => setPage(idx + 1)}
@@ -254,7 +297,7 @@ export default function CuisinesPage() {
       </Card>
 
       {/* Add / Edit Modal */}
-      <Modal show={showModal} onHide={() => setShowModal(false)} size="md">
+      <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
         <Modal.Header closeButton>
           <Modal.Title>
             <Icon icon={editRow ? 'pencil' : 'plus'} size={16} className="me-2" />
@@ -266,45 +309,26 @@ export default function CuisinesPage() {
           <Row className="g-3">
             <Col xs={12}>
               <FormLabel>Cuisine Name <span className="text-danger">*</span></FormLabel>
-              <FormControl
-                value={form.name}
-                onChange={e => set('name', e.target.value)}
-                placeholder="e.g. Pakistani, Italian, Thai"
-              />
+              <FormControl value={form.name} onChange={e => set('name', e.target.value)}
+                placeholder="e.g. Pakistani, Italian, Thai" />
             </Col>
 
-            <Col xs={6}>
-              <FormLabel>
-                Default Icon
-                <small className="text-muted ms-1">(Tabler icon name)</small>
-              </FormLabel>
-              <FormControl
-                value={form.icon}
-                onChange={e => set('icon', e.target.value)}
-                placeholder="e.g. tools-kitchen-2"
-              />
+            <Col md={6}>
+              <IconField label="Default Icon" value={form.icon} onChange={v => set('icon', v)} />
             </Col>
 
-            <Col xs={6}>
-              <FormLabel>
-                Hover Icon
-                <small className="text-muted ms-1">(on mouse over)</small>
-              </FormLabel>
-              <FormControl
-                value={form.hover_icon}
-                onChange={e => set('hover_icon', e.target.value)}
-                placeholder="e.g. flame"
-              />
+            <Col md={6}>
+              <IconField label="Hover Icon (optional)" value={form.hover_icon} onChange={v => set('hover_icon', v)} />
             </Col>
 
-            {/* Live icon preview */}
+            {/* Live preview */}
             <Col xs={12}>
               <div className="d-flex align-items-center gap-3 p-3 rounded border bg-light">
-                <IconBox icon={form.icon} hoverIcon={form.hover_icon} size={48} />
+                <IconPreview icon={form.icon} hoverIcon={form.hover_icon} size={52} />
                 <div>
                   <div className="fw-semibold">{form.name || <span className="text-muted">Cuisine Name</span>}</div>
                   <small className="text-muted">
-                    {form.hover_icon ? 'Hover over icon to see hover state' : 'No hover icon set'}
+                    {form.hover_icon ? 'Hover over icon to preview hover state' : 'No hover icon set'}
                   </small>
                 </div>
               </div>
@@ -312,21 +336,13 @@ export default function CuisinesPage() {
 
             <Col xs={6}>
               <FormLabel>Sort Order</FormLabel>
-              <FormControl
-                type="number"
-                value={form.sort_order}
-                onChange={e => set('sort_order', parseInt(e.target.value) || 0)}
-                placeholder="0"
-              />
+              <FormControl type="number" value={form.sort_order}
+                onChange={e => set('sort_order', parseInt(e.target.value) || 0)} placeholder="0" />
             </Col>
 
             <Col xs={6} className="d-flex flex-column justify-content-end pb-1">
-              <Form.Check
-                type="switch"
-                label="Active"
-                checked={!!form.is_active}
-                onChange={e => set('is_active', e.target.checked)}
-              />
+              <Form.Check type="switch" label="Active"
+                checked={!!form.is_active} onChange={e => set('is_active', e.target.checked)} />
             </Col>
           </Row>
         </Modal.Body>
@@ -340,12 +356,8 @@ export default function CuisinesPage() {
         </Modal.Footer>
       </Modal>
 
-      <DeleteConfirmationModal
-        show={!!deleteId}
-        onHide={() => setDeleteId(null)}
-        onConfirm={handleDelete}
-        itemName="cuisine"
-      />
+      <DeleteConfirmationModal show={!!deleteId} onHide={() => setDeleteId(null)}
+        onConfirm={handleDelete} itemName="cuisine" />
     </>
   );
 }

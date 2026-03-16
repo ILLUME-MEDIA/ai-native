@@ -273,7 +273,8 @@ Route::group([], function () {
 
         // Cuisines admin (write + activate-all)
         Route::post('cuisines',                     [CuisineController::class, 'store']);
-        Route::put('cuisines/activate-all',         [CuisineController::class, 'activateAll']);
+        Route::put('cuisines/activate-all',          [CuisineController::class, 'activateAll']);
+        Route::post('cuisines/dedup',               [CuisineController::class, 'dedup']);
         Route::patch('cuisines/{cuisine}',          [CuisineController::class, 'update']);
         Route::delete('cuisines/{cuisine}',         [CuisineController::class, 'destroy']);
 

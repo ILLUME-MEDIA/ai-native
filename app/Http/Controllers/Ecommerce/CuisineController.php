@@ -45,6 +45,45 @@ class CuisineController extends Controller
         return response()->json(['message' => "All cuisines activated. ({$count} updated)"]);
     }
 
+    /** POST /api/ecommerce/cuisines/dedup — merge duplicate cuisine entries (same name, case-insensitive) */
+    public function dedup(): JsonResponse
+    {
+        $groups = \DB::table('cuisines')
+            ->selectRaw('LOWER(name) as norm_name, MIN(id) as keep_id, COUNT(*) as cnt')
+            ->groupByRaw('LOWER(name)')
+            ->havingRaw('COUNT(*) > 1')
+            ->get();
+
+        $merged = 0;
+
+        foreach ($groups as $group) {
+            $keepId = $group->keep_id;
+            $dupes  = Cuisine::whereRaw('LOWER(name) = ?', [$group->norm_name])
+                ->where('id', '!=', $keepId)
+                ->pluck('id')
+                ->toArray();
+
+            foreach ($dupes as $dupeId) {
+                $muzzhubIds = \DB::table('muzzhub_cuisine')
+                    ->where('cuisine_id', $dupeId)
+                    ->pluck('muzzhub_id');
+
+                foreach ($muzzhubIds as $mid) {
+                    \DB::table('muzzhub_cuisine')->insertOrIgnore([
+                        'muzzhub_id' => $mid,
+                        'cuisine_id' => $keepId,
+                    ]);
+                }
+
+                \DB::table('muzzhub_cuisine')->where('cuisine_id', $dupeId)->delete();
+                Cuisine::where('id', $dupeId)->delete();
+                $merged++;
+            }
+        }
+
+        return response()->json(['message' => "Dedup complete. Removed {$merged} duplicate(s).", 'removed' => $merged]);
+    }
+
     /** Admin: create */
     public function store(Request $request): JsonResponse
     {
