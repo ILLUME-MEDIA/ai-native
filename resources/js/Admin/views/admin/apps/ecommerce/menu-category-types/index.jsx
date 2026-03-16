@@ -1,197 +1,357 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 import DataTable from '@admin/components/table/DataTable';
+import DeleteConfirmationModal from '@admin/components/table/DeleteConfirmationModal';
 import axios from 'axios';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
-    Alert, Card, CardBody, CardHeader, Col, Form, Modal, ModalBody, ModalFooter, ModalHeader, ModalTitle,
-    Row, Spinner,
+    Alert, Badge, Button, Card, CardBody, CardHeader,
+    Col, Form, FormControl, FormLabel, Modal, Row, Spinner,
 } from 'react-bootstrap';
 
-const api = (path, opts = {}) => axios({ url: `/api/ecommerce/${path}`, ...opts });
 const columnHelper = createColumnHelper();
+const emptyForm = { name: '', description: '', icon: '', hover_icon: '', sort_order: 0, is_active: true };
+
+const isUrl = (val) => val && (val.startsWith('http') || val.startsWith('/') || val.startsWith('data:'));
+
+const IconPreview = ({ icon, hoverIcon, size = 36 }) => {
+    const [hovered, setHovered] = useState(false);
+    const current = hovered && hoverIcon ? hoverIcon : icon;
+    return (
+        <div
+            className="d-flex align-items-center justify-content-center rounded border bg-light"
+            style={{ width: size, height: size, flexShrink: 0, cursor: hoverIcon ? 'pointer' : 'default', overflow: 'hidden' }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            title={hoverIcon ? 'Hover to preview hover icon' : undefined}
+        >
+            {current ? (
+                isUrl(current)
+                    ? <img src={current} alt="" style={{ width: size - 8, height: size - 8, objectFit: 'contain' }} />
+                    : <Icon icon={current} size={size * 0.5} className="text-primary" />
+            ) : (
+                <Icon icon="category" size={size * 0.5} className="text-muted" />
+            )}
+        </div>
+    );
+};
+
+const IconField = ({ label, value, onChange }) => {
+    const fileRef = useRef();
+    const [uploading, setUploading] = useState(false);
+
+    const doUpload = async (file) => {
+        if (!file) return;
+        setUploading(true);
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('folder', 'menu-category-types');
+        try {
+            const { data } = await axios.post('/api/ecommerce/upload', fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            onChange(data.url);
+        } finally {
+            setUploading(false);
+            if (fileRef.current) fileRef.current.value = '';
+        }
+    };
+
+    return (
+        <div>
+            <FormLabel>{label}</FormLabel>
+            <div className="d-flex gap-2 align-items-start">
+                <IconPreview icon={value} size={38} />
+                <div className="flex-grow-1">
+                    <FormControl
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder="Icon name (e.g. salad) or paste URL"
+                        size="sm"
+                    />
+                    <div className="d-flex gap-1 mt-1">
+                        <Button size="sm" variant="outline-secondary" onClick={() => fileRef.current?.click()}
+                            disabled={uploading} style={{ fontSize: 11 }}>
+                            {uploading ? <Spinner size="sm" /> : <><Icon icon="upload" size={12} className="me-1" />Upload SVG/PNG</>}
+                        </Button>
+                        {value && (
+                            <Button size="sm" variant="outline-danger" onClick={() => onChange('')} style={{ fontSize: 11 }}>
+                                <Icon icon="x" size={12} />
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            </div>
+            <input ref={fileRef} type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp" className="d-none"
+                onChange={e => doUpload(e.target.files?.[0])} />
+        </div>
+    );
+};
 
 export default function MenuCategoryTypesPage() {
-    const [types, setTypes]       = useState([]);
-    const [loading, setLoading]   = useState(true);
-    const [showModal, setShowModal] = useState(false);
+    const [types, setTypes]           = useState([]);
+    const [loading, setLoading]       = useState(true);
+    const [showModal, setShowModal]   = useState(false);
     const [editTarget, setEditTarget] = useState(null);
-    const [saving, setSaving]     = useState(false);
-    const [error, setError]       = useState('');
-    const [form, setForm]         = useState({ name: '', description: '', sort_order: 0, is_active: true });
+    const [form, setForm]             = useState(emptyForm);
+    const [saving, setSaving]         = useState(false);
+    const [toast, setToast]           = useState(null);
+    const [deleteId, setDeleteId]     = useState(null);
+
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+    const showToast = (msg, type = 'success') => {
+        setToast({ msg, type });
+        setTimeout(() => setToast(null), 3000);
+    };
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const { data } = await api('menu-category-types?all=1');
+            const { data } = await axios.get('/api/ecommerce/menu-category-types?all=1');
             setTypes(Array.isArray(data) ? data : (data.data || []));
-        } catch (e) {
+        } catch {
             setTypes([]);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => { if (!showModal) load(); }, [showModal]);
 
     const openAdd = () => {
-        setForm({ name: '', description: '', sort_order: types.length, is_active: true });
-        setError(''); setEditTarget(null); setShowModal(true);
+        setEditTarget(null);
+        setForm({ ...emptyForm, sort_order: types.length });
+        setShowModal(true);
     };
 
     const openEdit = (row) => {
+        setEditTarget(row);
         setForm({
             name: row.name || '',
             description: row.description || '',
+            icon: row.icon || '',
+            hover_icon: row.hover_icon || '',
             sort_order: row.sort_order ?? 0,
             is_active: row.is_active ?? true,
         });
-        setError(''); setEditTarget(row); setShowModal(true);
+        setShowModal(true);
     };
 
-    const save = async (e) => {
-        e.preventDefault();
-        setSaving(true); setError('');
+    const handleSave = async () => {
+        setSaving(true);
         try {
-            if (!editTarget) {
-                await api('menu-category-types', { method: 'post', data: form });
+            if (editTarget) {
+                await axios.patch(`/api/ecommerce/menu-category-types/${editTarget.id}`, form);
+                showToast('Updated!');
             } else {
-                await api(`menu-category-types/${editTarget.id}`, { method: 'patch', data: form });
+                await axios.post('/api/ecommerce/menu-category-types', form);
+                showToast('Created!');
             }
             setShowModal(false);
-            load();
         } catch (err) {
             const errs = err.response?.data?.errors;
-            setError(errs ? Object.values(errs).flat().join(' | ') : (err.response?.data?.message || 'Save failed.'));
-        } finally { setSaving(false); }
+            showToast(errs ? Object.values(errs).flat().join(' | ') : (err.response?.data?.message || 'Save failed.'), 'danger');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        try {
+            await axios.delete(`/api/ecommerce/menu-category-types/${deleteId}`);
+            showToast('Deleted');
+        } catch {
+            showToast('Delete failed', 'danger');
+        } finally {
+            setDeleteId(null);
+            load();
+        }
     };
 
     const toggleActive = async (row) => {
         try {
-            await api(`menu-category-types/${row.id}`, { method: 'patch', data: { is_active: !row.is_active } });
-            load();
-        } catch (e) { setError(e.response?.data?.message || 'Update failed'); }
-    };
-
-    const del = async (row) => {
-        if (!confirm(`Delete "${row.name}"?`)) return;
-        try {
-            await api(`menu-category-types/${row.id}`, { method: 'delete' });
-            load();
-        } catch (e) { setError(e.response?.data?.message || 'Delete failed'); }
+            await axios.patch(`/api/ecommerce/menu-category-types/${row.id}`, { is_active: !row.is_active });
+            if (!showModal) load();
+        } catch {
+            showToast('Update failed', 'danger');
+        }
     };
 
     const columns = useMemo(() => [
         columnHelper.accessor('name', {
             header: 'Type',
-            cell: ({ row }) => (
-                <div>
-                    <strong>{row.original.name}</strong>
-                    {row.original.description && <small className="text-muted d-block">{row.original.description}</small>}
-                </div>
-            ),
             enableSorting: false,
+            cell: ({ row }) => {
+                const r = row.original;
+                return (
+                    <div className="d-flex align-items-center gap-3">
+                        <IconPreview icon={r.icon} hoverIcon={r.hover_icon} size={40} />
+                        <div>
+                            <div className="fw-semibold">{r.name}</div>
+                            <small className="text-muted">{r.slug}</small>
+                        </div>
+                    </div>
+                );
+            },
         }),
-        columnHelper.accessor('slug', {
-            header: 'Slug',
-            cell: ({ row }) => <small className="text-muted">{row.original.slug}</small>,
+        columnHelper.accessor('icon', {
+            header: 'Default Icon',
             enableSorting: false,
+            cell: ({ getValue }) => {
+                const v = getValue();
+                return v ? (
+                    isUrl(v)
+                        ? <img src={v} alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+                        : <code className="small">{v}</code>
+                ) : <span className="text-muted">—</span>;
+            },
+        }),
+        columnHelper.accessor('hover_icon', {
+            header: 'Hover Icon',
+            enableSorting: false,
+            cell: ({ getValue }) => {
+                const v = getValue();
+                return v ? (
+                    isUrl(v)
+                        ? <img src={v} alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+                        : <code className="small">{v}</code>
+                ) : <span className="text-muted">—</span>;
+            },
+        }),
+        columnHelper.accessor('description', {
+            header: 'Description',
+            enableSorting: false,
+            cell: ({ getValue }) => <small className="text-muted">{getValue() || '—'}</small>,
         }),
         columnHelper.accessor('sort_order', {
-            header: 'Sort',
-            cell: ({ row }) => <small className="text-muted">{row.original.sort_order ?? 0}</small>,
+            header: 'Order',
             enableSorting: false,
+            cell: ({ getValue }) => <Badge bg="light" text="dark">{getValue()}</Badge>,
         }),
         columnHelper.accessor('is_active', {
             header: 'Active',
-            cell: ({ row }) => (
-                <Form.Check
-                    type="switch"
-                    checked={!!row.original.is_active}
-                    onChange={() => toggleActive(row.original)}
-                    label={<small className={row.original.is_active ? 'text-success' : 'text-muted'}>{row.original.is_active ? 'Yes' : 'No'}</small>}
-                />
-            ),
             enableSorting: false,
-        }),
-        {
-            id: 'actions',
-            header: 'Actions',
             cell: ({ row }) => (
-                <div className="d-flex gap-1">
-                    <button type="button" className="btn btn-default btn-sm btn-icon" onClick={() => openEdit(row.original)}><Icon icon="edit" className="fs-lg" /></button>
-                    <button type="button" className="btn btn-default btn-sm btn-icon" onClick={() => del(row.original)}><Icon icon="trash" className="fs-lg text-danger" /></button>
+                <div className="form-check form-switch mb-0" style={{ cursor: 'pointer' }}
+                    onClick={() => toggleActive(row.original)}>
+                    <input className="form-check-input" type="checkbox"
+                        checked={!!row.original.is_active} onChange={() => {}} style={{ cursor: 'pointer' }} />
                 </div>
             ),
-            enableSorting: false,
+        }),
+        {
+            id: 'actions', header: 'Actions', enableSorting: false,
+            cell: ({ row }) => (
+                <div className="d-flex gap-1">
+                    <Button size="sm" variant="outline-primary" onClick={() => openEdit(row.original)}>
+                        <Icon icon="pencil" size={14} />
+                    </Button>
+                    <Button size="sm" variant="outline-danger" onClick={() => setDeleteId(row.original.id)}>
+                        <Icon icon="trash" size={14} />
+                    </Button>
+                </div>
+            ),
         },
-    ], []);
+    ], [types]);
 
-    const table = useReactTable({
-        data: types,
-        columns,
-        getCoreRowModel: getCoreRowModel(),
-    });
+    const table = useReactTable({ data: types, columns, getCoreRowModel: getCoreRowModel() });
 
     return (
         <>
             <PageBreadcrumb title="Menu Category Types" subtitle="Ecommerce" />
-            <p className="text-muted mb-3">
-                Global types for menu items (e.g. Kids Cuisine, Vegetarian, Halal). Assign one to each product in <strong>Products</strong>.
-            </p>
+
+            {toast && (
+                <Alert variant={toast.type} className="position-fixed top-0 end-0 m-3 shadow" style={{ zIndex: 9999, minWidth: 260 }}>
+                    {toast.msg}
+                </Alert>
+            )}
 
             <Card>
-                <CardHeader className="border-light d-flex justify-content-between">
+                <CardHeader className="d-flex align-items-center justify-content-between">
                     <h5 className="card-title mb-0">Menu Category Types</h5>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={openAdd}>
-                        <Icon icon="plus" className="me-1" /> Add Type
-                    </button>
+                    <Button variant="primary" onClick={openAdd}>
+                        <Icon icon="plus" size={15} className="me-1" />Add Type
+                    </Button>
                 </CardHeader>
 
-                <CardBody className="p-0" style={{ minHeight: 120 }}>
-                    {loading ? (
-                        <div className="d-flex align-items-center justify-content-center py-5">
-                            <Spinner animation="border" size="sm" className="text-primary" />
-                        </div>
-                    ) : (
-                        <DataTable table={table} emptyMessage="No types yet. Add Kids Cuisine, Vegetarian, etc." />
-                    )}
+                <CardBody className="p-0">
+                    {loading
+                        ? <div className="text-center py-5"><Spinner /></div>
+                        : <DataTable table={table} emptyMessage="No types yet." />
+                    }
                 </CardBody>
             </Card>
 
-            <Modal show={showModal} onHide={() => setShowModal(false)} centered>
-                <ModalHeader closeButton>
-                    <ModalTitle as="h5">{editTarget ? `Edit: ${editTarget.name}` : 'Add Menu Category Type'}</ModalTitle>
-                </ModalHeader>
-                <Form onSubmit={save}>
-                    <ModalBody>
-                        {error && <Alert variant="danger" className="py-2 mb-3">{error}</Alert>}
-                        <Row className="g-3">
-                            <Col xs={12}>
-                                <Form.Label>Name <span className="text-danger">*</span></Form.Label>
-                                <Form.Control value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Kids Cuisine, Vegetarian" required />
-                            </Col>
-                            <Col xs={12}>
-                                <Form.Label>Description</Form.Label>
-                                <Form.Control as="textarea" rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional" />
-                            </Col>
-                            <Col xs={6}>
-                                <Form.Label>Sort Order</Form.Label>
-                                <Form.Control type="number" min="0" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: parseInt(e.target.value) || 0 }))} />
-                            </Col>
-                            <Col xs={12}>
-                                <Form.Check type="switch" id="typeActive" label="Active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
-                            </Col>
-                        </Row>
-                    </ModalBody>
-                    <ModalFooter>
-                        <button type="button" className="btn btn-light" onClick={() => setShowModal(false)}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={saving || !form.name}>
-                            {saving ? <><Spinner animation="border" size="sm" className="me-1" />Saving…</> : 'Save'}
-                        </button>
-                    </ModalFooter>
-                </Form>
+            {/* Add / Edit Modal */}
+            <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        <Icon icon={editTarget ? 'pencil' : 'plus'} size={16} className="me-2" />
+                        {editTarget ? `Edit: ${editTarget.name}` : 'Add Menu Category Type'}
+                    </Modal.Title>
+                </Modal.Header>
+
+                <Modal.Body>
+                    <Row className="g-3">
+                        <Col xs={12}>
+                            <FormLabel>Name <span className="text-danger">*</span></FormLabel>
+                            <FormControl value={form.name} onChange={e => set('name', e.target.value)}
+                                placeholder="e.g. Appetizers, Beef, Vegan" />
+                        </Col>
+
+                        <Col xs={12}>
+                            <FormLabel>Description</FormLabel>
+                            <FormControl as="textarea" rows={2} value={form.description}
+                                onChange={e => set('description', e.target.value)} placeholder="Optional" />
+                        </Col>
+
+                        <Col md={6}>
+                            <IconField label="Default Icon" value={form.icon} onChange={v => set('icon', v)} />
+                        </Col>
+
+                        <Col md={6}>
+                            <IconField label="Hover Icon (optional)" value={form.hover_icon} onChange={v => set('hover_icon', v)} />
+                        </Col>
+
+                        {/* Live preview */}
+                        <Col xs={12}>
+                            <div className="d-flex align-items-center gap-3 p-3 rounded border bg-light">
+                                <IconPreview icon={form.icon} hoverIcon={form.hover_icon} size={52} />
+                                <div>
+                                    <div className="fw-semibold">{form.name || <span className="text-muted">Type Name</span>}</div>
+                                    <small className="text-muted">
+                                        {form.hover_icon ? 'Hover over icon to preview hover state' : 'No hover icon set'}
+                                    </small>
+                                </div>
+                            </div>
+                        </Col>
+
+                        <Col xs={6}>
+                            <FormLabel>Sort Order</FormLabel>
+                            <FormControl type="number" min="0" value={form.sort_order}
+                                onChange={e => set('sort_order', parseInt(e.target.value) || 0)} />
+                        </Col>
+
+                        <Col xs={6} className="d-flex flex-column justify-content-end pb-1">
+                            <Form.Check type="switch" label="Active"
+                                checked={!!form.is_active} onChange={e => set('is_active', e.target.checked)} />
+                        </Col>
+                    </Row>
+                </Modal.Body>
+
+                <Modal.Footer>
+                    <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+                    <Button variant="primary" onClick={handleSave} disabled={saving || !form.name}>
+                        {saving && <Spinner size="sm" className="me-1" />}
+                        {editTarget ? 'Update' : 'Create'}
+                    </Button>
+                </Modal.Footer>
             </Modal>
+
+            <DeleteConfirmationModal show={!!deleteId} onHide={() => setDeleteId(null)}
+                onConfirm={handleDelete} itemName="menu category type" />
         </>
     );
 }

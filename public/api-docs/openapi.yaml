@@ -108,9 +108,12 @@ info:
     | Endpoint | Filters |
     |----------|---------|
     | **Businesses** | `search`, `active_only`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
-    | **Muzzhub (Sellers)** | `search`, `active_only`, `category_id`, `type`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
-    | **Menu items (global)** | `business_id`, `category_id`, `search`, `is_available`, `page`, `per_page` |
-    | **Menu by business** | `category_id` |
+    | **Cuisines** | `admin=1` (paginated + muzzs_count), `search`, `per_page` |
+    | **Muzzhub (Sellers)** | `search`, `active_only`, `category_id`, `cuisine_id` (single or CSV), `type`, `city`, `country`, `delivery`, `featured`, `page`, `per_page` |
+    | **Menu items (global)** | `business_id`, `category_id`, `menu_category_type_id`, `search`, `is_available`, `page`, `per_page` |
+    | **Menu by business** | `category_id`, `menu_category_type_id` |
+    | **Menu by Muzzhub seller** | `category_id`, `menu_category_type_id` |
+    | **Menu Category Types** | `all=1` (full list), `active_only`, `search`, `per_page` |
     | **Muzzhub categories** | `active_only`, `search`, `all`, `per_page` |
 
     ### Admin Bearer Token (Sanctum)
@@ -149,6 +152,8 @@ tags:
     description: Business CRUD (admin)
   - name: Business Categories
     description: Category management
+  - name: Cuisines
+    description: Cuisine categories — list, create, update, delete, activate-all, dedup
   - name: Muzzhub
     description: Muzzhub sellers/listings and categories; link business_id for menu and order flow
   - name: Menu
@@ -1160,12 +1165,18 @@ paths:
           schema:
             type: boolean
           description: If true, only featured sellers
+        - name: cuisine_id
+          in: query
+          schema:
+            type: string
+          description: "Filter by cuisine ID — preferred over legacy `cuisine`. Single ID or comma-separated (cuisine_id=3,7) or repeated (cuisine_id[]=3&cuisine_id[]=7). OR logic: restaurant matches if it has ANY of the given cuisine IDs."
+          example: "3,7"
         - name: cuisine
           in: query
           schema:
             type: string
-          description: "Filter by cuisine — OR logic across multiple values. Pass comma-separated (cuisine=american,afghani) or repeated (cuisine[]=american&cuisine[]=afghani). A record matches if its cuisine contains ANY of the given values."
-          example: american,afghani
+          description: "Legacy text filter — filter by cuisine name (partial, OR logic). Use `cuisine_id` for exact matching. Pass comma-separated or repeated."
+          example: "Afghan,Italian"
         - name: page
           in: query
           schema:
@@ -1178,7 +1189,24 @@ paths:
             default: 15
       responses:
         "200":
-          description: Paginated Muzzhub listings (category and business relation eager-loaded)
+          description: Paginated Muzzhub listings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MuzzhubItem"
+                  current_page:
+                    type: integer
+                  last_page:
+                    type: integer
+                  per_page:
+                    type: integer
+                  total:
+                    type: integer
     post:
       tags:
         - Muzzhub
@@ -1188,53 +1216,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-                category_id:
-                  type: integer
-                  nullable: true
-                business_id:
-                  type: integer
-                  nullable: true
-                  description: Link to Business for menu and order flow
-                slug:
-                  type: string
-                type:
-                  type: string
-                cuisine:
-                  type: string
-                description:
-                  type: string
-                address:
-                  type: string
-                city:
-                  type: string
-                state:
-                  type: string
-                zip:
-                  type: string
-                country:
-                  type: string
-                phone:
-                  type: string
-                email:
-                  type: string
-                website:
-                  type: string
-                logo:
-                  type: string
-                cover_image:
-                  type: string
-                is_active:
-                  type: boolean
-                  default: true
+              $ref: "#/components/schemas/MuzzhubWrite"
       responses:
         "201":
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuzzhubItem"
 
   /ecommerce/muzzhub/{id}:
     get:
@@ -1265,25 +1254,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                category_id:
-                  type: integer
-                  nullable: true
-                business_id:
-                  type: integer
-                  nullable: true
-                slug:
-                  type: string
-                type:
-                  type: string
-                is_active:
-                  type: boolean
+              $ref: "#/components/schemas/MuzzhubWrite"
       responses:
         "200":
           description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuzzhubItem"
     delete:
       tags:
         - Muzzhub
@@ -1395,6 +1373,184 @@ paths:
       tags:
         - Muzzhub
       summary: Delete (soft) Muzzhub category
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/MessageOk"
+
+  # ── CUISINES ──────────────────────────────────────────────────────────────
+
+  /ecommerce/cuisines:
+    get:
+      tags:
+        - Cuisines
+      security: []
+      summary: List cuisines
+      description: |
+        **Public (no auth)** — returns active cuisines only (flat array), used for storefront filters and seller forms.
+
+        **Admin mode** — pass `?admin=1` with a Sanctum Bearer token to get paginated results with `muzzs_count` (number of restaurants per cuisine) and both active + inactive records.
+      parameters:
+        - name: admin
+          in: query
+          schema:
+            type: integer
+            enum: [0, 1]
+            default: 0
+          description: "Set to 1 for admin mode: paginated, all cuisines, includes muzzs_count"
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in cuisine name (admin mode only)
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
+          description: Items per page (admin mode only)
+      responses:
+        "200":
+          description: |
+            **Public:** flat array of active cuisines.
+            **Admin:** paginated object with `data[]`, `total`, `last_page`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - description: Public — flat array
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CuisinePublic"
+                  - description: Admin — paginated
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CuisineAdmin"
+                      current_page:
+                        type: integer
+                      last_page:
+                        type: integer
+                      total:
+                        type: integer
+              examples:
+                public:
+                  summary: Public response (active only)
+                  value:
+                    - id: 1
+                      name: Afghan
+                      slug: afghan
+                      icon: "flame"
+                      hover_icon: null
+                admin:
+                  summary: Admin response (paginated + counts)
+                  value:
+                    data:
+                      - id: 1
+                        name: Afghan
+                        slug: afghan
+                        icon: "flame"
+                        hover_icon: null
+                        is_active: true
+                        sort_order: 0
+                        muzzs_count: 12
+                    current_page: 1
+                    last_page: 4
+                    total: 52
+    post:
+      tags:
+        - Cuisines
+      summary: Create cuisine (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CuisineWrite"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CuisineAdmin"
+
+  /ecommerce/cuisines/activate-all:
+    put:
+      tags:
+        - Cuisines
+      summary: Activate all cuisines (admin)
+      description: Sets `is_active = true` on every cuisine. Returns count of updated records.
+      responses:
+        "200":
+          description: All cuisines activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "All cuisines activated. (23 updated)"
+
+  /ecommerce/cuisines/dedup:
+    post:
+      tags:
+        - Cuisines
+      summary: Merge duplicate cuisines (admin)
+      description: |
+        Finds cuisines with the same name (case-insensitive), keeps the one with the lowest ID,
+        re-attaches all restaurant pivot rows to the winner, and deletes duplicates.
+      responses:
+        "200":
+          description: Dedup complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Dedup complete. Removed 3 duplicate(s)."
+                  removed:
+                    type: integer
+                    example: 3
+
+  /ecommerce/cuisines/{id}:
+    patch:
+      tags:
+        - Cuisines
+      summary: Update cuisine (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CuisineWrite"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CuisineAdmin"
+    delete:
+      tags:
+        - Cuisines
+      summary: Delete cuisine (admin)
       parameters:
         - name: id
           in: path
@@ -1591,6 +1747,12 @@ paths:
           schema:
             type: integer
           description: Filter by menu_category_id (e.g. Starters, Mains)
+        - name: menu_category_type_id
+          in: query
+          schema:
+            type: integer
+          description: "Filter by menu category type ID (e.g. Beef=10, Vegan=21). Get IDs from GET /ecommerce/menu-category-types"
+          example: 10
         - name: search
           in: query
           schema:
@@ -1657,10 +1819,15 @@ paths:
           in: query
           schema:
             type: integer
-            description: menu_category_id filter
+          description: Filter by menu_category_id
+        - name: menu_category_type_id
+          in: query
+          schema:
+            type: integer
+          description: "Filter by menu category type ID (Beef, Vegan, etc). Get IDs from GET /ecommerce/menu-category-types"
       responses:
         "200":
-          description: List of menu items with menuCategory
+          description: List of menu items with menuCategory, menuCategoryType, modifierGroups
         "404":
           description: No business linked for this seller
 
@@ -1774,7 +1941,7 @@ paths:
         - Menu
       security: []
       summary: List menu items for a business
-      description: 'Optional category_id (menu_category_id) query param to filter by category.'
+      description: 'Filter by category_id (menu_category_id) or menu_category_type_id (Beef, Vegan, etc).'
       parameters:
         - name: businessId
           in: path
@@ -1786,9 +1953,14 @@ paths:
           schema:
             type: integer
           description: Filter by menu_category_id (optional)
+        - name: menu_category_type_id
+          in: query
+          schema:
+            type: integer
+          description: "Filter by menu category type ID (Beef, Vegan, etc). Get IDs from GET /ecommerce/menu-category-types"
       responses:
         "200":
-          description: List of menu items with menuCategory
+          description: List of menu items with menuCategory, menuCategoryType, modifierGroups
     post:
       tags:
         - Menu
@@ -7003,6 +7175,258 @@ components:
                 type: object
 
   schemas:
+
+    # ── CUISINES ──────────────────────────────────────────────────────────────
+
+    CuisinePublic:
+      type: object
+      description: Cuisine as returned to public (storefront / seller form)
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Afghan
+        slug:
+          type: string
+          example: afghan
+        icon:
+          type: string
+          nullable: true
+          description: Tabler icon name (e.g. "flame") or absolute image URL
+          example: "flame"
+        hover_icon:
+          type: string
+          nullable: true
+          description: Tabler icon name or image URL shown on hover
+          example: null
+
+    CuisineAdmin:
+      allOf:
+        - $ref: "#/components/schemas/CuisinePublic"
+        - type: object
+          properties:
+            is_active:
+              type: boolean
+              example: true
+            sort_order:
+              type: integer
+              example: 0
+            muzzs_count:
+              type: integer
+              description: Number of Muzzhub restaurants attached to this cuisine (admin index only)
+              example: 12
+
+    CuisineWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: Italian
+        icon:
+          type: string
+          nullable: true
+          description: Tabler icon name or image URL
+          example: "pizza"
+        hover_icon:
+          type: string
+          nullable: true
+          example: null
+        is_active:
+          type: boolean
+          default: true
+        sort_order:
+          type: integer
+          default: 0
+
+    # ── MUZZHUB ───────────────────────────────────────────────────────────────
+
+    MuzzhubCuisine:
+      type: object
+      description: Cuisine attached to a Muzzhub restaurant (pivot relation)
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        icon:
+          type: string
+          nullable: true
+        hover_icon:
+          type: string
+          nullable: true
+
+    MuzzhubItem:
+      type: object
+      description: Muzzhub restaurant/seller record with eager-loaded relations
+      properties:
+        id:
+          type: integer
+          example: 42
+        name:
+          type: string
+          example: "Karahi House"
+        slug:
+          type: string
+          example: "karahi-house"
+        type:
+          type: string
+          nullable: true
+          example: "restaurant"
+        cuisine:
+          type: string
+          nullable: true
+          description: Legacy plain-text cuisine field (being replaced by cuisines relation)
+          example: "Afghan, Pakistani"
+        cuisines:
+          type: array
+          description: Attached cuisine categories (pivot relation)
+          items:
+            $ref: "#/components/schemas/MuzzhubCuisine"
+          example:
+            - id: 1
+              name: Afghan
+              slug: afghan
+              icon: "flame"
+              hover_icon: null
+            - id: 3
+              name: Pakistani
+              slug: pakistani
+              icon: null
+              hover_icon: null
+        category:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            slug:
+              type: string
+            color:
+              type: string
+              nullable: true
+            icon:
+              type: string
+              nullable: true
+        business:
+          type: object
+          nullable: true
+          description: Linked Business record (enables menu and order flow)
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            slug:
+              type: string
+        address:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        zip:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+          example: "us"
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        logo:
+          type: string
+          nullable: true
+        cover_image:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        delivery:
+          type: boolean
+        featured:
+          type: boolean
+        rating:
+          type: number
+          format: float
+          nullable: true
+        review_count:
+          type: integer
+          nullable: true
+
+    MuzzhubWrite:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        category_id:
+          type: integer
+          nullable: true
+        business_id:
+          type: integer
+          nullable: true
+          description: Link to Business for menu and order flow
+        cuisine_ids:
+          type: array
+          items:
+            type: integer
+          description: Array of cuisine IDs to attach (replaces existing pivot entries on update)
+          example: [1, 3, 7]
+        slug:
+          type: string
+        type:
+          type: string
+          example: restaurant
+        description:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip:
+          type: string
+        country:
+          type: string
+          example: us
+        phone:
+          type: string
+        email:
+          type: string
+        website:
+          type: string
+        logo:
+          type: string
+        cover_image:
+          type: string
+        is_active:
+          type: boolean
+          default: true
+        delivery:
+          type: boolean
+          default: false
+        featured:
+          type: boolean
+          default: false
 
     # ── CART ─────────────────────────────────────────────────────────────────
 

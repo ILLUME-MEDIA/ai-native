@@ -246,31 +246,6 @@ Route::get('/run-migrations', function () {
     }
 })->name('run-migrations');
 
-// Migrate cuisines from muzzhub.cuisine text into cuisines table. GET /migrate-cuisines
-Route::get('/migrate-cuisines', function () {
-    if (function_exists('opcache_reset')) opcache_reset();
-    Artisan::call('cuisines:migrate');
-    return response()->json([
-        'success' => true,
-        'output'  => trim(Artisan::output()),
-    ]);
-})->name('migrate-cuisines');
-
-// Reset cuisines: truncate both tables then re-migrate. GET /reset-cuisines
-Route::get('/reset-cuisines', function () {
-    \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0');
-    \Illuminate\Support\Facades\DB::table('muzzhub_cuisine')->truncate();
-    \Illuminate\Support\Facades\DB::table('cuisines')->truncate();
-    \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
-    Artisan::call('cuisines:migrate');
-    return response()->json([
-        'success' => true,
-        'message' => 'Cuisines reset and re-migrated.',
-        'output'  => trim(Artisan::output()),
-    ]);
-})->name('reset-cuisines');
-
-// â”€â”€ POS OAuth Callbacks (Square + Clover redirect here after user authorizes) â”€â”€
 Route::get('/pos/square/callback', [PosController::class, 'squareCallback'])->name('pos.square.callback');
 Route::get('/pos/clover/callback', [PosController::class, 'cloverCallback'])->name('pos.clover.callback');
 

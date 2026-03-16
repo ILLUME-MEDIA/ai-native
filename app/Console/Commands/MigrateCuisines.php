@@ -37,8 +37,8 @@ class MigrateCuisines extends Command
         $totalAttached = 0;
 
         foreach ($rows as $muzzhub) {
-            // Split by comma, semicolon, slash, pipe, or ampersand
-            $parts = preg_split('/[,;\/|&]/', $muzzhub->cuisine);
+            // Split by comma, semicolon, slash, pipe, ampersand, tab, or newline
+            $parts = preg_split('/[,;\/|&\t\n\r]/', $muzzhub->cuisine);
             $parts = array_filter(array_map('trim', $parts));
 
             $cuisineIds = [];
