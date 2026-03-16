@@ -2112,6 +2112,33 @@ paths:
       responses:
         "200":
           description: List or paginated menu category types
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - description: Paginated (default)
+                    type: object
+                    properties:
+                      current_page:
+                        type: integer
+                        example: 1
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MenuCategoryType"
+                      last_page:
+                        type: integer
+                        example: 3
+                      per_page:
+                        type: integer
+                        example: 20
+                      total:
+                        type: integer
+                        example: 50
+                  - description: All (when ?all=1)
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MenuCategoryType"
     post:
       tags:
         - Menu
@@ -9089,6 +9116,45 @@ components:
         properties:
           currency: { type: string }
           amount:   { type: number }
+
+  MenuCategoryType:
+    type: object
+    properties:
+      id:
+        type: integer
+        example: 30
+      name:
+        type: string
+        example: Appetizers
+      slug:
+        type: string
+        example: appetizers
+      description:
+        type: string
+        nullable: true
+        example: Starters and small plates
+      icon:
+        type: string
+        nullable: true
+        description: Tabler icon name or image URL
+        example: null
+      hover_icon:
+        type: string
+        nullable: true
+        description: Tabler icon name or image URL for hover state
+        example: null
+      sort_order:
+        type: integer
+        example: 1
+      is_active:
+        type: boolean
+        example: true
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
 
   SE_TrackingInfo:
     type: object
