@@ -506,7 +506,21 @@ class DynamicEntityService
             return;
         }
 
+        // 1. Try is_searchable=true fields
         $searchable = $entity->fields->where('is_searchable', true)->pluck('column_name')->all();
+
+        // 2. Fall back to fields with string/text type
+        if (empty($searchable)) {
+            $searchable = $entity->fields
+                ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+                ->pluck('column_name')
+                ->all();
+        }
+
+        // 3. Final fallback: get varchar/text columns directly from DB schema
+        if (empty($searchable)) {
+            $searchable = $this->getTextColumnsFromSchema($entity->table_name);
+        }
 
         if (empty($searchable)) {
             return;
@@ -517,6 +531,52 @@ class DynamicEntityService
                 $inner->orWhere($col, 'like', "%{$term}%");
             }
         });
+    }
+
+    protected function getTextColumnsFromSchema(string $tableName): array
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $rows = DB::select(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                 AND DATA_TYPE IN ('varchar','char','text','tinytext','mediumtext','longtext')",
+                [$database, $tableName]
+            );
+            // Handle both uppercase (COLUMN_NAME) and lowercase (column_name) depending on PDO config
+            $cols = [];
+            foreach ($rows as $row) {
+                $arr = (array) $row;
+                $col = $arr['COLUMN_NAME'] ?? $arr['column_name'] ?? null;
+                if ($col) $cols[] = $col;
+            }
+            return $cols;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Debug: return which columns are being searched for a given entity + term.
+     * Call via GET /api/entities/{entity}?search=term&debug_search=1
+     */
+    public function debugSearch(SectionEntity $entity, string $term): array
+    {
+        $step1 = $entity->fields->where('is_searchable', true)->pluck('column_name')->all();
+        $step2 = $entity->fields
+            ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+            ->pluck('column_name')
+            ->all();
+        $step3 = $this->getTextColumnsFromSchema($entity->table_name);
+
+        return [
+            'search_term'         => $term,
+            'fields_count'        => $entity->fields->count(),
+            'step1_is_searchable' => $step1,
+            'step2_type_fallback' => $step2,
+            'step3_db_schema'     => $step3,
+            'final_columns'       => !empty($step1) ? $step1 : (!empty($step2) ? $step2 : $step3),
+        ];
     }
 
     protected function applySorting(Builder $query, SectionEntity $entity, ?string $sort, ?string $direction): void

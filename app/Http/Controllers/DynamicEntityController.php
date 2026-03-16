@@ -28,6 +28,13 @@ class DynamicEntityController extends Controller
     {
         $resolved = $this->resolveEntityOrFail($entity);
 
+        // Debug: ?debug_search=1 returns which columns will be searched
+        if ($request->boolean('debug_search') && $request->filled('search')) {
+            return response()->json(
+                $this->service->debugSearch($resolved, $request->string('search')->toString())
+            );
+        }
+
         try {
             $paginator = $this->service->index($resolved, $request, ['actor' => 'user']);
             return response()->json($paginator);
