@@ -117,10 +117,11 @@ const Scrapers = () => {
     const [playlists, setPlaylists] = useState([]);
     const [platforms, setPlatforms] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [syncing, setSyncing] = useState(false);
-    const [enriching, setEnriching] = useState(false);
-    const [enrichingIds, setEnrichingIds] = useState(new Set()); // tracks which playlist IDs are enriching
-    const [resetting, setResetting] = useState(false);
+    const [addingSyncing, setAddingSyncing] = useState(false);  // add playlist form submit
+    const [syncingIds, setSyncingIds] = useState(new Set());    // per-playlist sync loading
+    const [enrichingIds, setEnrichingIds] = useState(new Set()); // per-playlist enrich HTTP call (clears fast)
+    const [pollingIds, setPollingIds] = useState(new Set());     // per-playlist background poll indicator
+    const [resettingIds, setResettingIds] = useState(new Set()); // per-playlist delete loading
     const enrichPollRef = useRef(null);
 
     /* ─── Videos DataTable state ─── */
@@ -201,6 +202,8 @@ const Scrapers = () => {
     /* ─── Load playlists + platforms once ─── */
     useEffect(() => {
         loadInitial();
+        // Cleanup polling on unmount
+        return () => { if (enrichPollRef.current) clearInterval(enrichPollRef.current); };
     }, []);
 
     /* ─── Reload videos when filters/sort change ─── */
@@ -273,13 +276,7 @@ const Scrapers = () => {
         }
     }, [rowsPerPage, sortBy, sortDir, search, filterPlaylist, filterStatus, filterTag, filterGenre]);
 
-    /* ─── Auto-load all remaining pages (no scroll needed) ─── */
-    useEffect(() => {
-        if (!videosLoading && !loadingMore && pagination.current_page < pagination.last_page) {
-            loadVideos(pagination.current_page + 1, true);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videosLoading, loadingMore]);
+    /* ─── More pages load on scroll (handleTableScroll) ─── */
 
     /* ─── Collect unique tag/genre options from loaded videos ─── */
     useEffect(() => {
@@ -298,24 +295,23 @@ const Scrapers = () => {
         loadVideos(1);
     };
 
-    /* ─── Start polling to refresh videos while enrichment is in background ─── */
+    /* ─── Start background polling after enrich job is queued ─── */
     const startEnrichPolling = (playlistId) => {
-        setEnrichingIds(prev => new Set([...prev, playlistId]));
+        // pollingIds = visual indicator only (spinner next to playlist name), does NOT disable button
+        setPollingIds(prev => new Set([...prev, playlistId]));
 
-        // Clear any existing poll
         if (enrichPollRef.current) clearInterval(enrichPollRef.current);
 
         let ticks = 0;
         enrichPollRef.current = setInterval(async () => {
             ticks++;
-            loadVideos(1); // refresh video list to show updated stats/tags
+            loadVideos(1);
 
-            // Stop polling after 3 minutes (18 × 10s) regardless
             if (ticks >= 18) {
                 clearInterval(enrichPollRef.current);
-                setEnrichingIds(prev => { const n = new Set(prev); n.delete(playlistId); return n; });
+                setPollingIds(prev => { const n = new Set(prev); n.delete(playlistId); return n; });
             }
-        }, 10000); // poll every 10 seconds
+        }, 10000);
     };
 
     /* ─── Search with debounce ─── */
@@ -386,7 +382,7 @@ const Scrapers = () => {
 
     const handleAddPlaylist = async (e) => {
         e.preventDefault();
-        setSyncing(true);
+        setAddingSyncing(true);
         try {
             const payload = { playlist_url: playlistUrl };
             const parsedMax = parseInt(maxResults, 10);
@@ -428,17 +424,16 @@ const Scrapers = () => {
         } catch (error) {
             alert('Failed to add playlist: ' + (error.response?.data?.error || error.message));
         } finally {
-            setSyncing(false);
+            setAddingSyncing(false);
         }
     };
 
     const handleSync = async (id) => {
-        setSyncing(true);
+        setSyncingIds(prev => new Set([...prev, id]));
         try {
             const pl = playlists.find(p => p.id === id);
             const res = await axios.post(`/api/ai/scrapers/${id}/sync`);
             refreshAll();
-            // Start polling so enriched data populates in background
             if (res.data.enriching && pl?.playlist_id) {
                 startEnrichPolling(pl.playlist_id);
             }
@@ -446,16 +441,16 @@ const Scrapers = () => {
         } catch (error) {
             alert('Sync failed: ' + (error.response?.data?.error || error.message));
         } finally {
-            setSyncing(false);
+            setSyncingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
         }
     };
 
     const handleEnrich = async (id) => {
         const pl = playlists.find(p => p.id === id);
-        setEnriching(true);
+        // enrichingIds = disables button during HTTP call only (clears in finally — fast)
+        setEnrichingIds(prev => new Set([...prev, id]));
         try {
             const res = await axios.post(`/api/ai/scrapers/${id}/enrich`);
-            // Job is queued — start polling so UI updates as data arrives
             if (pl?.playlist_id) {
                 startEnrichPolling(pl.playlist_id);
             }
@@ -463,13 +458,14 @@ const Scrapers = () => {
         } catch (error) {
             alert('Enrich failed: ' + (error.response?.data?.error || error.message));
         } finally {
-            setEnriching(false);
+            // Clear button loading state immediately — background work tracked via pollingIds
+            setEnrichingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
         }
     };
 
     const handleReset = async (pl) => {
         if (!window.confirm(`Remove playlist "${pl.title || pl.playlist_id}" and all its videos? This cannot be undone.`)) return;
-        setResetting(true);
+        setResettingIds(prev => new Set([...prev, pl.id]));
         try {
             await axios.delete(`/api/ai/scrapers/${pl.id}`);
             alert('Playlist removed.');
@@ -477,7 +473,7 @@ const Scrapers = () => {
         } catch (error) {
             alert('Failed to remove: ' + (error.response?.data?.error || error.message));
         } finally {
-            setResetting(false);
+            setResettingIds(prev => { const n = new Set(prev); n.delete(pl.id); return n; });
         }
     };
 
@@ -528,7 +524,7 @@ const Scrapers = () => {
             alert(response.data.message || `Push complete: ${details.success || 0} succeeded, ${details.failed || 0} failed.`);
             setShowPushModal(false);
             setSelectedVideoIds(new Set());
-            loadVideos();
+            refreshAll();
         } catch (error) {
             alert('Push failed: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -1109,11 +1105,25 @@ const Scrapers = () => {
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
                                                     <div className="d-flex flex-wrap gap-1">
-                                                        <Button variant="soft-success" size="sm" onClick={(e) => { e.stopPropagation(); handleEnrich(pl.id); }} disabled={enriching || enrichingIds.has(pl.playlist_id)}
+                                                        {/* Sync button — per-playlist loading */}
+                                                        <Button variant="soft-warning" size="sm" onClick={(e) => { e.stopPropagation(); handleSync(pl.id); }} disabled={syncingIds.has(pl.id)}
+                                                            title="Re-fetch playlist from YouTube">
+                                                            {syncingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <Icon icon="refresh-cw" className="icon-xs" />}
+                                                        </Button>
+                                                        {/* Enrich button — disabled only during HTTP call, NOT during background polling */}
+                                                        <Button variant="soft-success" size="sm" onClick={(e) => { e.stopPropagation(); handleEnrich(pl.id); }} disabled={enrichingIds.has(pl.id)}
                                                             title="Fetch views, likes, comments from YouTube API">
-                                                            {enrichingIds.has(pl.playlist_id)
-                                                                ? <><Spinner size="sm" className="me-1" />...</>
-                                                                : <><Icon icon="bar-chart" className="icon-xs" /> Enrich</>}
+                                                            {enrichingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <>
+                                                                    <Icon icon="bar-chart" className="icon-xs" /> Enrich
+                                                                    {pollingIds.has(pl.playlist_id) && (
+                                                                        <Spinner animation="border" size="sm" style={{width:'8px',height:'8px',marginLeft:'4px'}} title="Enrichment running in background..." />
+                                                                    )}
+                                                                  </>
+                                                            }
                                                         </Button>
                                                         <Button variant="soft-secondary" size="sm"
                                                             onClick={(e) => { e.stopPropagation(); setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
@@ -1127,8 +1137,10 @@ const Scrapers = () => {
                                                         <Button variant="soft-info" size="sm" onClick={(e) => { e.stopPropagation(); openPushModal(pl); }} disabled={pushing}>
                                                             <Icon icon="send" className="icon-xs" /> Push
                                                         </Button>
-                                                        <Button variant="soft-danger" size="sm" onClick={(e) => { e.stopPropagation(); handleReset(pl); }} disabled={resetting} title="Remove playlist">
-                                                            <Icon icon="trash" className="icon-xs" />
+                                                        <Button variant="soft-danger" size="sm" onClick={(e) => { e.stopPropagation(); handleReset(pl); }} disabled={resettingIds.has(pl.id)} title="Remove playlist">
+                                                            {resettingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <Icon icon="trash" className="icon-xs" />}
                                                         </Button>
                                                     </div>
                                                 </td>
@@ -1408,8 +1420,8 @@ const Scrapers = () => {
 
                         <div className="text-end">
                             <Button variant="secondary" className="me-1" onClick={() => setShowModal(false)}>Cancel</Button>
-                            <Button variant="primary" type="submit" disabled={syncing}>
-                                {syncing ? 'Fetching...' : 'Add & Sync'}
+                            <Button variant="primary" type="submit" disabled={addingSyncing}>
+                                {addingSyncing ? <><Spinner animation="border" size="sm" className="me-1" style={{width:'12px',height:'12px'}} />Fetching...</> : 'Add & Sync'}
                             </Button>
                         </div>
                     </Form>
