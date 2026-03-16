@@ -191,6 +191,14 @@ Route::get('/run-migrations', function () {
             'AppSecretsSeeder',
         ];
 
+        // Migrate cuisines from muzzhub.cuisine text → cuisines table + pivot
+        try {
+            Artisan::call('cuisines:migrate');
+            $seederOutput['cuisines:migrate'] = trim(Artisan::output()) ?: 'Done';
+        } catch (\Throwable $e) {
+            $seederErrors['cuisines:migrate'] = $e->getMessage();
+        }
+
         foreach ($seeders as $seeder) {
             try {
                 Artisan::call('db:seed', ['--class' => $seeder, '--force' => true]);
@@ -237,6 +245,16 @@ Route::get('/run-migrations', function () {
         ], 500);
     }
 })->name('run-migrations');
+
+// Migrate cuisines from muzzhub.cuisine text into cuisines table. GET /migrate-cuisines
+Route::get('/migrate-cuisines', function () {
+    if (function_exists('opcache_reset')) opcache_reset();
+    Artisan::call('cuisines:migrate');
+    return response()->json([
+        'success' => true,
+        'output'  => trim(Artisan::output()),
+    ]);
+})->name('migrate-cuisines');
 
 // â”€â”€ POS OAuth Callbacks (Square + Clover redirect here after user authorizes) â”€â”€
 Route::get('/pos/square/callback', [PosController::class, 'squareCallback'])->name('pos.square.callback');

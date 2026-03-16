@@ -13,7 +13,7 @@ class MuzzhubController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug'])->orderBy('name');
+        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon'])->orderBy('name');
 
         if ($request->filled('search'))        $q->where('name', 'like', '%' . $request->search . '%');
         if ($request->boolean('active_only'))  $q->where('is_active', true);
@@ -24,18 +24,28 @@ class MuzzhubController extends Controller
         if ($request->boolean('featured'))     $q->where('featured', true);
         if ($request->filled('category_id'))   $q->where('category_id', $request->category_id);
 
-        // cuisine filter — supports multiple values (CSV string or array), OR logic
-        $cuisineRaw = $request->input('cuisine');
-        if (!empty($cuisineRaw)) {
-            $cuisines = is_array($cuisineRaw)
-                ? $cuisineRaw
-                : array_map('trim', explode(',', $cuisineRaw));
+        // cuisine filter — supports cuisine_id (single or CSV/array) or legacy cuisine name string
+        if ($request->filled('cuisine_id')) {
+            $ids = is_array($request->cuisine_id)
+                ? $request->cuisine_id
+                : array_map('trim', explode(',', $request->cuisine_id));
+            $ids = array_filter($ids);
+            if (!empty($ids)) {
+                $q->whereHas('cuisines', fn($sub) => $sub->whereIn('cuisines.id', $ids));
+            }
+        } elseif ($request->filled('cuisine')) {
+            // Legacy text filter (backwards-compatible)
+            $cuisines = is_array($request->cuisine)
+                ? $request->cuisine
+                : array_map('trim', explode(',', $request->cuisine));
             $cuisines = array_filter($cuisines);
             if (!empty($cuisines)) {
-                $q->where(function ($sub) use ($cuisines) {
-                    foreach ($cuisines as $c) {
-                        $sub->orWhere('cuisine', 'like', '%' . $c . '%');
-                    }
+                $q->whereHas('cuisines', function ($sub) use ($cuisines) {
+                    $sub->where(function ($inner) use ($cuisines) {
+                        foreach ($cuisines as $c) {
+                            $inner->orWhere('cuisines.name', 'like', '%' . $c . '%');
+                        }
+                    });
                 });
             }
         }
@@ -45,7 +55,7 @@ class MuzzhubController extends Controller
 
     public function show(Muzzhub $muzzhub): JsonResponse
     {
-        return response()->json($muzzhub->load(['category:id,name,slug,color,icon', 'business']));
+        return response()->json($muzzhub->load(['category:id,name,slug,color,icon', 'business', 'cuisines:id,name,slug,icon']));
     }
 
     public function store(Request $request): JsonResponse
@@ -53,8 +63,11 @@ class MuzzhubController extends Controller
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name']);
         $record = Muzzhub::create($data);
+        if ($request->has('cuisine_ids')) {
+            $record->cuisines()->sync(array_filter((array) $request->cuisine_ids));
+        }
         $this->syncAutoAcceptToBusiness($record);
-        return response()->json($record, 201);
+        return response()->json($record->load('cuisines:id,name,slug,icon'), 201);
     }
 
     public function update(Request $request, Muzzhub $muzzhub): JsonResponse
@@ -64,8 +77,11 @@ class MuzzhubController extends Controller
             $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name'] ?? $muzzhub->name, $muzzhub->id);
         }
         $muzzhub->update($data);
+        if ($request->has('cuisine_ids')) {
+            $muzzhub->cuisines()->sync(array_filter((array) $request->cuisine_ids));
+        }
         $this->syncAutoAcceptToBusiness($muzzhub->fresh());
-        return response()->json($muzzhub);
+        return response()->json($muzzhub->load('cuisines:id,name,slug,icon'));
     }
 
     /**

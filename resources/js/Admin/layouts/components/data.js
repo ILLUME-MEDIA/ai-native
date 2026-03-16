@@ -47,6 +47,10 @@ export const menuItems = [{
       slug: "pages:apps-ecommerce-muzzhub-categories",
       label: "Seller Categories"
     }, {
+      url: "/apps/ecommerce/cuisines",
+      slug: "pages:apps-ecommerce-cuisines",
+      label: "Cuisines"
+    }, {
       url: "/apps/ecommerce/menu-category-types",
       slug: "pages:apps-ecommerce-menu-category-types",
       label: "Menu Category Types"

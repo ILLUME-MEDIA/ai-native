@@ -183,6 +183,9 @@ export const routes = [
     path: '/apps/ecommerce/muzzhub-categories',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/muzzhub-categories'))
   }, {
+    path: '/apps/ecommerce/cuisines',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/cuisines'))
+  }, {
     path: '/apps/ecommerce/deliveries',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/deliveries'))
   }, {

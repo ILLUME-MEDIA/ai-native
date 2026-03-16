@@ -39,7 +39,6 @@ const TEXT_FEATURES = [
   { key: 'prayer',          label: 'Prayer Facilities' },
   { key: 'restrooms',       label: 'Restrooms' },
   { key: 'credit_cards',    label: 'Credit Cards' },
-  { key: 'amenities',       label: 'Amenities' },
   { key: 'alcohol_options', label: 'Alcohol Options' },
   { key: 'parking',         label: 'Parking' },
   { key: 'transit',         label: 'Transit' },
@@ -228,7 +227,25 @@ export default function SellerDetailsPage() {
                 <InfoRow icon="phone"   value={biz.phone || biz.mobile_phone} />
                 <InfoRow icon="mail"    value={biz.email} />
                 <InfoRow icon="world"   value={biz.website} />
-                {biz.cuisine && <InfoRow icon="tools-kitchen-2" value={biz.cuisine} />}
+
+                {/* Cuisines from pivot relation */}
+                {Array.isArray(biz.cuisines) && biz.cuisines.length > 0 && (
+                  <div className="d-flex align-items-start gap-2 mb-2">
+                    <Icon icon="tools-kitchen-2" size={15} className="text-muted mt-1 flex-shrink-0" />
+                    <div className="d-flex flex-wrap gap-1">
+                      {biz.cuisines.map(c => (
+                        <Badge key={c.id} bg="light" text="dark" className="fw-normal border">
+                          {c.icon && <Icon icon={c.icon} size={11} className="me-1" />}
+                          {c.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* fallback: plain text cuisine if pivot empty */}
+                {(!Array.isArray(biz.cuisines) || biz.cuisines.length === 0) && biz.cuisine && (
+                  <InfoRow icon="tools-kitchen-2" value={biz.cuisine} />
+                )}
 
                 {biz.description && (
                   <p className="text-muted small mt-2 border-top pt-2 mb-2">{biz.description}</p>

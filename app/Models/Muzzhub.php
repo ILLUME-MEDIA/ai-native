@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Muzzhub extends Model
 {
@@ -146,5 +147,10 @@ class Muzzhub extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function cuisines(): BelongsToMany
+    {
+        return $this->belongsToMany(Cuisine::class, 'muzzhub_cuisine', 'muzzhub_id', 'cuisine_id');
     }
 }

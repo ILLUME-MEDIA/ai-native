@@ -13,6 +13,7 @@ use App\Http\Controllers\Admin\CaseStudyController as AdminCaseStudyController;
 use App\Http\Controllers\Ecommerce\BusinessController;
 use App\Http\Controllers\Ecommerce\MuzzhubController;
 use App\Http\Controllers\Ecommerce\MuzzhubCategoryController;
+use App\Http\Controllers\Ecommerce\CuisineController;
 use App\Http\Controllers\Ecommerce\MenuController;
 use App\Http\Controllers\Ecommerce\MenuItemModifierController;
 use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
@@ -185,6 +186,12 @@ Route::prefix('admin/design-system')->group(function () {
 });
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
+// ── Artisan Runner (admin only) ────────────────────────────────────────────
+Route::prefix('admin/artisan')->group(function () {
+    Route::post('migrate',          [\App\Http\Controllers\Admin\ArtisanController::class, 'migrate']);
+    Route::post('cuisines-migrate', [\App\Http\Controllers\Admin\ArtisanController::class, 'cuisinesMigrate']);
+});
+
 Route::prefix('admin/app-secrets')->group(function () {
     Route::get('/',                         [AppSecretsController::class, 'index']);
     Route::post('/',                        [AppSecretsController::class, 'store']);
@@ -263,6 +270,12 @@ Route::group([], function () {
         Route::post('muzzhub-categories',                            [MuzzhubCategoryController::class, 'store']);
         Route::patch('muzzhub-categories/{muzzhubCategory}',         [MuzzhubCategoryController::class, 'update']);
         Route::delete('muzzhub-categories/{muzzhubCategory}',        [MuzzhubCategoryController::class, 'destroy']);
+
+        // Cuisines admin (full CRUD + admin list)
+        Route::get('cuisines',                  [CuisineController::class, 'adminIndex']);
+        Route::post('cuisines',                 [CuisineController::class, 'store']);
+        Route::patch('cuisines/{cuisine}',      [CuisineController::class, 'update']);
+        Route::delete('cuisines/{cuisine}',     [CuisineController::class, 'destroy']);
 
         // Business write (admin)
         Route::post('businesses',                   [BusinessController::class, 'store']);
@@ -526,6 +539,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('muzzhub',                               [MuzzhubController::class, 'index']);
     Route::get('muzzhub/{muzzhub}',                     [MuzzhubController::class, 'show']);
     Route::get('muzzhub-categories',                    [MuzzhubCategoryController::class, 'index']);
+    Route::get('cuisines',                              [CuisineController::class, 'index']);
     Route::get('muzzhub/{muzzhub}/menu-categories',     [MenuController::class, 'muzzhubCategories']);
     Route::get('muzzhub/{muzzhub}/menu-items',          [MenuController::class, 'muzzhubItems']);
 

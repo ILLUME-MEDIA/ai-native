@@ -112,9 +112,11 @@ export default function SellersPage() {
   const navigate                    = useNavigate();
   const [sorting, setSorting]       = useState([]);
   const [activeTab, setActiveTab]   = useState('basic');
-  const [categories, setCategories] = useState([]);
-  const [perPage, setPerPage]       = useState(25);
-  const [creatingBiz, setCreatingBiz] = useState(false);
+  const [categories, setCategories]     = useState([]);
+  const [cuisinesList, setCuisinesList] = useState([]);
+  const [selectedCuisines, setSelectedCuisines] = useState([]);
+  const [perPage, setPerPage]           = useState(25);
+  const [creatingBiz, setCreatingBiz]   = useState(false);
 
   const toSlug = (str) => str.toLowerCase().trim()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -152,13 +154,22 @@ export default function SellersPage() {
   useEffect(() => {
     axios.get('/api/ecommerce/muzzhub-categories?all=1&active_only=1')
       .then(r => setCategories(Array.isArray(r.data) ? r.data : (r.data.data || [])));
+    axios.get('/api/ecommerce/cuisines')
+      .then(r => setCuisinesList(Array.isArray(r.data) ? r.data : (r.data.data || [])));
   }, []);
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
+  const toggleCuisine = (id) => {
+    setSelectedCuisines(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
   const openAdd = () => {
     setEditBiz(null);
     setForm(emptyForm);
+    setSelectedCuisines([]);
     setSlugLocked(false);
     setActiveTab('basic');
     setShowModal(true);
@@ -179,6 +190,7 @@ export default function SellersPage() {
       f[k] = val;
     });
     setForm(f);
+    setSelectedCuisines(Array.isArray(biz.cuisines) ? biz.cuisines.map(c => c.id) : []);
     setSlugLocked(true);
     setActiveTab('basic');
     setShowModal(true);
@@ -186,9 +198,10 @@ export default function SellersPage() {
 
   const handleSave = () => {
     setSaving(true);
+    const payload = { ...form, cuisine_ids: selectedCuisines };
     const req = editBiz
-      ? axios.patch(`/api/ecommerce/muzzhub/${editBiz.id}`, form)
-      : axios.post('/api/ecommerce/muzzhub', form);
+      ? axios.patch(`/api/ecommerce/muzzhub/${editBiz.id}`, payload)
+      : axios.post('/api/ecommerce/muzzhub', payload);
     req
       .then(() => {
         showToast(editBiz ? 'Updated successfully!' : 'Created successfully!');
@@ -496,9 +509,36 @@ export default function SellersPage() {
                     <FormControl value={form.type} onChange={e => set('type', e.target.value)} placeholder="e.g. restaurant, store, service" />
                   </Col>
 
-                  <Col md={4}>
-                    <FormLabel>Cuisine / Specialty</FormLabel>
-                    <FormControl value={form.cuisine} onChange={e => set('cuisine', e.target.value)} placeholder="e.g. Pakistani, Indian, Halal..." />
+                  <Col md={12}>
+                    <FormLabel>
+                      Cuisines
+                      {selectedCuisines.length > 0 && (
+                        <span className="badge bg-primary ms-2">{selectedCuisines.length} selected</span>
+                      )}
+                    </FormLabel>
+                    {cuisinesList.length === 0 ? (
+                      <small className="text-muted d-block">
+                        No cuisines found.{' '}
+                        <a href="/admin/apps/ecommerce/cuisines" target="_blank" rel="noreferrer">Add cuisines first →</a>
+                      </small>
+                    ) : (
+                      <div className="d-flex flex-wrap gap-2">
+                        {cuisinesList.map(c => {
+                          const active = selectedCuisines.includes(c.id);
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => toggleCuisine(c.id)}
+                              className={`btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}`}
+                              style={{ borderRadius: 20, fontSize: 12 }}
+                            >
+                              {c.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </Col>
 
                   <Col md={2}>
