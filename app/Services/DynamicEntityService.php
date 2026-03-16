@@ -596,19 +596,21 @@ class DynamicEntityService
 
     /**
      * Resolve the underlying Eloquent model for an entity.
-     * Detects the real primary key so tables that use e.g. 'num' instead of 'id' work correctly.
+     * Detects the real primary key and whether it is auto-increment.
      */
     protected function resolveModelClass(SectionEntity $entity)
     {
-        $pk = $this->detectPrimaryKey($entity->table_name);
+        [$pk, $incrementing] = $this->detectPrimaryKeyInfo($entity->table_name);
 
-        $instance = new class($pk) extends \Illuminate\Database\Eloquent\Model {
+        $instance = new class($pk, $incrementing) extends \Illuminate\Database\Eloquent\Model {
             protected $guarded = [];
             protected $primaryKey;
+            public $incrementing;
 
-            public function __construct(string $pk = 'id', array $attributes = [])
+            public function __construct(string $pk = 'id', bool $inc = true, array $attributes = [])
             {
-                $this->primaryKey = $pk;
+                $this->primaryKey  = $pk;
+                $this->incrementing = $inc;
                 parent::__construct($attributes);
             }
         };
@@ -626,6 +628,33 @@ class DynamicEntityService
     }
 
     /**
+     * Detect PK column name + whether it is AUTO_INCREMENT.
+     * Returns [columnName, isAutoIncrement].
+     */
+    protected function detectPrimaryKeyInfo(string $tableName): array
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $row = DB::selectOne(
+                "SELECT c.COLUMN_NAME, c.EXTRA
+                 FROM information_schema.KEY_COLUMN_USAGE k
+                 JOIN information_schema.COLUMNS c
+                   ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
+                  AND c.TABLE_NAME  = k.TABLE_NAME
+                  AND c.COLUMN_NAME = k.COLUMN_NAME
+                 WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ? AND k.CONSTRAINT_NAME = 'PRIMARY'
+                 ORDER BY k.ORDINAL_POSITION LIMIT 1",
+                [$database, $tableName]
+            );
+            $col = $row ? ($row->COLUMN_NAME ?? $row->column_name ?? 'id') : 'id';
+            $inc = $row ? str_contains(strtolower($row->EXTRA ?? $row->extra ?? ''), 'auto_increment') : true;
+            return [$col, $inc];
+        } catch (\Exception $e) {
+            return ['id', true];
+        }
+    }
+
+    /**
      * Detect the actual primary key column of a table.
      * Falls back to 'id' if the table has no PRIMARY constraint or on any error.
      */
@@ -639,7 +668,7 @@ class DynamicEntityService
                  ORDER BY ORDINAL_POSITION LIMIT 1",
                 [$database, $tableName]
             );
-            return $pk ? $pk->COLUMN_NAME : 'id';
+            return $pk ? ($pk->COLUMN_NAME ?? $pk->column_name ?? 'id') : 'id';
         } catch (\Exception $e) {
             return 'id';
         }
