@@ -566,12 +566,17 @@ class DynamicEntityService
      */
     public function debugSearch(SectionEntity $entity, string $term): array
     {
-        $step1 = $entity->fields->where('is_searchable', true)->pluck('column_name')->all();
+        $step1 = $entity->fields
+            ->where('is_searchable', true)
+            ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+            ->pluck('column_name')
+            ->all();
         $step2 = $entity->fields
             ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
             ->pluck('column_name')
             ->all();
         $step3 = $this->getTextColumnsFromSchema($entity->table_name);
+        $final = !empty($step1) ? $step1 : (!empty($step2) ? $step2 : $step3);
 
         return [
             'search_term'         => $term,
@@ -579,7 +584,8 @@ class DynamicEntityService
             'step1_is_searchable' => $step1,
             'step2_type_fallback' => $step2,
             'step3_db_schema'     => $step3,
-            'final_columns'       => !empty($step1) ? $step1 : (!empty($step2) ? $step2 : $step3),
+            'final_columns'       => $final,
+            'final_count'         => count($final),
         ];
     }
 
