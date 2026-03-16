@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Button, Table, Modal, Form, Badge, ProgressBar } from 'react-bootstrap';
+import { Row, Col, Card, Button, Table, Modal, Form, Badge, ProgressBar, Spinner } from 'react-bootstrap';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
@@ -9,6 +9,10 @@ const Duties = () => {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [editDuty, setEditDuty] = useState(null);
+    const [showResultModal, setShowResultModal] = useState(false);
+    const [resultDuty, setResultDuty] = useState(null);
+    const [loadingResult, setLoadingResult] = useState(false);
+    const [executingIds, setExecutingIds] = useState(new Set()); // per-duty loading state
     const [formData, setFormData] = useState({
         name: '',
         description: '',
@@ -29,9 +33,9 @@ const Duties = () => {
         try {
             const response = await axios.get('/api/ai/duties');
             setDuties(response.data);
-            setLoading(false);
         } catch (error) {
             console.error('Error fetching duties:', error);
+        } finally {
             setLoading(false);
         }
     };
@@ -108,18 +112,38 @@ const Duties = () => {
         }
     };
 
-    const handleExecuteNow = async (id) => {
+    const handleExecuteNow = async (dutyOrId) => {
+        const id = typeof dutyOrId === 'object' ? dutyOrId.id : dutyOrId;
+
+        // Mark as executing (shows spinner on button)
+        setExecutingIds(prev => new Set([...prev, id]));
+
         try {
             const res = await axios.post(`/api/ai/duties/${id}/execute-now`);
-            if (res.data?.status === 'error') {
-                alert('Duty failed: ' + (res.data.error || 'Unknown error'));
-            } else {
-                alert('Duty execution completed.');
-            }
-            fetchDuties();
+            await fetchDuties();
+
+            // Auto-open result modal with fresh data instead of alert
+            const freshDuty = (await axios.get(`/api/ai/duties/${id}`)).data;
+            setResultDuty(freshDuty);
+            setShowResultModal(true);
         } catch (error) {
             console.error('Error executing duty:', error);
             alert('Failed to trigger duty: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setExecutingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
+        }
+    };
+
+    const handleViewResult = async (duty) => {
+        setLoadingResult(true);
+        setShowResultModal(true);
+        try {
+            const { data } = await axios.get(`/api/ai/duties/${duty.id}`);
+            setResultDuty(data);
+        } catch (e) {
+            setResultDuty(duty);
+        } finally {
+            setLoadingResult(false);
         }
     };
 
@@ -151,8 +175,9 @@ const Duties = () => {
                                         <th>Name</th>
                                         <th>Schedule</th>
                                         <th>Status</th>
-                                        <th>Next Execution</th>
-                                        <th>Success/Total</th>
+                                        <th>Last Run</th>
+                                        <th>Next Run</th>
+                                        <th>✓ / ✗ / Total</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -162,6 +187,12 @@ const Duties = () => {
                                             <td>
                                                 <div className="font-weight-bold">{duty.name}</div>
                                                 <small className="text-muted">{duty.description}</small>
+                                                {duty.error_message && (
+                                                    <div className="text-danger small mt-1" style={{ maxWidth: 300, whiteSpace: 'normal' }}>
+                                                        <Icon icon="alert-circle" className="icon-xs me-1" />
+                                                        {duty.error_message.substring(0, 120)}{duty.error_message.length > 120 ? '…' : ''}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td>
                                                 <Badge bg="soft-secondary" className="text-secondary">
@@ -169,14 +200,26 @@ const Duties = () => {
                                                 </Badge>
                                             </td>
                                             <td>{getStatusBadge(duty.status)}</td>
-                                            <td>{duty.next_execution_at ? new Date(duty.next_execution_at).toLocaleString() : 'N/A'}</td>
                                             <td>
-                                                <div className="d-flex align-items-center">
-                                                    <span className="me-2">{duty.success_count}/{duty.execution_count}</span>
+                                                <small className="text-muted">
+                                                    {duty.last_executed_at ? new Date(duty.last_executed_at).toLocaleString() : '—'}
+                                                </small>
+                                            </td>
+                                            <td>
+                                                <small>{duty.next_execution_at ? new Date(duty.next_execution_at).toLocaleString() : 'N/A'}</small>
+                                            </td>
+                                            <td>
+                                                <div className="d-flex align-items-center gap-1">
+                                                    <span className="text-success small">{duty.success_count}</span>
+                                                    <span className="text-muted small">/</span>
+                                                    <span className="text-danger small">{duty.failure_count ?? 0}</span>
+                                                    <span className="text-muted small">/</span>
+                                                    <span className="text-muted small">{duty.execution_count}</span>
                                                     <ProgressBar
                                                         variant="success"
                                                         now={duty.execution_count > 0 ? (duty.success_count / duty.execution_count) * 100 : 0}
-                                                        style={{ width: '60px', height: '5px' }}
+                                                        style={{ width: '50px', height: '5px' }}
+                                                        className="ms-1"
                                                     />
                                                 </div>
                                             </td>
@@ -187,9 +230,21 @@ const Duties = () => {
                                                     className="me-1"
                                                     onClick={() => handleExecuteNow(duty.id)}
                                                     title="Run Now"
-                                                    disabled={duty.status === 'running'}
+                                                    disabled={duty.status === 'running' || executingIds.has(duty.id)}
                                                 >
-                                                    <Icon icon="play" className="icon-xs" />
+                                                    {executingIds.has(duty.id)
+                                                        ? <Spinner animation="border" size="sm" style={{ width: '10px', height: '10px' }} />
+                                                        : <Icon icon="play" className="icon-xs" />
+                                                    }
+                                                </Button>
+                                                <Button
+                                                    variant="soft-warning"
+                                                    size="sm"
+                                                    className="me-1"
+                                                    onClick={() => handleViewResult(duty)}
+                                                    title="View Last Result / Log"
+                                                >
+                                                    <Icon icon="file-text" className="icon-xs" />
                                                 </Button>
                                                 <Button
                                                     variant="soft-info"
@@ -220,6 +275,122 @@ const Duties = () => {
                     </Card>
                 </Col>
             </Row>
+
+            {/* ─── Result / Log Modal ─── */}
+            <Modal show={showResultModal} onHide={() => setShowResultModal(false)} size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>
+                        <Icon icon="file-text" className="me-2" />
+                        Duty Log: {resultDuty?.name}
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    {loadingResult ? (
+                        <div className="text-center py-4"><Spinner animation="border" size="sm" /> Loading...</div>
+                    ) : resultDuty ? (
+                        <>
+                            {/* Status + counts */}
+                            <div className="d-flex align-items-center gap-2 mb-3">
+                                {getStatusBadge(resultDuty.status)}
+                                <span className="text-success small">✓ {resultDuty.success_count} success</span>
+                                <span className="text-danger small">✗ {resultDuty.failure_count ?? 0} failed</span>
+                                <span className="text-muted small">/ {resultDuty.execution_count} total runs</span>
+                            </div>
+
+                            {/* Execution context (playlist + platform) */}
+                            {resultDuty.execution_data && (
+                                <div className="mb-3">
+                                    <strong className="small text-muted d-block mb-1">Context</strong>
+                                    <div className="border rounded p-2 bg-light small">
+                                        {resultDuty.execution_data.playlist_title && (
+                                            <div><strong>Playlist:</strong> {resultDuty.execution_data.playlist_title}</div>
+                                        )}
+                                        {resultDuty.execution_data.platform_name && (
+                                            <div><strong>Platform:</strong> {resultDuty.execution_data.platform_name}</div>
+                                        )}
+                                        {resultDuty.execution_data.platform_album_id && (
+                                            <div><strong>Album ID:</strong> {resultDuty.execution_data.platform_album_id}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Timestamps */}
+                            <div className="mb-3 small text-muted">
+                                <strong>Last run:</strong> {resultDuty.last_executed_at ? new Date(resultDuty.last_executed_at).toLocaleString() : '—'}
+                                &nbsp;&nbsp;
+                                <strong>Next run:</strong> {resultDuty.next_execution_at ? new Date(resultDuty.next_execution_at).toLocaleString() : 'N/A'}
+                            </div>
+
+                            {/* Error message */}
+                            {resultDuty.error_message && (
+                                <div className="alert alert-danger small mb-3">
+                                    <strong>Error:</strong> {resultDuty.error_message}
+                                </div>
+                            )}
+
+                            {/* Last result */}
+                            {resultDuty.last_result ? (
+                                <div className="mb-3">
+                                    <strong className="small text-muted d-block mb-1">Last Run Result</strong>
+                                    {/* Summary row if it's a platform push */}
+                                    {resultDuty.last_result.details && (
+                                        <div className="d-flex gap-3 mb-2">
+                                            <span className="badge bg-success">Pushed: {resultDuty.last_result.details.success ?? 0}</span>
+                                            <span className="badge bg-danger">Failed: {resultDuty.last_result.details.failed ?? 0}</span>
+                                            <span className="badge bg-secondary">Skipped: {resultDuty.last_result.details.skipped ?? 0}</span>
+                                        </div>
+                                    )}
+                                    {/* Summary row if it's a youtube sync */}
+                                    {resultDuty.last_result.videos_fetched !== undefined && (
+                                        <div className="d-flex gap-3 mb-2">
+                                            <span className="badge bg-info">Fetched: {resultDuty.last_result.videos_fetched ?? 0}</span>
+                                            <span className="badge bg-success">New: {resultDuty.last_result.new_episodes ?? 0}</span>
+                                            <span className="badge bg-secondary">Tags gen: {resultDuty.last_result.tags_genres_generated ?? 0}</span>
+                                        </div>
+                                    )}
+                                    {resultDuty.last_result.message && (
+                                        <div className="text-muted small mb-2">{resultDuty.last_result.message}</div>
+                                    )}
+                                    {/* Full JSON */}
+                                    <details>
+                                        <summary className="small text-muted" style={{ cursor: 'pointer' }}>View raw JSON</summary>
+                                        <pre className="small bg-light p-2 rounded mt-1" style={{ maxHeight: 200, overflow: 'auto', fontSize: '11px' }}>
+                                            {JSON.stringify(resultDuty.last_result, null, 2)}
+                                        </pre>
+                                    </details>
+                                </div>
+                            ) : (
+                                <div className="text-muted small">No result data yet. Run the duty to see output here.</div>
+                            )}
+
+                            {/* Instructions (collapsed) */}
+                            <details>
+                                <summary className="small text-muted" style={{ cursor: 'pointer' }}>View instructions</summary>
+                                <pre className="small bg-light p-2 rounded mt-1" style={{ maxHeight: 150, overflow: 'auto', fontSize: '11px', whiteSpace: 'pre-wrap' }}>
+                                    {resultDuty.instructions}
+                                </pre>
+                            </details>
+                        </>
+                    ) : null}
+                </Modal.Body>
+                <Modal.Footer>
+                    <Button variant="secondary" size="sm" onClick={() => setShowResultModal(false)}>Close</Button>
+                    {resultDuty && (
+                        <Button
+                            variant="success"
+                            size="sm"
+                            disabled={resultDuty.status === 'running' || executingIds.has(resultDuty.id)}
+                            onClick={() => handleExecuteNow(resultDuty.id)}
+                        >
+                            {executingIds.has(resultDuty.id)
+                                ? <><Spinner animation="border" size="sm" className="me-1" style={{ width: '12px', height: '12px' }} />Running...</>
+                                : <><Icon icon="play" className="icon-xs me-1" />Run Now</>
+                            }
+                        </Button>
+                    )}
+                </Modal.Footer>
+            </Modal>
 
             <Modal show={showModal} onHide={handleCloseModal} size="lg">
                 <Modal.Header closeButton>
