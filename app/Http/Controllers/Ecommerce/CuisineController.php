@@ -10,26 +10,39 @@ use Illuminate\Support\Str;
 
 class CuisineController extends Controller
 {
-    /** Public: list all active cuisines */
+    /**
+     * List cuisines.
+     * - ?admin=1  → all cuisines (incl. inactive) + muzzs_count + paginated
+     * - default   → active only, flat array (used by public storefront / sellers form)
+     */
     public function index(Request $request): JsonResponse
     {
+        if ($request->boolean('admin')) {
+            $q = Cuisine::withCount('muzzs')
+                ->orderBy('sort_order')
+                ->orderBy('name');
+
+            if ($request->filled('search')) {
+                $q->where('name', 'like', '%' . $request->search . '%');
+            }
+
+            return response()->json($q->paginate($request->input('per_page', 15)));
+        }
+
         $cuisines = Cuisine::where('is_active', true)
             ->orderBy('sort_order')
             ->orderBy('name')
-            ->get(['id', 'name', 'slug', 'icon']);
+            ->get(['id', 'name', 'slug', 'icon', 'hover_icon']);
 
         return response()->json($cuisines);
     }
 
-    /** Admin: list all cuisines (including inactive) */
-    public function adminIndex(Request $request): JsonResponse
+    /** PUT /api/ecommerce/cuisines/activate-all — set all cuisines is_active = true */
+    public function activateAll(): JsonResponse
     {
-        $cuisines = Cuisine::orderBy('sort_order')
-            ->orderBy('name')
-            ->withCount('muzzs')
-            ->get();
-
-        return response()->json($cuisines);
+        $count = Cuisine::where('is_active', false)->count();
+        Cuisine::query()->update(['is_active' => true]);
+        return response()->json(['message' => "All cuisines activated. ({$count} updated)"]);
     }
 
     /** Admin: create */

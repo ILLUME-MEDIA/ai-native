@@ -271,11 +271,11 @@ Route::group([], function () {
         Route::patch('muzzhub-categories/{muzzhubCategory}',         [MuzzhubCategoryController::class, 'update']);
         Route::delete('muzzhub-categories/{muzzhubCategory}',        [MuzzhubCategoryController::class, 'destroy']);
 
-        // Cuisines admin (full CRUD + admin list)
-        Route::get('cuisines',                  [CuisineController::class, 'adminIndex']);
-        Route::post('cuisines',                 [CuisineController::class, 'store']);
-        Route::patch('cuisines/{cuisine}',      [CuisineController::class, 'update']);
-        Route::delete('cuisines/{cuisine}',     [CuisineController::class, 'destroy']);
+        // Cuisines admin (write + activate-all)
+        Route::post('cuisines',                     [CuisineController::class, 'store']);
+        Route::put('cuisines/activate-all',         [CuisineController::class, 'activateAll']);
+        Route::patch('cuisines/{cuisine}',          [CuisineController::class, 'update']);
+        Route::delete('cuisines/{cuisine}',         [CuisineController::class, 'destroy']);
 
         // Business write (admin)
         Route::post('businesses',                   [BusinessController::class, 'store']);

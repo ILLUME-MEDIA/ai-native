@@ -57,20 +57,23 @@ export default function CuisinesPage() {
 
   const load = () => {
     setLoading(true);
-    axios.get('/api/ecommerce/cuisines')
+    const params = new URLSearchParams({ admin: 1, page, per_page: 15 });
+    if (search) params.set('search', search);
+    axios.get(`/api/ecommerce/cuisines?${params}`)
       .then(r => {
-        const data = Array.isArray(r.data) ? r.data : (r.data.data || []);
-        setRows(data);
-        if (r.data.last_page) setPagination(r.data);
+        setRows(r.data.data || []);
+        setPagination(r.data);
       })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [page]);
 
-  const filtered = search
-    ? rows.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
-    : rows;
+  const handleActivateAll = () => {
+    axios.put('/api/ecommerce/cuisines/activate-all')
+      .then(r => { showToast(r.data.message); load(); })
+      .catch(() => showToast('Failed', 'danger'));
+  };
 
   const openAdd = () => { setEditRow(null); setForm(emptyForm); setShowModal(true); };
   const openEdit = (row) => {
@@ -183,14 +186,14 @@ export default function CuisinesPage() {
   ];
 
   const table = useReactTable({
-    data: filtered,
+    data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
   });
 
   const totalPages = pagination.last_page || 1;
-  const totalItems = pagination.total || filtered.length;
+  const totalItems = pagination.total || rows.length;
   const start      = totalItems === 0 ? 0 : (page - 1) * 15 + 1;
   const end        = Math.min(page * 15, totalItems);
 
@@ -211,14 +214,21 @@ export default function CuisinesPage() {
               placeholder="Search cuisines..."
               value={search}
               onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { setPage(1); load(); } }}
               style={{ paddingRight: 36, minWidth: 220 }}
             />
             <Icon icon="search" size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
           </div>
-          <Button variant="primary" onClick={openAdd}>
-            <Icon icon="plus" size={15} className="me-1" />
-            Add Cuisine
-          </Button>
+          <div className="d-flex gap-2">
+            <Button variant="outline-success" onClick={handleActivateAll} title="Set all cuisines active">
+              <Icon icon="check-all" size={15} className="me-1" />
+              Activate All
+            </Button>
+            <Button variant="primary" onClick={openAdd}>
+              <Icon icon="plus" size={15} className="me-1" />
+              Add Cuisine
+            </Button>
+          </div>
         </CardHeader>
 
         <CardBody className="p-0">
