@@ -315,6 +315,7 @@ Route::group([], function () {
     // ── Case Studies Admin CRUD ─────────────────────────────────────────────
     Route::get('/admin/case-studies',                        [AdminCaseStudyController::class, 'index']);
     Route::post('/admin/case-studies/upload-media',          [AdminCaseStudyController::class, 'uploadMedia']);
+    Route::post('/admin/storage-link',                        [AdminCaseStudyController::class, 'storageLink']);
     Route::post('/admin/case-studies',                       [AdminCaseStudyController::class, 'store']);
     Route::get('/admin/case-studies/{id}',                   [AdminCaseStudyController::class, 'show']);
     Route::patch('/admin/case-studies/{id}',                 [AdminCaseStudyController::class, 'update']);

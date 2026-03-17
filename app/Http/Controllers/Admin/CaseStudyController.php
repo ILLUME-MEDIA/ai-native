@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -161,6 +162,16 @@ class CaseStudyController extends Controller
     }
 
     // ── UPLOAD MEDIA ──────────────────────────────────────────────────────
+    public function storageLink()
+    {
+        try {
+            Artisan::call('storage:link');
+            return response()->json(['message' => 'Storage linked successfully.']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
+    }
+
     public function uploadMedia(Request $request)
     {
         $request->validate(['file' => 'required|file|max:51200']);
