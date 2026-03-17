@@ -271,8 +271,15 @@ class DynamicEntityService
         $filters = (array) $request->input('filters', []);
         $this->applyFilters($model, $entity, $filters);
 
-        // Sorting
-        $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
+        // Location-based proximity filter: ?lat=&lng=&radius=&unit=miles|km&lat_field=&lng_field=
+        $locationApplied = $this->applyLocationFilter($model, $entity, $request);
+
+        // Sorting — if location active and no explicit sort, order by distance
+        if ($locationApplied && !$request->filled('sort')) {
+            // distance column already added by applyLocationFilter; skip normal sort
+        } else {
+            $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
+        }
 
         $perPage = (int) $request->input('per_page', 15);
 
@@ -282,6 +289,17 @@ class DynamicEntityService
         $paginator->setCollection(
             $this->enrichCollection($paginator->getCollection(), $entity)
         );
+
+        // Round distance field if location filter was applied
+        if ($locationApplied) {
+            $alias = ($request->input('unit', 'miles') === 'km') ? 'distance_km' : 'distance_miles';
+            $paginator->getCollection()->transform(function ($item) use ($alias) {
+                if (isset($item->{$alias})) {
+                    $item->{$alias} = round((float) $item->{$alias}, 2);
+                }
+                return $item;
+            });
+        }
 
         return $paginator;
     }
@@ -587,6 +605,59 @@ class DynamicEntityService
             'final_columns'       => $final,
             'final_count'         => count($final),
         ];
+    }
+
+    /**
+     * Apply Haversine-based proximity filter when lat+lng are provided.
+     *
+     * Params (all optional except lat+lng pair):
+     *   lat        — user latitude  (decimal degrees)
+     *   lng        — user longitude (decimal degrees)
+     *   radius     — search radius, default 100
+     *   unit       — "miles" (default) or "km"
+     *   lat_field  — column name for latitude  (default: latitude)
+     *   lng_field  — column name for longitude (default: longitude)
+     *
+     * When active, adds `distance_miles` or `distance_km` to SELECT and sorts ASC.
+     * Returns true if location filter was applied, false otherwise.
+     */
+    protected function applyLocationFilter(Builder $query, SectionEntity $entity, Request $request): bool
+    {
+        $lat = $request->filled('lat') ? (float) $request->input('lat') : null;
+        $lng = $request->filled('lng') ? (float) $request->input('lng') : null;
+
+        if ($lat === null || $lng === null) {
+            return false;
+        }
+
+        if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+            return false;
+        }
+
+        $unit      = $request->input('unit', 'miles');
+        $earthR    = $unit === 'km' ? 6371 : 3959;
+        $radius    = $request->filled('radius') ? (float) $request->input('radius') : 100;
+        $alias     = $unit === 'km' ? 'distance_km' : 'distance_miles';
+        $latField  = $request->input('lat_field',  'latitude');
+        $lngField  = $request->input('lng_field',  'longitude');
+
+        // Verify columns exist in the table
+        if (
+            !Schema::hasColumn($entity->table_name, $latField) ||
+            !Schema::hasColumn($entity->table_name, $lngField)
+        ) {
+            return false;
+        }
+
+        $expr = "( {$earthR} * acos( LEAST(1, cos(radians({$lat})) * cos(radians(`{$latField}`)) * cos(radians(`{$lngField}`) - radians({$lng})) + sin(radians({$lat})) * sin(radians(`{$latField}`)) ) ) )";
+
+        $query->selectRaw("*, {$expr} AS `{$alias}`")
+              ->whereNotNull($latField)
+              ->whereNotNull($lngField)
+              ->whereRaw("{$expr} <= ?", [$radius])
+              ->orderByRaw("{$expr} ASC");
+
+        return true;
     }
 
     protected function applySorting(Builder $query, SectionEntity $entity, ?string $sort, ?string $direction): void

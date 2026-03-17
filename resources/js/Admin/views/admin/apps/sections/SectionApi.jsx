@@ -20,6 +20,15 @@ const SectionApi = () => {
         direction: 'asc',
     });
     const [listFilters, setListFilters] = useState({});
+    const [locationQuery, setLocationQuery] = useState({
+        lat: '',
+        lng: '',
+        radius: '100',
+        unit: 'miles',
+        lat_field: 'latitude',
+        lng_field: 'longitude',
+    });
+    const [locationEnabled, setLocationEnabled] = useState(false);
     const [listResponse, setListResponse] = useState(null);
     const [listLoading, setListLoading] = useState(false);
     const [listError, setListError] = useState('');
@@ -164,6 +173,16 @@ const SectionApi = () => {
         if (listQuery.sort) params.append('sort', listQuery.sort);
         if (listQuery.direction) params.append('direction', listQuery.direction);
 
+        // Location filter
+        if (locationEnabled && locationQuery.lat && locationQuery.lng) {
+            params.append('lat', locationQuery.lat);
+            params.append('lng', locationQuery.lng);
+            if (locationQuery.radius) params.append('radius', locationQuery.radius);
+            if (locationQuery.unit && locationQuery.unit !== 'miles') params.append('unit', locationQuery.unit);
+            if (locationQuery.lat_field && locationQuery.lat_field !== 'latitude') params.append('lat_field', locationQuery.lat_field);
+            if (locationQuery.lng_field && locationQuery.lng_field !== 'longitude') params.append('lng_field', locationQuery.lng_field);
+        }
+
         // filters[column]=value
         Object.entries(listFilters).forEach(([column, value]) => {
             if (value != null && value !== '') {
@@ -221,6 +240,14 @@ const SectionApi = () => {
                 sort: listQuery.sort || undefined,
                 direction: listQuery.direction || undefined,
             };
+            if (locationEnabled && locationQuery.lat && locationQuery.lng) {
+                params.lat = locationQuery.lat;
+                params.lng = locationQuery.lng;
+                if (locationQuery.radius) params.radius = locationQuery.radius;
+                if (locationQuery.unit) params.unit = locationQuery.unit;
+                if (locationQuery.lat_field) params.lat_field = locationQuery.lat_field;
+                if (locationQuery.lng_field) params.lng_field = locationQuery.lng_field;
+            }
             Object.entries(listFilters).forEach(([column, value]) => {
                 if (value != null && value !== '') {
                     params[`filters[${column}]`] = value;
@@ -374,6 +401,13 @@ const SectionApi = () => {
                                                 <code>filters[column]=value</code>: Partial match (LIKE) on any column — single value or comma-separated for OR match.
                                                 <br /><span className="text-muted">e.g. <code>filters[category]=208</code> &nbsp;|&nbsp; <code>filters[title]=Nikki,Obama</code> &nbsp;|&nbsp; <code>filters[featured]=1</code></span>
                                             </li>
+                                            <li className="mt-1">
+                                                <strong>Location filter</strong> — <code>lat</code> + <code>lng</code> (required pair):
+                                                <br /><code>radius</code>: search radius, default <code>100</code>
+                                                <br /><code>unit</code>: <code>miles</code> (default) or <code>km</code>
+                                                <br /><code>lat_field</code> / <code>lng_field</code>: column names in your table (default: <code>latitude</code> / <code>longitude</code>)
+                                                <br /><span className="text-muted">Results sorted nearest-first; each record includes <code>distance_miles</code> or <code>distance_km</code>.</span>
+                                            </li>
                                         </ul>
 
                                         <Form onSubmit={handleTryList} className="border rounded p-3 mb-3 bg-light-subtle">
@@ -451,6 +485,88 @@ const SectionApi = () => {
                                                     </Form.Select>
                                                 </Col>
                                             </Row>
+
+                                            <hr className="my-3" />
+                                            <div className="d-flex align-items-center gap-2 mb-2">
+                                                <Form.Check
+                                                    type="switch"
+                                                    id="location-toggle"
+                                                    label={<span className="small fw-semibold">Location Filter (Proximity Search)</span>}
+                                                    checked={locationEnabled}
+                                                    onChange={(e) => setLocationEnabled(e.target.checked)}
+                                                />
+                                            </div>
+                                            {locationEnabled && (
+                                                <Row className="g-2">
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Latitude <span className="text-danger">*</span></Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. 37.871"
+                                                            value={locationQuery.lat}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lat: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Longitude <span className="text-danger">*</span></Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. -122.27"
+                                                            value={locationQuery.lng}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lng: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={2}>
+                                                        <Form.Label className="small mb-1">Radius</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            min="0.1"
+                                                            placeholder="100"
+                                                            value={locationQuery.radius}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, radius: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={2}>
+                                                        <Form.Label className="small mb-1">Unit</Form.Label>
+                                                        <Form.Select
+                                                            size="sm"
+                                                            value={locationQuery.unit}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, unit: e.target.value }))}
+                                                        >
+                                                            <option value="miles">miles</option>
+                                                            <option value="km">km</option>
+                                                        </Form.Select>
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Lat Column</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            placeholder="latitude"
+                                                            value={locationQuery.lat_field}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lat_field: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Lng Column</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            placeholder="longitude"
+                                                            value={locationQuery.lng_field}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lng_field: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col xs={12}>
+                                                        <p className="text-muted small mb-0">
+                                                            Results sorted nearest-first. Response includes <code>distance_{locationQuery.unit === 'km' ? 'km' : 'miles'}</code> on each record.
+                                                        </p>
+                                                    </Col>
+                                                </Row>
+                                            )}
 
                                             {fields.length > 0 && (
                                                 <>
