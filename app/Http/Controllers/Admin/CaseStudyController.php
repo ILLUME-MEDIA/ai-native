@@ -175,8 +175,10 @@ class CaseStudyController extends Controller
     public function uploadMedia(Request $request)
     {
         $request->validate(['file' => 'required|file|max:51200']);
-        $path = $request->file('file')->store('case-studies', 'public');
-        return response()->json(['url' => asset(Storage::url($path))]);
+        $file     = $request->file('file');
+        $filename = Str::random(40) . '.' . $file->getClientOriginalExtension();
+        $file->move(public_path('uploads/case-studies'), $filename);
+        return response()->json(['url' => asset('uploads/case-studies/' . $filename)]);
     }
 
     // ── GROUPS INDEX ──────────────────────────────────────────────────────
@@ -378,8 +380,10 @@ class CaseStudyController extends Controller
 
         // Featured image: file upload takes priority, then URL
         if ($request->hasFile('featured_image')) {
-            $path                   = $request->file('featured_image')->store('case-studies', 'public');
-            $data['featured_image'] = Storage::url($path);
+            $file                   = $request->file('featured_image');
+            $filename               = Str::random(40) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/case-studies'), $filename);
+            $data['featured_image'] = asset('uploads/case-studies/' . $filename);
         } elseif ($request->filled('featured_image_url')) {
             $data['featured_image'] = $request->featured_image_url;
         }

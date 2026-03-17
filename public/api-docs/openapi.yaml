@@ -1123,8 +1123,32 @@ paths:
       security: []
       summary: List Muzzhub sellers (restaurants)
       description: |
-        **Query filters** — all optional; combine to fetch exactly what you need:
+        **Query filters** — all optional; combine to fetch exactly what you need.
+
+        **Location-based search**: pass `lat` + `lng` to filter by proximity. Results will be sorted nearest-first and include a `distance_miles` field. Use `radius` to control the search range (default 100 miles).
       parameters:
+        - name: lat
+          in: query
+          schema:
+            type: number
+            format: float
+            example: 40.7128
+          description: "Latitude of the user's location (decimal degrees). Requires `lng`."
+        - name: lng
+          in: query
+          schema:
+            type: number
+            format: float
+            example: -74.006
+          description: "Longitude of the user's location (decimal degrees). Requires `lat`."
+        - name: radius
+          in: query
+          schema:
+            type: number
+            format: float
+            default: 100
+            example: 25
+          description: "Search radius in miles (default 100). Only applied when `lat`+`lng` are provided."
         - name: search
           in: query
           schema:

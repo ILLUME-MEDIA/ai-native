@@ -13,7 +13,32 @@ class MuzzhubController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon'])->orderBy('name');
+        $request->validate([
+            'lat'    => 'nullable|numeric|between:-90,90',
+            'lng'    => 'nullable|numeric|between:-180,180',
+            'radius' => 'nullable|numeric|min:0.1|max:5000',
+        ]);
+
+        $lat    = $request->filled('lat')    ? (float) $request->lat    : null;
+        $lng    = $request->filled('lng')    ? (float) $request->lng    : null;
+        $radius = $request->filled('radius') ? (float) $request->radius : 100;
+
+        $useLocation = $lat !== null && $lng !== null;
+
+        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon']);
+
+        if ($useLocation) {
+            // Haversine formula — distance in miles
+            $haversineExpr = "( 3959 * acos( LEAST(1, cos(radians({$lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians({$lng})) + sin(radians({$lat})) * sin(radians(latitude)) ) ) )";
+
+            $q->selectRaw("*, {$haversineExpr} AS distance_miles")
+              ->whereNotNull('latitude')
+              ->whereNotNull('longitude')
+              ->whereRaw("{$haversineExpr} <= ?", [$radius])
+              ->orderByRaw("{$haversineExpr} ASC");
+        } else {
+            $q->orderBy('name');
+        }
 
         if ($request->filled('search'))        $q->where('name', 'like', '%' . $request->search . '%');
         if ($request->boolean('active_only'))  $q->where('is_active', true);
@@ -50,7 +75,16 @@ class MuzzhubController extends Controller
             }
         }
 
-        return response()->json($q->paginate($request->input('per_page', 15)));
+        $paginated = $q->paginate($request->input('per_page', 15));
+
+        if ($useLocation) {
+            $paginated->getCollection()->transform(function ($item) {
+                $item->distance_miles = $item->distance_miles !== null ? round((float) $item->distance_miles, 2) : null;
+                return $item;
+            });
+        }
+
+        return response()->json($paginated);
     }
 
     public function show(Muzzhub $muzzhub): JsonResponse
