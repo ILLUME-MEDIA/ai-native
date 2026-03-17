@@ -1,6 +1,7 @@
 import { getSystemTheme, toggleAttribute } from "@admin/utils/layout";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocalStorage } from "usehooks-ts";
+import { broadcastTokenChange } from "@admin/utils/designSystemSync";
 
 const debounce = (fn, delay) => {
   let timer;
@@ -164,6 +165,53 @@ export const applyCustomStyles = styles => {
   }
 };
 
+// ─── DB token sync helpers ───────────────────────────────────────────────────
+
+const COLOR_TOKEN_MAP = {
+  primary:   'color.primary',
+  secondary: 'color.secondary',
+  success:   'color.success',
+  danger:    'color.danger',
+  warning:   'color.warning',
+  info:      'color.info',
+};
+
+async function pushColorsToDB(colors) {
+  try {
+    const xsrf = decodeURIComponent(document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? '');
+    const themes = await fetch('/api/admin/design-system/themes', {
+      headers: { Accept: 'application/json' },
+    }).then(r => r.json());
+    const theme = (themes ?? []).find(t => t.is_default) ?? themes?.[0];
+    if (!theme) return;
+
+    const tokens = Object.entries(colors)
+      .filter(([k, v]) => COLOR_TOKEN_MAP[k] && v)
+      .map(([k, v]) => ({
+        theme_id: theme.id,
+        name:     COLOR_TOKEN_MAP[k],
+        value:    v,
+        category: 'color',
+        type:     'static',
+      }));
+    if (!tokens.length) return;
+
+    await fetch('/api/admin/design-system/tokens/bulk', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': xsrf },
+      body:    JSON.stringify({ tokens }),
+    });
+
+    // Build full token map for broadcast (so other tabs don't need to refetch)
+    const allTokens = await fetch(`/api/admin/design-system/tokens?theme_id=${theme.id}`, {
+      headers: { Accept: 'application/json' },
+    }).then(r => r.json());
+    const map = {};
+    (allTokens ?? []).forEach(t => { map[t.name] = t.value; });
+    broadcastTokenChange(map);
+  } catch { /* silent */ }
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const INIT_STATE = {
@@ -271,12 +319,16 @@ export const LayoutProvider = ({ children }) => {
     setIsCustomizerOpen(prev => !prev);
   }, []);
 
-  // Colors
+  // Colors — applies to DOM + localStorage + DB (debounced)
+  const dbSaveTimer = useRef(null);
   const updateCustomColors = useCallback(newColors => {
     setSettings(prev => {
       const merged = { ...(prev.customColors || {}), ...newColors };
       Object.keys(merged).forEach(k => { if (!merged[k]) delete merged[k]; });
       applyCustomColors(merged);
+      // Debounced DB sync (800ms after last change)
+      clearTimeout(dbSaveTimer.current);
+      dbSaveTimer.current = setTimeout(() => pushColorsToDB(merged), 800);
       return { ...prev, customColors: merged };
     });
   }, [setSettings]);

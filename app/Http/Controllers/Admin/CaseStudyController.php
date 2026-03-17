@@ -165,7 +165,7 @@ class CaseStudyController extends Controller
     {
         $request->validate(['file' => 'required|file|max:51200']);
         $path = $request->file('file')->store('case-studies', 'public');
-        return response()->json(['url' => Storage::url($path)]);
+        return response()->json(['url' => asset(Storage::url($path))]);
     }
 
     // ── GROUPS INDEX ──────────────────────────────────────────────────────

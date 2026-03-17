@@ -18,10 +18,7 @@ class DsTheme extends Model
         return $this->hasMany(DsToken::class, 'theme_id');
     }
 
-    public function tokenGroups(): HasMany
-    {
-        return $this->hasMany(DsTokenGroup::class, 'theme_id');
-    }
+    // tokenGroups() reserved for future use (DsTokenGroup model not yet created)
 
     /** Resolve all tokens for this theme as a flat key→value map */
     public function resolveTokenMap(): array

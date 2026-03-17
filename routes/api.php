@@ -53,6 +53,7 @@ use App\Http\Controllers\ShipEngine\ShipEngineController;
 use App\Http\Controllers\Admin\DesignSystem\DsThemeController;
 use App\Http\Controllers\Admin\DesignSystem\DsTokenController;
 use App\Http\Controllers\Admin\DesignSystem\DsComponentController;
+use App\Http\Controllers\Admin\DesignSystem\DsSitesController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -183,7 +184,117 @@ Route::prefix('admin/design-system')->group(function () {
     Route::post('/components/{dsComponent}/variants',                    [DsComponentController::class, 'storeVariant']);
     Route::put('/components/{dsComponent}/variants/{variant}',           [DsComponentController::class, 'updateVariant']);
     Route::delete('/components/{dsComponent}/variants/{variant}',        [DsComponentController::class, 'destroyVariant']);
+
+    // Sites (multi-site token distribution)
+    Route::get('/sites',                          [DsSitesController::class, 'index']);
+    Route::post('/sites',                         [DsSitesController::class, 'store']);
+    Route::get('/sites/{dsSite}',                 [DsSitesController::class, 'show']);
+    Route::put('/sites/{dsSite}',                 [DsSitesController::class, 'update']);
+    Route::delete('/sites/{dsSite}',              [DsSitesController::class, 'destroy']);
+    Route::post('/sites/{dsSite}/generate-key',   [DsSitesController::class, 'generateKey']);
+    Route::post('/sites/{dsSite}/reveal-key',     [DsSitesController::class, 'revealKey']);
 });
+
+// ── Public Design Tokens API (no auth — for external apps) ───────────────────
+// Usage from any app:
+//   GET /api/design-tokens         → { 'color.primary': '#405189', 'radius.md': '0.3rem', ... }
+//   GET /api/design-tokens/css     → :root { --bs-primary: #405189; ... }
+//   GET /api/design-tokens/theme   → full theme + tokens array
+Route::get('/design-tokens', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)->first()
+          ?? \App\Models\DesignSystem\DsTheme::first();
+    if (!$theme) return response()->json([]);
+    return response()->json($theme->resolveTokenMap())
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Cache-Control', 'public, max-age=60');
+});
+
+Route::get('/design-tokens/css', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)->first()
+          ?? \App\Models\DesignSystem\DsTheme::first();
+    if (!$theme) return response('/* no theme configured */', 200, ['Content-Type' => 'text/css']);
+    $service = app(\App\Services\DesignSystem\DesignTokenService::class);
+    $css = $service->generateCss($theme->id);
+    return response($css, 200, [
+        'Content-Type'                => 'text/css',
+        'Access-Control-Allow-Origin' => '*',
+        'Cache-Control'               => 'public, max-age=60',
+    ]);
+});
+
+Route::get('/design-tokens/theme', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)
+        ->with('tokens')->first()
+        ?? \App\Models\DesignSystem\DsTheme::with('tokens')->first();
+    if (!$theme) return response()->json(null);
+    return response()->json([
+        'theme'     => ['id' => $theme->id, 'name' => $theme->name, 'slug' => $theme->slug],
+        'token_map' => $theme->resolveTokenMap(),
+        'tokens'    => $theme->tokens,
+    ])->header('Access-Control-Allow-Origin', '*')
+      ->header('Cache-Control', 'public, max-age=60');
+});
+
+// ── Public Design Tokens API — Per-Site (no auth) ────────────────────────────
+// Usage:
+//   GET /api/design-tokens/{slug}         → flat token map for that site's theme
+//   GET /api/design-tokens/{slug}/css     → CSS custom properties
+//   GET /api/design-tokens/{slug}/theme   → full theme + tokens
+//   X-DS-Key header also accepted (resolves site by api_key)
+
+$resolveThemeForRequest = function (\Illuminate\Http\Request $request, string $slug) {
+    // Try by slug
+    $site = \App\Models\DesignSystem\DsSite::where('slug', $slug)
+        ->where('is_active', true)->first();
+
+    // Try by API key header if slug not found
+    if (!$site) {
+        $apiKey = $request->header('X-DS-Key');
+        if ($apiKey) {
+            $all = \App\Models\DesignSystem\DsSite::where('is_active', true)->get();
+            foreach ($all as $s) {
+                try {
+                    if (decrypt($s->api_key) === $apiKey) { $site = $s; break; }
+                } catch (\Throwable) {}
+            }
+        }
+    }
+
+    if (!$site) return null;
+    return $site->resolveTheme();
+};
+
+Route::get('/design-tokens/{slug}', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    return response()->json($theme->resolveTokenMap())
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Cache-Control', 'public, max-age=60');
+})->where('slug', '[a-z0-9-]+');
+
+Route::get('/design-tokens/{slug}/css', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response('/* site not found */', 404, ['Content-Type' => 'text/css']);
+    $service = app(\App\Services\DesignSystem\DesignTokenService::class);
+    $css = $service->generateCss($theme->id);
+    return response($css, 200, [
+        'Content-Type'                => 'text/css',
+        'Access-Control-Allow-Origin' => '*',
+        'Cache-Control'               => 'public, max-age=60',
+    ]);
+})->where('slug', '[a-z0-9-]+');
+
+Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    $theme->load('tokens');
+    return response()->json([
+        'theme'     => ['id' => $theme->id, 'name' => $theme->name, 'slug' => $theme->slug],
+        'token_map' => $theme->resolveTokenMap(),
+        'tokens'    => $theme->tokens,
+    ])->header('Access-Control-Allow-Origin', '*')
+      ->header('Cache-Control', 'public, max-age=60');
+})->where('slug', '[a-z0-9-]+');
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
 // ── Artisan Runner (admin only) ────────────────────────────────────────────

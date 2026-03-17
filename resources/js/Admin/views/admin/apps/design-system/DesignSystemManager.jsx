@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { broadcastTokenChange } from '@admin/utils/designSystemSync';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 
 const API = '/api/admin/design-system';
@@ -86,11 +87,12 @@ function useTokens(themeId) {
         }
         // 3. update react state (panel UI)
         setTokens(prev => prev.map(t => t.id === id ? { ...t, value: newValue } : t));
-        // 4. debounced API save
+        // 4. debounced API save + broadcast to all tabs
         clearTimeout(timers.current[id]);
         timers.current[id] = setTimeout(() => {
             setSaving(id);
             call(`/tokens/${id}`, { method: 'PUT', body: { value: newValue } })
+                .then(() => broadcastTokenChange(mapRef.current))
                 .finally(() => setSaving(null));
         }, 600);
     }, [tokens]);

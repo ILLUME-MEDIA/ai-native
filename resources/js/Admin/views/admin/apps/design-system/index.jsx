@@ -736,6 +736,678 @@ const CustomCSSTab = ({ css, setCss }) => {
   );
 };
 
+// ─── Sites Tab ────────────────────────────────────────────────────────────────
+
+const SvgCode    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>;
+const SvgEdit    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
+const SvgTrash   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
+const SvgEye     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+const SvgEyeOff  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+const SvgRefresh = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>;
+const SvgTokens  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>;
+
+// ─── Token category metadata ───────────────────────────────────────────────────
+const TOKEN_COLOR_DEFS = [
+  { name: 'color.primary',   label: 'Primary',   desc: 'Main brand color' },
+  { name: 'color.secondary', label: 'Secondary', desc: 'Supporting color' },
+  { name: 'color.success',   label: 'Success',   desc: 'Positive states' },
+  { name: 'color.danger',    label: 'Danger',    desc: 'Error / destructive' },
+  { name: 'color.warning',   label: 'Warning',   desc: 'Caution / alerts' },
+  { name: 'color.info',      label: 'Info',      desc: 'Informational' },
+];
+
+const TOKEN_RADIUS_DEFS = [
+  { name: 'radius.sm', label: 'Small',  hint: '0.2rem' },
+  { name: 'radius.md', label: 'Medium', hint: '0.375rem' },
+  { name: 'radius.lg', label: 'Large',  hint: '0.5rem' },
+];
+
+// ─── Site Token Editor ─────────────────────────────────────────────────────────
+
+function callDS(path, opts = {}) {
+  const xsrf = decodeURIComponent(document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? '');
+  return fetch('/api/admin/design-system' + path, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-XSRF-TOKEN': xsrf },
+    credentials: 'include',
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  }).then(r => r.status === 204 ? null : r.json());
+}
+
+const SiteTokenEditor = ({ site, onClose }) => {
+  const [tokens, setTokens]     = useState([]);  // raw token objects from API
+  const [vals, setVals]         = useState({});   // { tokenName: value } — live edits
+  const [saving, setSaving]     = useState(null); // tokenName being saved
+  const [saved, setSaved]       = useState(null); // tokenName just saved (flash)
+  const [loading, setLoading]   = useState(true);
+  const saveTimers              = useRef({});
+
+  // Load tokens for site's theme
+  useEffect(() => {
+    if (!site) return;
+    setLoading(true);
+    // resolve theme: site.theme_id OR default
+    const themeId = site.theme_id;
+    const url = themeId
+      ? `/api/admin/design-system/tokens?theme_id=${themeId}`
+      : '/api/admin/design-system/tokens';
+    callDS(themeId ? `/tokens?theme_id=${themeId}` : '/tokens')
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.data ?? []);
+        setTokens(list);
+        const map = {};
+        list.forEach(t => { map[t.name] = t.value; });
+        setVals(map);
+      })
+      .finally(() => setLoading(false));
+  }, [site]);
+
+  // Build live preview CSS
+  const previewCss = useCallback(() => {
+    const lines = [':root {'];
+    TOKEN_COLOR_DEFS.forEach(({ name }) => {
+      const v = vals[name]; if (!v) return;
+      const cssProp = `--preview-${name.replace('.', '-')}`;
+      lines.push(`  ${cssProp}: ${v};`);
+      // Also map to BS vars for preview buttons
+      if (name.startsWith('color.')) {
+        const key = name.split('.')[1];
+        lines.push(`  --bs-preview-${key}: ${v};`);
+      }
+    });
+    TOKEN_RADIUS_DEFS.forEach(({ name }) => {
+      const v = vals[name]; if (!v) return;
+      if (name === 'radius.md') lines.push(`  --preview-radius: ${v};`);
+    });
+    lines.push('}');
+    return lines.join('\n');
+  }, [vals]);
+
+  // Save a single token with debounce
+  const handleChange = useCallback((tokenName, newValue) => {
+    setVals(prev => ({ ...prev, [tokenName]: newValue }));
+    clearTimeout(saveTimers.current[tokenName]);
+    saveTimers.current[tokenName] = setTimeout(async () => {
+      const token = tokens.find(t => t.name === tokenName);
+      if (!token) return;
+      setSaving(tokenName);
+      try {
+        await callDS(`/tokens/${token.id}`, { method: 'PUT', body: { value: newValue } });
+        // fetch updated map and broadcast
+        const themeId = site.theme_id;
+        const list = await callDS(themeId ? `/tokens?theme_id=${themeId}` : '/tokens');
+        const map = {};
+        (Array.isArray(list) ? list : (list?.data ?? [])).forEach(t => { map[t.name] = t.value; });
+        const { broadcastTokenChange } = await import('@admin/utils/designSystemSync');
+        broadcastTokenChange(map);
+        setSaved(tokenName);
+        setTimeout(() => setSaved(null), 1500);
+      } finally {
+        setSaving(null);
+      }
+    }, 600);
+  }, [tokens, site]);
+
+  // Live preview: inject into a scoped preview element via CSS vars
+  const previewStyle = (colorName) => {
+    const v = vals[`color.${colorName}`];
+    return v ? { backgroundColor: v, borderColor: v } : {};
+  };
+  const outlineStyle = (colorName) => {
+    const v = vals[`color.${colorName}`];
+    return v ? { color: v, borderColor: v } : {};
+  };
+  const radiusVal = vals['radius.md'] || '0.375rem';
+
+  if (!site) return null;
+
+  return (
+    <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1060 }}>
+      <div className="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div className="modal-content">
+          {/* Header */}
+          <div className="modal-header border-bottom py-3">
+            <div>
+              <h5 className="modal-title fw-bold mb-0">
+                Token Editor — {site.name}
+              </h5>
+              <div className="text-muted small mt-1">
+                Theme: <strong>{site.theme?.name || 'Default'}</strong>
+                <span className="ms-3 text-success">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
+                  {' '}Changes auto-save · API updates instantly
+                </span>
+              </div>
+            </div>
+            <button className="btn-close" onClick={onClose} />
+          </div>
+
+          {loading ? (
+            <div className="modal-body text-center py-5">
+              <div className="spinner-border text-primary" />
+              <div className="text-muted mt-2 small">Loading tokens…</div>
+            </div>
+          ) : (
+            <div className="modal-body p-0">
+              <div className="row g-0" style={{ minHeight: 500 }}>
+
+                {/* LEFT: Token editors */}
+                <div className="col-lg-7 border-end p-4" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
+
+                  {/* Color tokens */}
+                  <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Color Tokens</div>
+                  <div className="row g-2 mb-4">
+                    {TOKEN_COLOR_DEFS.map(({ name, label, desc }) => {
+                      const val = vals[name] || '#cccccc';
+                      const isSaving = saving === name;
+                      const isSaved  = saved  === name;
+                      return (
+                        <div key={name} className="col-6">
+                          <div className="border rounded p-2">
+                            <div className="d-flex align-items-center gap-2 mb-2">
+                              <div className="rounded border flex-shrink-0"
+                                style={{ width: 28, height: 28, backgroundColor: val, transition: 'background .2s' }} />
+                              <div className="flex-grow-1 overflow-hidden">
+                                <div className="fw-semibold" style={{ fontSize: 12 }}>{label}</div>
+                                <div className="text-muted text-truncate" style={{ fontSize: 10 }}>{name}</div>
+                              </div>
+                              {isSaving && <div className="spinner-border spinner-border-sm text-primary flex-shrink-0" style={{ width: 12, height: 12, borderWidth: 2 }} />}
+                              {isSaved  && <span className="text-success flex-shrink-0" style={{ fontSize: 11 }}>✓</span>}
+                            </div>
+                            <div className="input-group input-group-sm">
+                              <input type="color"
+                                className="form-control form-control-color border-end-0 flex-shrink-0"
+                                style={{ maxWidth: 34, padding: '2px 3px', cursor: 'pointer' }}
+                                value={val.startsWith('#') ? val : '#cccccc'}
+                                onChange={e => handleChange(name, e.target.value)} />
+                              <input type="text"
+                                className="form-control font-monospace"
+                                style={{ fontSize: 11 }}
+                                value={vals[name] || ''}
+                                maxLength={7}
+                                placeholder="#000000"
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v === '' || /^#[0-9a-fA-F]{0,6}$/.test(v)) {
+                                    if (v.length === 7) handleChange(name, v);
+                                    else setVals(p => ({ ...p, [name]: v }));
+                                  }
+                                }} />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Radius tokens */}
+                  <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Border Radius</div>
+                  <div className="row g-2 mb-4">
+                    {TOKEN_RADIUS_DEFS.map(({ name, label, hint }) => {
+                      const val = vals[name] || hint;
+                      const isSaving = saving === name;
+                      const isSaved  = saved  === name;
+                      const numVal   = parseFloat(val) || 0.375;
+                      return (
+                        <div key={name} className="col-4">
+                          <div className="border rounded p-2">
+                            <div className="d-flex align-items-center justify-content-between mb-1">
+                              <span className="fw-semibold" style={{ fontSize: 11 }}>{label}</span>
+                              <span className="badge bg-primary" style={{ fontSize: 9 }}>{val || hint}</span>
+                              {isSaving && <div className="spinner-border spinner-border-sm text-primary" style={{ width: 10, height: 10, borderWidth: 2 }} />}
+                              {isSaved  && <span className="text-success" style={{ fontSize: 10 }}>✓</span>}
+                            </div>
+                            <input type="range" className="form-range mb-1"
+                              min={0} max={2} step={0.05} value={numVal}
+                              onChange={e => handleChange(name, `${parseFloat(e.target.value).toFixed(2)}rem`)} />
+                            <div className="bg-primary rounded" style={{ height: 24, borderRadius: `${numVal}rem`, opacity: 0.4 }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Other tokens (non-color, non-radius) */}
+                  {(() => {
+                    const others = tokens.filter(t =>
+                      !t.name.startsWith('color.') &&
+                      !t.name.startsWith('radius.') &&
+                      t.category !== 'color' && t.category !== 'radius'
+                    );
+                    if (!others.length) return null;
+                    return (
+                      <>
+                        <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Other Tokens</div>
+                        <div className="d-flex flex-column gap-1 mb-4">
+                          {others.map(t => {
+                            const isSaving = saving === t.name;
+                            const isSaved  = saved  === t.name;
+                            return (
+                              <div key={t.id} className="border rounded px-3 py-2 d-flex align-items-center gap-2">
+                                <div className="flex-grow-1">
+                                  <span className="fw-semibold font-monospace" style={{ fontSize: 11 }}>{t.name}</span>
+                                  <span className="badge bg-secondary-subtle text-secondary ms-1" style={{ fontSize: 9 }}>{t.category}</span>
+                                </div>
+                                <input type="text" className="form-control form-control-sm font-monospace"
+                                  style={{ maxWidth: 140, fontSize: 11 }}
+                                  value={vals[t.name] || ''}
+                                  onChange={e => handleChange(t.name, e.target.value)} />
+                                {isSaving && <div className="spinner-border spinner-border-sm text-primary" style={{ width: 12, height: 12, borderWidth: 2 }} />}
+                                {isSaved  && <span className="text-success" style={{ fontSize: 11 }}>✓</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* RIGHT: Live Preview */}
+                <div className="col-lg-5 p-4 bg-light" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
+                  <div className="mb-3 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Live Preview</div>
+
+                  {/* Buttons */}
+                  <div className="mb-3 p-3 bg-white rounded border">
+                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>BUTTONS</div>
+                    <div className="d-flex flex-wrap gap-2 mb-2">
+                      {TOKEN_COLOR_DEFS.slice(0, 4).map(({ name, label }) => (
+                        <button key={name} className="btn btn-sm text-white fw-semibold"
+                          style={{ ...previewStyle(name.split('.')[1]), borderRadius: radiusVal, fontSize: 11 }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="d-flex flex-wrap gap-2">
+                      {TOKEN_COLOR_DEFS.slice(0, 4).map(({ name, label }) => (
+                        <button key={name} className="btn btn-sm"
+                          style={{ ...outlineStyle(name.split('.')[1]), borderRadius: radiusVal, fontSize: 11, background: 'transparent', border: '1px solid' }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Badges */}
+                  <div className="mb-3 p-3 bg-white rounded border">
+                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>BADGES</div>
+                    <div className="d-flex flex-wrap gap-2">
+                      {TOKEN_COLOR_DEFS.map(({ name, label }) => {
+                        const v = vals[name];
+                        return (
+                          <span key={name} className="badge"
+                            style={{ backgroundColor: v || undefined, borderRadius: radiusVal, fontSize: 10, padding: '4px 10px' }}>
+                            {label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Color swatches */}
+                  <div className="mb-3 p-3 bg-white rounded border">
+                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>COLOR PALETTE</div>
+                    <div className="d-flex gap-1 flex-wrap">
+                      {TOKEN_COLOR_DEFS.map(({ name, label }) => {
+                        const v = vals[name];
+                        return (
+                          <div key={name} className="d-flex flex-column align-items-center" style={{ width: 44 }}>
+                            <div className="rounded border mb-1" style={{ width: 36, height: 36, backgroundColor: v || '#ccc' }} />
+                            <div style={{ fontSize: 9, textAlign: 'center', color: '#666' }}>{label}</div>
+                            <div className="font-monospace" style={{ fontSize: 8, color: '#999' }}>{v || '—'}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Card sample */}
+                  <div className="mb-3 p-3 bg-white rounded border">
+                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>CARD SAMPLE</div>
+                    <div className="border rounded p-3" style={{ borderRadius: radiusVal }}>
+                      <div className="fw-semibold mb-1" style={{ fontSize: 13, color: vals['color.primary'] || undefined }}>Card Title</div>
+                      <div className="text-muted mb-2" style={{ fontSize: 12 }}>Supporting body text</div>
+                      <div className="d-flex gap-2">
+                        <button className="btn btn-sm text-white"
+                          style={{ ...previewStyle('primary'), borderRadius: radiusVal, fontSize: 11 }}>Save</button>
+                        <button className="btn btn-sm"
+                          style={{ ...outlineStyle('secondary'), borderRadius: radiusVal, fontSize: 11, background: 'transparent', border: '1px solid' }}>Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* API endpoint */}
+                  <div className="p-3 bg-white rounded border">
+                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>API ENDPOINTS</div>
+                    {[
+                      { label: 'JSON', url: site.endpoints?.tokens },
+                      { label: 'CSS',  url: site.endpoints?.css },
+                    ].map(({ label, url }) => (
+                      <div key={label} className="d-flex align-items-center gap-2 mb-1">
+                        <span className="badge bg-primary" style={{ fontSize: 9, minWidth: 32 }}>{label}</span>
+                        <a href={url} target="_blank" rel="noreferrer"
+                          className="text-truncate text-decoration-none text-muted font-monospace"
+                          style={{ fontSize: 10 }}>{url}</a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="modal-footer border-top py-2">
+            <span className="text-muted small me-auto">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="#0ab39c"><circle cx="5" cy="5" r="5"/></svg>
+              {' '}Auto-saves on change · Broadcasts to all connected apps
+            </span>
+            <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BASE = '/api/admin/design-system/sites';
+
+const SitesTab = () => {
+  const [sites, setSites]       = useState([]);
+  const [themes, setThemes]     = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [modal, setModal]       = useState(null);   // null | 'create' | 'edit' | 'snippet'
+  const [active, setActive]     = useState(null);   // site being edited / viewed
+  const [revealed, setRevealed] = useState({});     // { siteId: plainKey }
+  const [editorSite, setEditorSite] = useState(null); // site open in token editor
+  const [form, setForm]         = useState({ name: '', slug: '', domain: '', theme_id: '', description: '', is_active: true });
+  const [err, setErr]           = useState('');
+
+  const call = useCallback(async (url, opts = {}) => {
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'include',
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.message || 'Request failed');
+    }
+    return res.json();
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [s, t] = await Promise.all([
+        call(BASE),
+        call('/api/admin/design-system/themes'),
+      ]);
+      setSites(s);
+      setThemes(t);
+    } finally {
+      setLoading(false);
+    }
+  }, [call]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openCreate = () => {
+    setForm({ name: '', slug: '', domain: '', theme_id: '', description: '', is_active: true });
+    setErr('');
+    setModal('create');
+  };
+
+  const openEdit = (site) => {
+    setActive(site);
+    setForm({ name: site.name, slug: site.slug, domain: site.domain || '', theme_id: site.theme_id || '', description: site.description || '', is_active: site.is_active });
+    setErr('');
+    setModal('edit');
+  };
+
+  const openSnippet = (site) => { setActive(site); setModal('snippet'); };
+
+  const handleSlugify = (name) => {
+    if (modal === 'edit') return;
+    setForm(f => ({ ...f, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') }));
+  };
+
+  const handleSubmit = async () => {
+    setSaving(true); setErr('');
+    try {
+      const isEdit = modal === 'edit';
+      const site = await call(isEdit ? `${BASE}/${active.id}` : BASE, {
+        method: isEdit ? 'PUT' : 'POST',
+        body: { ...form, theme_id: form.theme_id || null },
+      });
+      await load();
+      setModal(null);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (site) => {
+    if (!confirm(`Delete site "${site.name}"?`)) return;
+    try { await call(`${BASE}/${site.id}`, { method: 'DELETE' }); await load(); } catch {}
+  };
+
+  const handleGenKey = async (site) => {
+    try {
+      const res = await call(`${BASE}/${site.id}/generate-key`, { method: 'POST' });
+      setRevealed(r => ({ ...r, [site.id]: res.api_key }));
+      await load();
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleRevealKey = async (site) => {
+    if (revealed[site.id]) { setRevealed(r => { const n = {...r}; delete n[site.id]; return n; }); return; }
+    try {
+      const res = await call(`${BASE}/${site.id}/reveal-key`, { method: 'POST' });
+      setRevealed(r => ({ ...r, [site.id]: res.api_key }));
+    } catch (e) { alert(e.message); }
+  };
+
+  const toggleActive = async (site) => {
+    try { await call(`${BASE}/${site.id}`, { method: 'PUT', body: { is_active: !site.is_active } }); await load(); } catch {}
+  };
+
+  if (loading) return <div className="text-center py-5"><div className="spinner-border text-primary" /></div>;
+
+  return (
+    <div>
+      <div className="d-flex align-items-center justify-content-between mb-3">
+        <div>
+          <h5 className="fw-bold mb-1">Connected Sites</h5>
+          <p className="text-muted small mb-0">Each site gets its own API key and can be linked to any theme. Fetch tokens via the public API from any app.</p>
+        </div>
+        <Button variant="primary" size="sm" onClick={openCreate}><i className="ri-add-line me-1" />Add Site</Button>
+      </div>
+
+      {/* How it works */}
+      <div className="alert alert-info d-flex gap-2 mb-4 p-3" style={{ fontSize: 13 }}>
+        <i className="ri-information-line fs-5 flex-shrink-0 mt-1" />
+        <div>
+          <strong>How to use:</strong> Create a site, assign a theme, generate an API key. Then fetch tokens from your external app:<br />
+          <code className="d-block mt-1 text-dark bg-white px-2 py-1 rounded border" style={{ fontSize: 11 }}>
+            GET /api/design-tokens/<em>&#123;slug&#125;</em> &nbsp;|&nbsp; GET /api/design-tokens/<em>&#123;slug&#125;</em>/css &nbsp;|&nbsp; header: X-DS-Key: …
+          </code>
+        </div>
+      </div>
+
+      {sites.length === 0 ? (
+        <div className="text-center text-muted py-5 border rounded">
+          <i className="ri-global-line fs-1 d-block mb-2 opacity-50" />
+          No sites yet. Click <strong>Add Site</strong> to get started.
+        </div>
+      ) : (
+        <div className="row g-3">
+          {sites.map(site => (
+            <div key={site.id} className="col-12 col-lg-6">
+              <div className={`border rounded p-3 h-100 ${!site.is_active ? 'opacity-50' : ''}`}>
+                <div className="d-flex align-items-start justify-content-between gap-2 mb-2">
+                  <div>
+                    <div className="fw-semibold d-flex align-items-center gap-2">
+                      {site.name}
+                      <span className={`badge ${site.is_active ? 'bg-success' : 'bg-secondary'}`} style={{ fontSize: 9 }}>
+                        {site.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="text-muted" style={{ fontSize: 11 }}>
+                      <code>{site.slug}</code>
+                      {site.domain && <span className="ms-2">{site.domain}</span>}
+                    </div>
+                  </div>
+                  <div className="d-flex gap-1 flex-shrink-0">
+                    <Button variant="outline-success"   size="sm" title="Edit Tokens"  onClick={() => setEditorSite(site)}><SvgTokens /></Button>
+                    <Button variant="outline-secondary" size="sm" title="Code snippet" onClick={() => openSnippet(site)}><SvgCode /></Button>
+                    <Button variant="outline-primary"   size="sm" title="Edit site"    onClick={() => openEdit(site)}><SvgEdit /></Button>
+                    <Button variant="outline-danger"    size="sm" title="Delete"       onClick={() => handleDelete(site)}><SvgTrash /></Button>
+                  </div>
+                </div>
+
+                {/* Theme badge */}
+                <div className="mb-2" style={{ fontSize: 12 }}>
+                  <span className="text-muted me-1">Theme:</span>
+                  {site.theme ? <span className="badge bg-primary-subtle text-primary">{site.theme.name}</span>
+                    : <span className="badge bg-secondary-subtle text-secondary">Default theme</span>}
+                </div>
+
+                {/* API Key row */}
+                <div className="d-flex align-items-center gap-1 mt-2">
+                  {site.has_api_key ? (
+                    <>
+                      <code className="flex-grow-1 text-truncate border rounded px-2 py-1 bg-light" style={{ fontSize: 10 }}>
+                        {revealed[site.id] || site.masked_api_key}
+                      </code>
+                      <Button variant="outline-secondary" size="sm" title={revealed[site.id] ? 'Hide key' : 'Reveal key'} onClick={() => handleRevealKey(site)}>
+                        {revealed[site.id] ? <SvgEyeOff /> : <SvgEye />}
+                      </Button>
+                      <Button variant="outline-warning" size="sm" title="Regenerate key" onClick={() => handleGenKey(site)}>
+                        <SvgRefresh />
+                      </Button>
+                    </>
+                  ) : (
+                    <button className="btn btn-sm btn-outline-secondary w-100 py-1" onClick={() => handleGenKey(site)}>
+                      <i className="ri-key-line me-1" />Generate API Key
+                    </button>
+                  )}
+                </div>
+
+                {/* Endpoints */}
+                <div className="mt-2 d-flex gap-1 flex-wrap">
+                  <a href={site.endpoints.tokens} target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>JSON</a>
+                  <a href={site.endpoints.css}    target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>CSS</a>
+                  <a href={site.endpoints.theme}  target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>Theme</a>
+                  <button className="badge bg-light border text-muted" style={{ fontSize: 9, cursor: 'pointer' }} onClick={() => toggleActive(site)}>
+                    {site.is_active ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Create / Edit Modal */}
+      {(modal === 'create' || modal === 'edit') && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">{modal === 'edit' ? 'Edit Site' : 'Add Site'}</h5>
+                <button className="btn-close" onClick={() => setModal(null)} />
+              </div>
+              <div className="modal-body">
+                {err && <div className="alert alert-danger py-2 small">{err}</div>}
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Site Name *</label>
+                  <input className="form-control form-control-sm" value={form.name}
+                    onChange={e => { setForm(f => ({ ...f, name: e.target.value })); handleSlugify(e.target.value); }} />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Slug * <span className="text-muted fw-normal">(lowercase, hyphens only)</span></label>
+                  <input className="form-control form-control-sm font-monospace" value={form.slug}
+                    onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))} />
+                  <div className="text-muted mt-1" style={{ fontSize: 10 }}>/api/design-tokens/<strong>{form.slug || 'my-site'}</strong></div>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Domain <span className="text-muted fw-normal">(optional, for auto-detect)</span></label>
+                  <input className="form-control form-control-sm" placeholder="e.g. myapp.com" value={form.domain}
+                    onChange={e => setForm(f => ({ ...f, domain: e.target.value }))} />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Assign Theme</label>
+                  <select className="form-select form-select-sm" value={form.theme_id}
+                    onChange={e => setForm(f => ({ ...f, theme_id: e.target.value }))}>
+                    <option value="">Default theme</option>
+                    {themes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Description</label>
+                  <textarea className="form-control form-control-sm" rows={2} value={form.description}
+                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                </div>
+                <div className="form-check">
+                  <input className="form-check-input" type="checkbox" id="site-active" checked={form.is_active}
+                    onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+                  <label className="form-check-label small" htmlFor="site-active">Active</label>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <Button variant="secondary" size="sm" onClick={() => setModal(null)}>Cancel</Button>
+                <Button variant="primary" size="sm" disabled={saving || !form.name || !form.slug} onClick={handleSubmit}>
+                  {saving ? 'Saving…' : modal === 'edit' ? 'Save Changes' : 'Create Site'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Token Editor */}
+      {editorSite && <SiteTokenEditor site={editorSite} onClose={() => setEditorSite(null)} />}
+
+      {/* Code Snippet Modal */}
+      {modal === 'snippet' && active && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title"><i className="ri-code-line me-2" />Integration Snippets — {active.name}</h5>
+                <button className="btn-close" onClick={() => setModal(null)} />
+              </div>
+              <div className="modal-body">
+                {[
+                  { label: 'Fetch token map (JSON) — vanilla JS', code: `fetch('${active.endpoints.tokens}')\n  .then(r => r.json())\n  .then(tokens => console.log(tokens));` },
+                  { label: 'Inject CSS variables — vanilla JS', code: `fetch('${active.endpoints.css}')\n  .then(r => r.text())\n  .then(css => {\n    const s = document.createElement('style');\n    s.textContent = css;\n    document.head.appendChild(s);\n  });` },
+                  { label: 'With API key header', code: `fetch('${active.endpoints.tokens}', {\n  headers: { 'X-DS-Key': 'ds_your_api_key_here' }\n}).then(r => r.json()).then(console.log);` },
+                  { label: 'React hook', code: `import { useEffect, useState } from 'react';\n\nexport function useDesignTokens() {\n  const [tokens, setTokens] = useState({});\n  useEffect(() => {\n    fetch('${active.endpoints.tokens}')\n      .then(r => r.json()).then(setTokens);\n  }, []);\n  return tokens;\n}` },
+                  { label: 'Next.js — inject in layout (SSR)', code: `// app/layout.tsx\nconst css = await fetch('${active.endpoints.css}').then(r => r.text());\n\nexport default function RootLayout({ children }) {\n  return (\n    <html>\n      <head><style dangerouslySetInnerHTML={{ __html: css }} /></head>\n      <body>{children}</body>\n    </html>\n  );\n}` },
+                ].map(({ label, code }) => (
+                  <div key={label} className="mb-3">
+                    <div className="fw-semibold small mb-1">{label}</div>
+                    <pre className="bg-dark text-white rounded p-3 mb-0" style={{ fontSize: 11, overflowX: 'auto' }}>
+                      <code>{code}</code>
+                    </pre>
+                  </div>
+                ))}
+              </div>
+              <div className="modal-footer">
+                <Button variant="secondary" size="sm" onClick={() => setModal(null)}>Close</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Export / Presets Tab ─────────────────────────────────────────────────────
 
 const ExportTab = ({ spacing, anim, css, onRestore }) => {
@@ -1017,7 +1689,7 @@ const DesignSystemPage = () => {
         {hasSpacing && <span className="badge bg-info text-dark">spacing: {spacing.preset}</span>}
         {hasAnim    && <span className="badge bg-warning text-dark">anim: {anim.speed}</span>}
         {hasCss     && <span className="badge bg-dark">custom CSS</span>}
-        <span className="ms-auto text-muted small"><i className="ri-save-line me-1" />Auto-saved to localStorage</span>
+        <span className="ms-auto text-muted small"><i className="ri-database-2-line me-1" />Auto-saved to localStorage + DB · real-time sync across tabs</span>
       </div>
 
       <Card>
@@ -1067,6 +1739,11 @@ const DesignSystemPage = () => {
                     <i className="ri-share-box-line me-1" />Export
                   </Nav.Link>
                 </Nav.Item>
+                <Nav.Item>
+                  <Nav.Link eventKey="sites" style={{ whiteSpace: 'nowrap' }}>
+                    <i className="ri-global-line me-1" />Sites
+                  </Nav.Link>
+                </Nav.Item>
               </Nav>
             </div>
 
@@ -1079,6 +1756,7 @@ const DesignSystemPage = () => {
               <Tab.Pane eventKey="animations"><AnimationsTab anim={anim} setAnim={setAnim} /></Tab.Pane>
               <Tab.Pane eventKey="css"><CustomCSSTab css={css} setCss={setCss} /></Tab.Pane>
               <Tab.Pane eventKey="export"><ExportTab spacing={spacing} anim={anim} css={css} onRestore={handleRestore} /></Tab.Pane>
+              <Tab.Pane eventKey="sites"><SitesTab /></Tab.Pane>
             </Tab.Content>
           </Tab.Container>
         </Card.Body>
