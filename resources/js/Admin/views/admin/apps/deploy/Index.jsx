@@ -394,9 +394,14 @@ export default function DeployManager() {
         return;
       }
       setShowForm(false);
-      const fresh = await fetchProjects(true);
-      const id = d.id || editId || fresh?.[0]?.id;
-      if (id) { setSelected(id); setView('detail'); fetchLogs(id, true); }
+      await fetchProjects(true);        // always refresh the list
+      if (editId) {
+        // update: stay on detail view if already there
+        if (view === 'detail') fetchLogs(editId, true);
+      } else {
+        // create: go to list so user sees the new row
+        setView('list');
+      }
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
   };
