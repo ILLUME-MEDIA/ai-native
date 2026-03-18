@@ -168,9 +168,52 @@ class DeployController extends Controller
         ]);
 
         $project->update(['status' => 'deploying']);
-        RunDeployJob::dispatch($project->id, $log->id);
+
+        // Run in a detached background process — no queue worker needed.
+        // This works on shared hosting (cPanel) where queue:work can't run persistently.
+        $this->runDeployInBackground($log->id);
 
         return response()->json(['log_id' => $log->id]);
+    }
+
+    // ── Lightweight log output poll (for real-time terminal) ──────────────────
+
+    public function logOutput($projectId, $logId)
+    {
+        $log = DeployLog::where('id', $logId)
+            ->where('project_id', $projectId)
+            ->first();
+
+        if (!$log) {
+            return response()->json(['error' => 'Log not found'], 404);
+        }
+
+        return response()->json([
+            'id'               => $log->id,
+            'status'           => $log->status,
+            'output'           => $log->output ?? '',
+            'duration_seconds' => $log->duration_seconds,
+            'commit_hash'      => $log->commit_hash,
+        ]);
+    }
+
+    // ── Background dispatch helper ────────────────────────────────────────────
+
+    private function runDeployInBackground(int $logId): void
+    {
+        $php     = PHP_BINARY;
+        $artisan = base_path('artisan');
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            // Windows (local dev): open a detached process
+            $cmd = "start /B \"\" \"{$php}\" \"{$artisan}\" deploy:run {$logId}";
+            pclose(popen($cmd, 'r'));
+        } else {
+            // Linux/Mac (production): detach with & and redirect output
+            $cmd = escapeshellarg($php) . ' ' . escapeshellarg($artisan)
+                . ' deploy:run ' . (int)$logId . ' > /dev/null 2>&1 &';
+            exec($cmd);
+        }
     }
 
     // ── Stop a running deploy ─────────────────────────────────────────────────

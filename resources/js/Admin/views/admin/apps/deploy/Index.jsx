@@ -187,8 +187,11 @@ export default function DeployManager() {
   const [deploying,   setDeploying]   = useState({});
   const [copied,      setCopied]      = useState(null);
   const [fetchError,  setFetchError]  = useState('');
-  const logEndRef = useRef(null);
-  const pollRef   = useRef(null);
+  // liveLog: { id, projectId, status, output, duration_seconds } — tracks the running log output
+  const [liveLog,     setLiveLog]     = useState(null);
+  const logEndRef  = useRef(null);
+  const pollRef    = useRef(null);
+  const liveRef    = useRef(null);   // interval for live log output polling
 
   // ── data ──────────────────────────────────────────────────────────────────
 
@@ -230,29 +233,55 @@ export default function DeployManager() {
     } finally { if (!quiet) setLogsLoading(false); }
   }, []);
 
+  // ── Live log output polling (targeted, faster than fetching all logs) ────────
+  const startLivePolling = useCallback((projectId, logId) => {
+    clearInterval(liveRef.current);
+    setLiveLog({ id: logId, projectId, status: 'pending', output: '', duration_seconds: null });
+    setOpenLog(logId);
+
+    liveRef.current = setInterval(async () => {
+      try {
+        const r = await apiFetch(`${API}/projects/${projectId}/logs/${logId}/output`);
+        if (!r.ok) return;
+        const d = await r.json();
+        setLiveLog({ id: logId, projectId, ...d });
+        // Mirror into the logs array so the terminal renders correctly
+        setLogs(prev => prev.map(l => l.id === logId ? { ...l, ...d } : l));
+        // Stop live polling when the deploy finishes
+        if (d.status !== 'running' && d.status !== 'pending') {
+          clearInterval(liveRef.current);
+          // Full refresh so project status + log list are up to date
+          fetchProjects(true);
+          setLiveLog(null);
+        }
+      } catch { /* ignore transient network errors */ }
+    }, 1500);
+  }, [fetchProjects]); // eslint-disable-line
+
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
-  // Auto-refresh while deploying
+  // Slow background poll: refresh project list + logs while a deploy is active
   useEffect(() => {
     clearInterval(pollRef.current);
     const busy = projects.some(p => p.status === 'deploying') || Object.values(deploying).some(Boolean);
     if (busy) {
       pollRef.current = setInterval(async () => {
-        const fresh = await fetchProjects(true);
-        if (selected) {
-          const still = fresh.find(p => p.id === selected);
-          if (still) fetchLogs(selected, true);
-        }
-      }, 2000);
+        await fetchProjects(true);
+        if (selected && !liveLog) fetchLogs(selected, true); // only if no live polling
+      }, 4000);
     }
     return () => clearInterval(pollRef.current);
-  }, [projects, deploying, selected, fetchProjects, fetchLogs]);
+  }, [projects, deploying, selected, liveLog, fetchProjects, fetchLogs]);
+
+  // Clean up live polling on unmount
+  useEffect(() => () => clearInterval(liveRef.current), []);
 
   useEffect(() => {
-    if (selected) { setLogs([]); setOpenLog(null); fetchLogs(selected); }
+    if (selected) { setLogs([]); setOpenLog(null); setLiveLog(null); fetchLogs(selected); }
   }, [selected]); // eslint-disable-line
 
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, openLog]);
+  // Auto-scroll terminal when output changes
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, openLog, liveLog]);
 
   // ── reveal stored secrets ─────────────────────────────────────────────────
 
@@ -319,34 +348,42 @@ export default function DeployManager() {
   const triggerDeploy = async (p, e) => {
     e?.stopPropagation();
     setDeploying(d => ({ ...d, [p.id]: true }));
-    const r = await apiFetch(`${API}/projects/${p.id}/deploy`, { method: 'POST' });
-    const d = await r.json();
-    if (r.ok) {
-      setSelected(p.id);
-      setView('detail');
-      setOpenLog(null); // reset so fetchLogs will auto-open the new running log
-      setTimeout(() => { fetchProjects(true); fetchLogs(p.id, true); }, 1200);
-    } else {
-      alert(d.message || 'Deploy failed to start');
+    try {
+      const r = await apiFetch(`${API}/projects/${p.id}/deploy`, { method: 'POST' });
+      let d = {};
+      try { d = await r.json(); } catch { /* non-JSON response */ }
+
+      if (r.ok && d.log_id) {
+        // Navigate to detail and start live polling immediately
+        setSelected(p.id);
+        setView('detail');
+        // Fetch the log list first, then start live polling on the new log
+        fetchLogs(p.id, true).then(() => {
+          startLivePolling(p.id, d.log_id);
+        });
+        fetchProjects(true);
+      } else {
+        const msg = d.message || `Deploy failed (HTTP ${r.status})`;
+        alert(msg);
+        setDeploying(prev => ({ ...prev, [p.id]: false }));
+      }
+    } catch (err) {
+      alert('Deploy error: ' + err.message);
       setDeploying(prev => ({ ...prev, [p.id]: false }));
     }
-    setTimeout(() => setDeploying(d => ({ ...d, [p.id]: false })), 5000);
+    // Clear the "deploying" button indicator after a few seconds
+    // (actual status is tracked via liveLog / project.status)
+    setTimeout(() => setDeploying(prev => ({ ...prev, [p.id]: false })), 6000);
   };
 
   const stopDeploy = async (p, e) => {
     e?.stopPropagation();
+    clearInterval(liveRef.current);
+    setLiveLog(null);
     await apiFetch(`${API}/projects/${p.id}/stop`, { method: 'POST' });
-    // Poll every second until status leaves 'deploying'
-    const poll = setInterval(async () => {
-      const fresh = await fetchProjects(true);
-      const updated = fresh?.find(x => x.id === p.id);
-      if (!updated || updated.status !== 'deploying') {
-        clearInterval(poll);
-        fetchLogs(p.id, true);
-      }
-    }, 1000);
-    // Safety timeout — stop polling after 30s regardless
-    setTimeout(() => clearInterval(poll), 30000);
+    // Refresh immediately
+    fetchProjects(true);
+    if (selected === p.id) fetchLogs(p.id, true);
   };
 
   const copyWebhook = async (p, e) => {
@@ -537,6 +574,7 @@ export default function DeployManager() {
           setOpenLog={setOpenLog}
           logEndRef={logEndRef}
           deploying={deploying}
+          liveLog={liveLog}
           copied={copied}
           onBack={() => setView('list')}
           onDeploy={triggerDeploy}
@@ -545,7 +583,7 @@ export default function DeployManager() {
           onDelete={deleteProject}
           onToggleAuto={toggleAutoDeploy}
           onCopyWebhook={copyWebhook}
-          onRefreshLogs={() => { setLogs([]); fetchLogs(selectedProject.id); }}
+          onRefreshLogs={() => { setLogs([]); setLiveLog(null); fetchLogs(selectedProject.id); }}
         />
       )}
 
@@ -571,13 +609,47 @@ export default function DeployManager() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Terminal output — colorises log lines, auto-scroll, live indicator
+// ══════════════════════════════════════════════════════════════════════════════
+function TerminalOutput({ output, isLive, logEndRef }) {
+  const lineClass = (line) => {
+    if (line.includes('[ERROR]'))    return 'text-danger';
+    if (line.includes('[WARN]'))     return 'text-warning';
+    if (line.includes('[stderr]'))   return 'text-warning';
+    if (/\[.\/.\]/.test(line))      return 'text-info fw-semibold';
+    if (line.includes('=== Deploy')) return 'text-success fw-bold';
+    if (line.includes('complete'))   return 'text-success';
+    return 'text-light';
+  };
+
+  return (
+    <pre className="bg-dark text-light m-0 p-3"
+      style={{ maxHeight: 450, overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', borderRadius: 0 }}>
+      {isLive && !output && (
+        <span className="text-muted">
+          <span className="spinner-border spinner-border-sm me-2" style={{ width: 10, height: 10 }} />
+          Starting deploy… waiting for output
+        </span>
+      )}
+      {output
+        ? output.split('\n').map((line, i) => (
+          <span key={i} className={lineClass(line)}>{line}{'\n'}</span>
+        ))
+        : (!isLive && <span className="text-muted">No output yet.</span>)}
+      {isLive && <span className="text-success blink">▌</span>}
+      <span ref={logEndRef} />
+    </pre>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Right panel: project detail + logs
 // ══════════════════════════════════════════════════════════════════════════════
 function ProjectDetail({
   project: p, logs, logsLoading, openLog, setOpenLog, logEndRef,
-  deploying, copied, onBack, onDeploy, onStop, onEdit, onDelete, onToggleAuto, onCopyWebhook, onRefreshLogs,
+  deploying, liveLog, copied, onBack, onDeploy, onStop, onEdit, onDelete, onToggleAuto, onCopyWebhook, onRefreshLogs,
 }) {
-  const isDeploying = deploying[p.id] || p.status === 'deploying';
+  const isDeploying = deploying[p.id] || p.status === 'deploying' || (liveLog && (liveLog.status === 'running' || liveLog.status === 'pending'));
 
   return (
     <div className="d-flex flex-column gap-3">
@@ -688,13 +760,17 @@ function ProjectDetail({
                   className={`d-flex align-items-center gap-2 px-3 py-2 ${openLog === log.id ? 'bg-light' : ''}`}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setOpenLog(openLog === log.id ? null : log.id)}>
-                  <span className={`badge bg-${STATUS_COLOR[log.status] || 'secondary'} text-nowrap`}
-                    style={{ minWidth: 65, fontSize: '0.72rem' }}>
-                    {log.status === 'running' && (
-                      <span className="spinner-border spinner-border-sm me-1" style={{ width: 8, height: 8 }} />
-                    )}
-                    {log.status}
-                  </span>
+                  {(() => {
+                    const effectiveStatus = liveLog?.id === log.id ? liveLog.status : log.status;
+                    const isRunning = effectiveStatus === 'running' || effectiveStatus === 'pending';
+                    return (
+                      <span className={`badge bg-${STATUS_COLOR[effectiveStatus] || 'secondary'} text-nowrap`}
+                        style={{ minWidth: 65, fontSize: '0.72rem' }}>
+                        {isRunning && <span className="spinner-border spinner-border-sm me-1" style={{ width: 8, height: 8 }} />}
+                        {effectiveStatus}
+                      </span>
+                    );
+                  })()}
                   <span className="font-monospace text-muted small text-nowrap">
                     {log.commit_hash ? log.commit_hash.slice(0, 7) : '—'}
                   </span>
@@ -711,23 +787,11 @@ function ProjectDetail({
 
                 {/* Terminal output */}
                 {openLog === log.id && (
-                  <pre className="bg-dark text-light m-0 p-3"
-                    style={{ maxHeight: 400, overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.78rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', borderRadius: 0 }}>
-                    {log.output
-                      ? log.output.split('\n').map((line, i) => (
-                        <span key={i} className={
-                          line.includes('[ERROR]')    ? 'text-danger' :
-                          line.includes('[WARN]')     ? 'text-warning' :
-                          line.includes('[stderr]')   ? 'text-warning' :
-                          /\[.\/.\]/.test(line)       ? 'text-info' :
-                          line.includes('=== Deploy') ? 'text-success fw-bold' :
-                          line.includes('complete')   ? 'text-success' :
-                          'text-light'
-                        }>{line}{'\n'}</span>
-                      ))
-                      : <span className="text-muted">Waiting for output…</span>}
-                    <span ref={logEndRef} />
-                  </pre>
+                  <TerminalOutput
+                    output={liveLog?.id === log.id ? liveLog.output : log.output}
+                    isLive={liveLog?.id === log.id && (liveLog.status === 'running' || liveLog.status === 'pending')}
+                    logEndRef={logEndRef}
+                  />
                 )}
               </div>
             ))

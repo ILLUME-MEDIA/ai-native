@@ -75,7 +75,10 @@ class PollDeployProjects extends Command
             ]);
 
             $project->update(['status' => 'deploying']);
-            RunDeployJob::dispatch($project->id, $log->id, $latestSha, $commitMsg);
+
+            // Run synchronously here — we're already inside an artisan command (cron job).
+            $job = new RunDeployJob($project->id, $log->id, $latestSha, $commitMsg);
+            $job->handle();
 
         } catch (\Throwable $e) {
             $this->error("[{$project->name}] " . $e->getMessage());
