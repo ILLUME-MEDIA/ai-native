@@ -71,10 +71,19 @@ const SvgKey = () => (
     <path d="M15.5 7.5l3 3L22 7l-3-3" />
   </svg>
 );
+const SvgTrash = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </svg>
+);
 
 // ── Password input with show/hide + optional reveal-from-server ──────────────
-function RevealInput({ value, onChange, placeholder, revealed, onReveal, isLoading }) {
+function RevealInput({ value, onChange, placeholder, revealed, onReveal, isLoading, forceShow }) {
   const [show, setShow] = useState(false);
+  useEffect(() => { if (forceShow) setShow(true); }, [forceShow]);
   return (
     <div>
       <div className="input-group">
@@ -124,6 +133,7 @@ export default function DeployManager() {
   const [formErr,       setFormErr]       = useState('');
   const [formTab,       setFormTab]       = useState('repo');
   const [revealing,     setRevealing]     = useState(false);
+  const [secretsShown,  setSecretsShown]  = useState(false);
   const [nodeDetecting, setNodeDetecting] = useState(false);
   const [nodeInfo,      setNodeInfo]      = useState(null); // { node_path, node_version, npm_version }
   const [logs,        setLogs]        = useState([]);
@@ -190,11 +200,12 @@ export default function DeployManager() {
       const d = await r.json();
       setForm(f => ({
         ...f,
-        github_token: d.github_token || f.github_token,
-        ftp_host:     d.ftp_host     || f.ftp_host,
-        ftp_username: d.ftp_username || f.ftp_username,
-        ftp_password: d.ftp_password || f.ftp_password,
+        github_token: d.github_token ?? f.github_token,
+        ftp_host:     d.ftp_host     ?? f.ftp_host,
+        ftp_username: d.ftp_username ?? f.ftp_username,
+        ftp_password: d.ftp_password ?? f.ftp_password,
       }));
+      setSecretsShown(true);
     } finally { setRevealing(false); }
   };
 
@@ -202,7 +213,7 @@ export default function DeployManager() {
 
   const openAdd = () => {
     setForm(BLANK); setEditId(null); setDetectInfo(null); setFormErr(''); setFormTab('repo');
-    setShowForm(true);
+    setSecretsShown(false); setShowForm(true);
   };
 
   const openEdit = (p, e) => {
@@ -220,7 +231,7 @@ export default function DeployManager() {
       poll_interval: p.poll_interval || 5,
     });
     setDetectInfo(null); setEditId(p.id); setFormErr(''); setFormTab('repo');
-    setShowForm(true);
+    setSecretsShown(false); setShowForm(true);
   };
 
   const deleteProject = async (p, e) => {
@@ -429,7 +440,7 @@ export default function DeployManager() {
           formTab={formTab} setFormTab={setFormTab}
           formErr={formErr} saving={saving}
           detecting={detecting} detectInfo={detectInfo}
-          revealing={revealing}
+          revealing={revealing} secretsShown={secretsShown}
           nodeDetecting={nodeDetecting} nodeInfo={nodeInfo}
           onReveal={revealSecrets}
           onDetect={detect}
@@ -504,7 +515,7 @@ function ProjectDetail({
                 <i className="ri-pencil-line me-1" />Edit
               </button>
               <button className="btn btn-sm btn-outline-danger" onClick={e => onDelete(p, e)}>
-                <i className="ri-delete-bin-line" />
+                <SvgTrash />
               </button>
             </div>
           </div>
@@ -617,7 +628,7 @@ function ProjectDetail({
 // ══════════════════════════════════════════════════════════════════════════════
 function ProjectFormModal({
   form, setF, editId, formTab, setFormTab, formErr, saving,
-  detecting, detectInfo, revealing, nodeDetecting, nodeInfo,
+  detecting, detectInfo, revealing, secretsShown, nodeDetecting, nodeInfo,
   onReveal, onDetect, onDetectNode, onApplyFramework, onSave, onClose,
 }) {
   return (
@@ -697,6 +708,7 @@ function ProjectFormModal({
                       revealed={!!editId}
                       onReveal={onReveal}
                       isLoading={revealing}
+                      forceShow={secretsShown}
                     />
                     <div className="form-text">
                       GitHub → Settings → Developer Settings → Personal Access Tokens → <code>contents:read</code>
@@ -849,6 +861,7 @@ function ProjectFormModal({
                       revealed={!!editId}
                       onReveal={onReveal}
                       isLoading={revealing}
+                      forceShow={secretsShown}
                     />
                   </div>
                   <div className="col-md-4 mb-3">
@@ -868,6 +881,7 @@ function ProjectFormModal({
                       revealed={!!editId}
                       onReveal={onReveal}
                       isLoading={revealing}
+                      forceShow={secretsShown}
                     />
                   </div>
                   <div className="col-md-6 mb-3">
@@ -879,6 +893,7 @@ function ProjectFormModal({
                       revealed={!!editId}
                       onReveal={onReveal}
                       isLoading={revealing}
+                      forceShow={secretsShown}
                     />
                   </div>
                 </div>
