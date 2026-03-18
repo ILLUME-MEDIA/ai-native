@@ -157,7 +157,8 @@ Route::prefix('admin/design-system')->group(function () {
     Route::get('/themes/{dsTheme}',              [DsThemeController::class, 'show']);
     Route::put('/themes/{dsTheme}',              [DsThemeController::class, 'update']);
     Route::delete('/themes/{dsTheme}',           [DsThemeController::class, 'destroy']);
-    Route::post('/themes/{dsTheme}/duplicate',   [DsThemeController::class, 'duplicate']);
+    Route::post('/themes/{dsTheme}/duplicate',    [DsThemeController::class, 'duplicate']);
+    Route::post('/themes/{dsTheme}/seed-defaults',[DsThemeController::class, 'seedDefaults']);
     // Exports
     Route::get('/themes/{dsTheme}/export/json',     [DsThemeController::class, 'exportJson']);
     Route::get('/themes/{dsTheme}/export/css',      [DsThemeController::class, 'exportCss']);

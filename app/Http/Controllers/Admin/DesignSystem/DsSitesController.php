@@ -85,20 +85,24 @@ class DsSitesController extends Controller
 
     private function format(DsSite $site): array
     {
+        // Always resolve the actual theme (falls back to default if site has no theme_id)
+        $resolvedTheme = $site->resolveTheme();
+
         return [
-            'id'             => $site->id,
-            'name'           => $site->name,
-            'slug'           => $site->slug,
-            'domain'         => $site->domain,
-            'masked_api_key' => $site->getMaskedApiKey(),
-            'has_api_key'    => !empty($site->api_key),
-            'theme_id'       => $site->theme_id,
-            'theme'          => $site->relationLoaded('theme') ? $site->theme : null,
-            'is_active'      => $site->is_active,
-            'description'    => $site->description,
-            'created_at'     => $site->created_at,
-            // API endpoint hints
-            'endpoints'      => [
+            'id'                 => $site->id,
+            'name'               => $site->name,
+            'slug'               => $site->slug,
+            'domain'             => $site->domain,
+            'masked_api_key'     => $site->getMaskedApiKey(),
+            'has_api_key'        => !empty($site->api_key),
+            'theme_id'           => $site->theme_id,
+            'resolved_theme_id'  => $resolvedTheme?->id,   // always has a value
+            'resolved_theme_name'=> $resolvedTheme?->name,
+            'theme'              => $site->relationLoaded('theme') ? $site->theme : null,
+            'is_active'          => $site->is_active,
+            'description'        => $site->description,
+            'created_at'         => $site->created_at,
+            'endpoints'          => [
                 'tokens' => url("/api/design-tokens/{$site->slug}"),
                 'css'    => url("/api/design-tokens/{$site->slug}/css"),
                 'theme'  => url("/api/design-tokens/{$site->slug}/theme"),

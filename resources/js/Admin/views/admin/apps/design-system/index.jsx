@@ -318,7 +318,213 @@ const ColorsTab = () => {
           })}
         </div>
       </div>
+      <TokenPaletteSection />
     </div>
+  );
+};
+
+// ─── Token Palette Viewer ─────────────────────────────────────────────────────
+
+const PALETTE_NAMES = ['primary','secondary','success','danger','warning','info','gray','blue','purple','teal','amber'];
+const PALETTE_SHADES = [50,100,200,300,400,500,600,700,800,900];
+
+const TokenPaletteSection = () => {
+  const [tokens, setTokens]   = useState(null);  // null = not loaded
+  const [loading, setLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMsg, setSeedMsg] = useState('');
+  const [themeId, setThemeId] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const loadPalette = useCallback(async () => {
+    if (tokens !== null) { setExpanded(e => !e); return; }
+    setLoading(true);
+    try {
+      const xsrf = decodeURIComponent(document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? '');
+      const themes = await fetch('/api/admin/design-system/themes', {
+        headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf }, credentials: 'include'
+      }).then(r => r.json());
+      const def = themes.find(t => t.is_default) || themes[0];
+      if (!def) return;
+      setThemeId(def.id);
+      const data = await fetch(`/api/admin/design-system/tokens?theme_id=${def.id}`, {
+        headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf }, credentials: 'include'
+      }).then(r => r.json());
+      const map = {};
+      (Array.isArray(data) ? data : []).forEach(t => { map[t.name] = t.value; });
+      setTokens(map);
+      setExpanded(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [tokens]);
+
+  const handleSeed = async () => {
+    if (!themeId && !expanded) { await loadPalette(); return; }
+    if (!confirm('This will seed 300+ professional tokens (colors, spacing, typography, shadows) into your active theme. Existing tokens will be updated. Continue?')) return;
+    setSeeding(true); setSeedMsg('');
+    try {
+      const xsrf = decodeURIComponent(document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? '');
+      const res = await fetch(`/api/admin/design-system/themes/${themeId}/seed-defaults`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf },
+        credentials: 'include',
+      }).then(r => r.json());
+      setSeedMsg(`Seeded ${res.tokens_count} tokens successfully.`);
+      // Reload palette
+      setTokens(null);
+      await loadPalette();
+    } catch (e) {
+      setSeedMsg('Error: ' + e.message);
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  // Group tokens by palette/category
+  const paletteMap = {};
+  if (tokens) {
+    PALETTE_NAMES.forEach(p => {
+      paletteMap[p] = {};
+      PALETTE_SHADES.forEach(s => {
+        const v = tokens[`color.${p}.${s}`];
+        if (v) paletteMap[p][s] = v;
+      });
+    });
+  }
+
+  const semanticGroups = tokens ? {
+    'Text':    Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.text.'))),
+    'BG':      Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.bg.'))),
+    'Border':  Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.border.'))),
+    'Accent':  Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.accent.'))),
+    'Status':  Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.status.'))),
+    'On':      Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.on.'))),
+    'Dark':    Object.fromEntries(Object.entries(tokens).filter(([k]) => k.startsWith('color.dark.'))),
+  } : {};
+
+  const spacingTokens = tokens ? Object.entries(tokens).filter(([k]) => k.startsWith('spacing.')) : [];
+  const shadowTokens  = tokens ? Object.entries(tokens).filter(([k]) => k.startsWith('shadow.')) : [];
+
+  return (
+    <>
+      <hr className="my-4" />
+      <div className="d-flex align-items-center justify-content-between mb-3">
+        <div>
+          <h6 className="fw-bold mb-1">Full Token System</h6>
+          <p className="text-muted small mb-0">Professional 300+ token set: color palettes (50–900), semantic aliases, spacing, typography, shadows.</p>
+        </div>
+        <div className="d-flex gap-2">
+          <Button variant="outline-secondary" size="sm" onClick={loadPalette} disabled={loading}>
+            {loading ? <span className="spinner-border spinner-border-sm" /> : (expanded ? 'Hide Palette' : 'View Palette')}
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleSeed} disabled={seeding || !themeId && loading}>
+            {seeding ? <><span className="spinner-border spinner-border-sm me-1" />Seeding…</> : 'Seed Full Token Set'}
+          </Button>
+        </div>
+      </div>
+
+      {seedMsg && (
+        <div className={`alert py-2 small mb-3 ${seedMsg.startsWith('Error') ? 'alert-danger' : 'alert-success'}`}>
+          {seedMsg}
+        </div>
+      )}
+
+      {expanded && tokens && (
+        <div>
+          {/* Color Palettes */}
+          <div className="mb-3 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Color Palettes (50–900)</div>
+          <div className="d-flex flex-column gap-2 mb-4">
+            {PALETTE_NAMES.map(p => {
+              const shades = paletteMap[p];
+              if (!Object.keys(shades).length) return null;
+              return (
+                <div key={p} className="d-flex align-items-center gap-2">
+                  <div className="text-muted fw-semibold" style={{ width: 80, fontSize: 12, flexShrink: 0 }}>{p}</div>
+                  <div className="d-flex flex-grow-1 rounded overflow-hidden border">
+                    {PALETTE_SHADES.map(s => {
+                      const v = shades[s];
+                      if (!v) return null;
+                      return (
+                        <div key={s} title={`${p}.${s}: ${v}`}
+                          style={{ flex: 1, height: 32, backgroundColor: v, cursor: 'pointer', position: 'relative' }}
+                          onClick={() => navigator.clipboard?.writeText(v)}>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-muted font-monospace" style={{ fontSize: 9, width: 62, flexShrink: 0 }}>
+                    {shades[500] || ''}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Semantic Tokens */}
+          <div className="mb-3 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Semantic Tokens (Light Mode)</div>
+          <div className="row g-2 mb-4">
+            {Object.entries(semanticGroups).map(([group, map]) => {
+              const entries = Object.entries(map);
+              if (!entries.length) return null;
+              return (
+                <div key={group} className="col-md-6">
+                  <div className="border rounded p-2">
+                    <div className="fw-semibold mb-2" style={{ fontSize: 11 }}>{group}</div>
+                    {entries.map(([name, val]) => (
+                      <div key={name} className="d-flex align-items-center gap-2 mb-1">
+                        {val?.startsWith('#') || val?.startsWith('rgb') ? (
+                          <div className="rounded border flex-shrink-0" style={{ width: 16, height: 16, backgroundColor: val }} />
+                        ) : (
+                          <div className="rounded border flex-shrink-0 bg-light" style={{ width: 16, height: 16 }} />
+                        )}
+                        <div className="font-monospace text-truncate" style={{ fontSize: 10 }}>{name.replace('color.', '')}</div>
+                        <div className="text-muted font-monospace ms-auto flex-shrink-0" style={{ fontSize: 9 }}>{val?.length > 20 ? val.slice(0,18)+'…' : val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Spacing + Shadows preview */}
+          <div className="row g-3 mb-4">
+            {spacingTokens.length > 0 && (
+              <div className="col-md-6">
+                <div className="border rounded p-3">
+                  <div className="fw-semibold mb-2" style={{ fontSize: 11 }}>Spacing Scale ({spacingTokens.length} tokens)</div>
+                  <div className="d-flex flex-wrap gap-1">
+                    {spacingTokens.slice(0, 16).map(([k, v]) => (
+                      <div key={k} className="d-flex flex-column align-items-center" style={{ width: 36 }}>
+                        <div className="bg-primary rounded" style={{ width: v, maxWidth: 32, height: 4, minWidth: 2 }} />
+                        <div className="text-muted mt-1" style={{ fontSize: 8 }}>{k.replace('spacing.', '')}</div>
+                        <div className="text-muted" style={{ fontSize: 7 }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            {shadowTokens.length > 0 && (
+              <div className="col-md-6">
+                <div className="border rounded p-3">
+                  <div className="fw-semibold mb-2" style={{ fontSize: 11 }}>Elevation Scale ({shadowTokens.length} levels)</div>
+                  <div className="d-flex flex-column gap-2">
+                    {shadowTokens.map(([k, v]) => (
+                      <div key={k} className="d-flex align-items-center gap-2">
+                        <div className="text-muted" style={{ fontSize: 9, width: 20 }}>{k.replace('shadow.', '')}</div>
+                        <div className="rounded bg-white flex-grow-1" style={{ height: 16, boxShadow: v }} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
@@ -775,23 +981,20 @@ function callDS(path, opts = {}) {
 }
 
 const SiteTokenEditor = ({ site, onClose }) => {
-  const [tokens, setTokens]     = useState([]);  // raw token objects from API
-  const [vals, setVals]         = useState({});   // { tokenName: value } — live edits
-  const [saving, setSaving]     = useState(null); // tokenName being saved
-  const [saved, setSaved]       = useState(null); // tokenName just saved (flash)
+  const [tokens, setTokens]     = useState([]);
+  const [vals, setVals]         = useState({});
+  const [saving, setSaving]     = useState(null);
+  const [saved, setSaved]       = useState(null);
   const [loading, setLoading]   = useState(true);
+  const [tab, setTab]           = useState('colors');
   const saveTimers              = useRef({});
 
-  // Load tokens for site's theme
+  const resolvedThemeId = site?.resolved_theme_id;
+
   useEffect(() => {
-    if (!site) return;
+    if (!site || !resolvedThemeId) return;
     setLoading(true);
-    // resolve theme: site.theme_id OR default
-    const themeId = site.theme_id;
-    const url = themeId
-      ? `/api/admin/design-system/tokens?theme_id=${themeId}`
-      : '/api/admin/design-system/tokens';
-    callDS(themeId ? `/tokens?theme_id=${themeId}` : '/tokens')
+    callDS(`/tokens?theme_id=${resolvedThemeId}`)
       .then(data => {
         const list = Array.isArray(data) ? data : (data?.data ?? []);
         setTokens(list);
@@ -800,30 +1003,8 @@ const SiteTokenEditor = ({ site, onClose }) => {
         setVals(map);
       })
       .finally(() => setLoading(false));
-  }, [site]);
+  }, [site, resolvedThemeId]);
 
-  // Build live preview CSS
-  const previewCss = useCallback(() => {
-    const lines = [':root {'];
-    TOKEN_COLOR_DEFS.forEach(({ name }) => {
-      const v = vals[name]; if (!v) return;
-      const cssProp = `--preview-${name.replace('.', '-')}`;
-      lines.push(`  ${cssProp}: ${v};`);
-      // Also map to BS vars for preview buttons
-      if (name.startsWith('color.')) {
-        const key = name.split('.')[1];
-        lines.push(`  --bs-preview-${key}: ${v};`);
-      }
-    });
-    TOKEN_RADIUS_DEFS.forEach(({ name }) => {
-      const v = vals[name]; if (!v) return;
-      if (name === 'radius.md') lines.push(`  --preview-radius: ${v};`);
-    });
-    lines.push('}');
-    return lines.join('\n');
-  }, [vals]);
-
-  // Save a single token with debounce
   const handleChange = useCallback((tokenName, newValue) => {
     setVals(prev => ({ ...prev, [tokenName]: newValue }));
     clearTimeout(saveTimers.current[tokenName]);
@@ -833,31 +1014,125 @@ const SiteTokenEditor = ({ site, onClose }) => {
       setSaving(tokenName);
       try {
         await callDS(`/tokens/${token.id}`, { method: 'PUT', body: { value: newValue } });
-        // fetch updated map and broadcast
-        const themeId = site.theme_id;
-        const list = await callDS(themeId ? `/tokens?theme_id=${themeId}` : '/tokens');
+        const list = await callDS(`/tokens?theme_id=${resolvedThemeId}`);
         const map = {};
         (Array.isArray(list) ? list : (list?.data ?? [])).forEach(t => { map[t.name] = t.value; });
         const { broadcastTokenChange } = await import('@admin/utils/designSystemSync');
         broadcastTokenChange(map);
         setSaved(tokenName);
         setTimeout(() => setSaved(null), 1500);
-      } finally {
-        setSaving(null);
-      }
+      } finally { setSaving(null); }
     }, 600);
-  }, [tokens, site]);
+  }, [tokens, resolvedThemeId]);
 
-  // Live preview: inject into a scoped preview element via CSS vars
-  const previewStyle = (colorName) => {
-    const v = vals[`color.${colorName}`];
-    return v ? { backgroundColor: v, borderColor: v } : {};
+  // ── token groups ──────────────────────────────────────────────────────────
+  const byCategory = (cat) => tokens.filter(t => t.category === cat);
+  const colorTokens    = byCategory('color');
+  const fontTokens     = byCategory('font');
+  const spacingTokens  = byCategory('spacing');
+  const shadowTokens   = byCategory('shadow');
+  const radiusTokens   = byCategory('radius');
+  const opacityTokens  = byCategory('opacity');
+  const animTokens     = byCategory('animation');
+  const borderTokens   = byCategory('border');
+  const otherTokens    = tokens.filter(t => !['color','font','spacing','shadow','radius','opacity','animation','border'].includes(t.category));
+
+  // semantic colors only (primary/secondary/success/danger/warning/info/light/dark)
+  const SEMANTIC = ['primary','secondary','success','danger','warning','info','light','dark'];
+  const semanticColors = colorTokens.filter(t => SEMANTIC.some(k => t.name === `color.${k}`));
+
+  // palette groups: { 'color.blue': [token50, token100, …] }
+  const paletteMap = {};
+  colorTokens.filter(t => !SEMANTIC.some(k => t.name === `color.${k}`)).forEach(t => {
+    const grp = t.name.split('.').slice(0,2).join('.');
+    if (!paletteMap[grp]) paletteMap[grp] = [];
+    paletteMap[grp].push(t);
+  });
+
+  // preview helpers
+  const pv    = (name) => vals[`color.${name}`] || null;
+  const rVal  = vals['radius.md'] || '0.375rem';
+  const solidBtn  = (name) => { const v = pv(name); return v ? { backgroundColor: v, borderColor: v, color: '#fff' } : {}; };
+  const outlineBtn= (name) => { const v = pv(name); return v ? { color: v, borderColor: v, background: 'transparent' } : {}; };
+
+  // ── small sub-components ──────────────────────────────────────────────────
+  const SaveIndicator = ({ name }) => (
+    saving === name
+      ? <div className="spinner-border flex-shrink-0" style={{ width: 10, height: 10, borderWidth: 2, color: 'var(--bs-primary)' }} />
+      : saved === name
+        ? <span className="text-success flex-shrink-0" style={{ fontSize: 10 }}>✓</span>
+        : null
+  );
+
+  const ColorRow = ({ token, compact }) => {
+    const v = vals[token.name] || '';
+    const hex = v.startsWith('#') ? v : '#cccccc';
+    const label = token.name.split('.').pop();
+    return (
+      <div className={`border rounded p-2 ${compact ? '' : 'mb-2'}`}>
+        {!compact && (
+          <div className="d-flex align-items-center gap-2 mb-2">
+            <div className="rounded border flex-shrink-0" style={{ width: 24, height: 24, backgroundColor: hex, transition: 'background .15s' }} />
+            <div className="flex-grow-1">
+              <div className="fw-semibold" style={{ fontSize: 12 }}>{label.charAt(0).toUpperCase()+label.slice(1)}</div>
+              <div className="text-muted" style={{ fontSize: 10 }}>{token.name}</div>
+            </div>
+            <SaveIndicator name={token.name} />
+          </div>
+        )}
+        <div className={`input-group input-group-sm ${compact ? 'd-flex align-items-center gap-1' : ''}`}>
+          {compact && <div className="rounded border flex-shrink-0" style={{ width: 20, height: 20, backgroundColor: hex, minWidth: 20 }} />}
+          <input type="color" className="form-control form-control-color border-end-0 flex-shrink-0"
+            style={{ maxWidth: 30, padding: '2px 2px', cursor: 'pointer' }}
+            value={hex} onChange={e => handleChange(token.name, e.target.value)} />
+          <input type="text" className="form-control font-monospace"
+            style={{ fontSize: 10 }} value={v} maxLength={7} placeholder="#000000"
+            onChange={e => {
+              const x = e.target.value;
+              if (x === '' || /^#[0-9a-fA-F]{0,6}$/.test(x)) {
+                if (x.length === 7) handleChange(token.name, x);
+                else setVals(p => ({ ...p, [token.name]: x }));
+              }
+            }} />
+          {compact && <SaveIndicator name={token.name} />}
+        </div>
+      </div>
+    );
   };
-  const outlineStyle = (colorName) => {
-    const v = vals[`color.${colorName}`];
-    return v ? { color: v, borderColor: v } : {};
+
+  const TextTokenRow = ({ token, label, type = 'text', min, max, step, unit = '' }) => {
+    const v = vals[token.name] || '';
+    const numV = parseFloat(v) || 0;
+    return (
+      <div className="border rounded px-3 py-2 d-flex align-items-center gap-2">
+        <div className="flex-grow-1" style={{ minWidth: 0 }}>
+          <div className="fw-semibold" style={{ fontSize: 11 }}>{label || token.name.split('.').pop()}</div>
+          <div className="text-muted font-monospace" style={{ fontSize: 9 }}>{token.name}</div>
+        </div>
+        {type === 'range' ? (
+          <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 180 }}>
+            <input type="range" className="form-range flex-grow-1" min={min} max={max} step={step}
+              value={numV} onChange={e => handleChange(token.name, `${parseFloat(e.target.value).toFixed(step < 0.1 ? 3 : 2)}${unit}`)} />
+            <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 44 }}>{v || '—'}</span>
+          </div>
+        ) : (
+          <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
+            style={{ maxWidth: 140, fontSize: 11 }} value={v}
+            onChange={e => handleChange(token.name, e.target.value)} />
+        )}
+        <SaveIndicator name={token.name} />
+      </div>
+    );
   };
-  const radiusVal = vals['radius.md'] || '0.375rem';
+
+  const TABS = [
+    { key: 'colors',    label: 'Colors',       count: colorTokens.length },
+    { key: 'typography',label: 'Typography',   count: fontTokens.length },
+    { key: 'shape',     label: 'Shape & Depth',count: radiusTokens.length + shadowTokens.length },
+    { key: 'spacing',   label: 'Spacing',      count: spacingTokens.length },
+    { key: 'animation', label: 'Animation',    count: animTokens.length },
+    { key: 'other',     label: 'Other',        count: opacityTokens.length + borderTokens.length + otherTokens.length },
+  ].filter(t => t.count > 0);
 
   if (!site) return null;
 
@@ -865,17 +1140,18 @@ const SiteTokenEditor = ({ site, onClose }) => {
     <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1060 }}>
       <div className="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
         <div className="modal-content">
+
           {/* Header */}
-          <div className="modal-header border-bottom py-3">
+          <div className="modal-header border-bottom py-2">
             <div>
-              <h5 className="modal-title fw-bold mb-0">
+              <h5 className="modal-title fw-bold mb-0" style={{ fontSize: 15 }}>
                 Token Editor — {site.name}
               </h5>
-              <div className="text-muted small mt-1">
-                Theme: <strong>{site.theme?.name || 'Default'}</strong>
+              <div className="text-muted mt-1" style={{ fontSize: 11 }}>
+                Theme: <strong>{site.resolved_theme_name || 'Default'}</strong>
                 <span className="ms-3 text-success">
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
-                  {' '}Changes auto-save · API updates instantly
+                  <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
+                  {' '}Auto-saves · API updates instantly · Broadcasts to all tabs
                 </span>
               </div>
             </div>
@@ -885,211 +1161,474 @@ const SiteTokenEditor = ({ site, onClose }) => {
           {loading ? (
             <div className="modal-body text-center py-5">
               <div className="spinner-border text-primary" />
-              <div className="text-muted mt-2 small">Loading tokens…</div>
+              <div className="text-muted mt-2 small">Loading {site.resolved_theme_name} tokens…</div>
             </div>
           ) : (
             <div className="modal-body p-0">
-              <div className="row g-0" style={{ minHeight: 500 }}>
+              <div className="row g-0" style={{ minHeight: 520 }}>
 
-                {/* LEFT: Token editors */}
-                <div className="col-lg-7 border-end p-4" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
-
-                  {/* Color tokens */}
-                  <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Color Tokens</div>
-                  <div className="row g-2 mb-4">
-                    {TOKEN_COLOR_DEFS.map(({ name, label, desc }) => {
-                      const val = vals[name] || '#cccccc';
-                      const isSaving = saving === name;
-                      const isSaved  = saved  === name;
-                      return (
-                        <div key={name} className="col-6">
-                          <div className="border rounded p-2">
-                            <div className="d-flex align-items-center gap-2 mb-2">
-                              <div className="rounded border flex-shrink-0"
-                                style={{ width: 28, height: 28, backgroundColor: val, transition: 'background .2s' }} />
-                              <div className="flex-grow-1 overflow-hidden">
-                                <div className="fw-semibold" style={{ fontSize: 12 }}>{label}</div>
-                                <div className="text-muted text-truncate" style={{ fontSize: 10 }}>{name}</div>
-                              </div>
-                              {isSaving && <div className="spinner-border spinner-border-sm text-primary flex-shrink-0" style={{ width: 12, height: 12, borderWidth: 2 }} />}
-                              {isSaved  && <span className="text-success flex-shrink-0" style={{ fontSize: 11 }}>✓</span>}
-                            </div>
-                            <div className="input-group input-group-sm">
-                              <input type="color"
-                                className="form-control form-control-color border-end-0 flex-shrink-0"
-                                style={{ maxWidth: 34, padding: '2px 3px', cursor: 'pointer' }}
-                                value={val.startsWith('#') ? val : '#cccccc'}
-                                onChange={e => handleChange(name, e.target.value)} />
-                              <input type="text"
-                                className="form-control font-monospace"
-                                style={{ fontSize: 11 }}
-                                value={vals[name] || ''}
-                                maxLength={7}
-                                placeholder="#000000"
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  if (v === '' || /^#[0-9a-fA-F]{0,6}$/.test(v)) {
-                                    if (v.length === 7) handleChange(name, v);
-                                    else setVals(p => ({ ...p, [name]: v }));
-                                  }
-                                }} />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                {/* LEFT: Tabbed editors */}
+                <div className="col-lg-7 border-end d-flex flex-column">
+                  {/* Tab nav */}
+                  <div className="border-bottom px-3 pt-2 d-flex gap-0 overflow-auto" style={{ flexShrink: 0 }}>
+                    {TABS.map(t => (
+                      <button key={t.key}
+                        className={`btn btn-sm border-0 border-bottom border-2 rounded-0 me-1 pb-2 ${tab === t.key ? 'border-primary text-primary fw-semibold' : 'border-transparent text-muted'}`}
+                        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                        onClick={() => setTab(t.key)}>
+                        {t.label}
+                        <span className="ms-1 badge" style={{ fontSize: 9, backgroundColor: tab === t.key ? 'var(--bs-primary)' : '#dee2e6', color: tab === t.key ? '#fff' : '#666' }}>{t.count}</span>
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Radius tokens */}
-                  <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Border Radius</div>
-                  <div className="row g-2 mb-4">
-                    {TOKEN_RADIUS_DEFS.map(({ name, label, hint }) => {
-                      const val = vals[name] || hint;
-                      const isSaving = saving === name;
-                      const isSaved  = saved  === name;
-                      const numVal   = parseFloat(val) || 0.375;
-                      return (
-                        <div key={name} className="col-4">
-                          <div className="border rounded p-2">
-                            <div className="d-flex align-items-center justify-content-between mb-1">
-                              <span className="fw-semibold" style={{ fontSize: 11 }}>{label}</span>
-                              <span className="badge bg-primary" style={{ fontSize: 9 }}>{val || hint}</span>
-                              {isSaving && <div className="spinner-border spinner-border-sm text-primary" style={{ width: 10, height: 10, borderWidth: 2 }} />}
-                              {isSaved  && <span className="text-success" style={{ fontSize: 10 }}>✓</span>}
-                            </div>
-                            <input type="range" className="form-range mb-1"
-                              min={0} max={2} step={0.05} value={numVal}
-                              onChange={e => handleChange(name, `${parseFloat(e.target.value).toFixed(2)}rem`)} />
-                            <div className="bg-primary rounded" style={{ height: 24, borderRadius: `${numVal}rem`, opacity: 0.4 }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {/* Tab content */}
+                  <div className="p-3" style={{ overflowY: 'auto', maxHeight: '62vh' }}>
 
-                  {/* Other tokens (non-color, non-radius) */}
-                  {(() => {
-                    const others = tokens.filter(t =>
-                      !t.name.startsWith('color.') &&
-                      !t.name.startsWith('radius.') &&
-                      t.category !== 'color' && t.category !== 'radius'
-                    );
-                    if (!others.length) return null;
-                    return (
+                    {/* COLORS */}
+                    {tab === 'colors' && (
                       <>
-                        <div className="mb-2 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Other Tokens</div>
-                        <div className="d-flex flex-column gap-1 mb-4">
-                          {others.map(t => {
-                            const isSaving = saving === t.name;
-                            const isSaved  = saved  === t.name;
+                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Semantic Colors</div>
+                        <div className="row g-2 mb-4">
+                          {semanticColors.map(t => (
+                            <div key={t.id} className="col-6"><ColorRow token={t} /></div>
+                          ))}
+                        </div>
+                        {Object.entries(paletteMap).map(([grp, list]) => (
+                          <div key={grp} className="mb-3">
+                            <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>
+                              {grp.replace('color.', '')} Palette
+                            </div>
+                            <div className="d-flex flex-wrap gap-1 p-2 border rounded bg-light">
+                              {list.sort((a,b) => a.name.localeCompare(b.name)).map(t => {
+                                const v = vals[t.name] || '#ccc';
+                                const shade = t.name.split('.').pop();
+                                return (
+                                  <div key={t.id} className="d-flex flex-column align-items-center" title={`${t.name}: ${v}`}>
+                                    <div style={{ position: 'relative', width: 28, height: 28, marginBottom: 2 }}>
+                                      <div className="rounded border" style={{ width: 28, height: 28, backgroundColor: v, transition: 'background .15s' }} />
+                                      <input type="color"
+                                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }}
+                                        value={v.startsWith('#') ? v : '#cccccc'}
+                                        onChange={e => handleChange(t.name, e.target.value)} />
+                                    </div>
+                                    <div style={{ fontSize: 8, color: '#888' }}>{shade}</div>
+                                    {saving === t.name && <div className="spinner-border" style={{ width: 8, height: 8, borderWidth: 1 }} />}
+                                    {saved  === t.name && <span style={{ fontSize: 8, color: 'green' }}>✓</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {/* TYPOGRAPHY */}
+                    {tab === 'typography' && (
+                      <>
+                        {[
+                          { group: 'Font Family',   filter: t => t.name.includes('family') },
+                          { group: 'Font Sizes',    filter: t => t.name.includes('size') },
+                          { group: 'Font Weights',  filter: t => t.name.includes('weight') },
+                          { group: 'Line Heights',  filter: t => t.name.includes('line') || t.name.includes('height') },
+                          { group: 'Letter Spacing',filter: t => t.name.includes('tracking') || t.name.includes('letter') },
+                          { group: 'Other Font',    filter: t => !t.name.includes('family') && !t.name.includes('size') && !t.name.includes('weight') && !t.name.includes('line') && !t.name.includes('height') && !t.name.includes('tracking') && !t.name.includes('letter') },
+                        ].map(({ group, filter }) => {
+                          const list = fontTokens.filter(filter);
+                          if (!list.length) return null;
+                          return (
+                            <div key={group} className="mb-4">
+                              <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>{group}</div>
+                              <div className="d-flex flex-column gap-1">
+                                {list.map(t => <TextTokenRow key={t.id} token={t} />)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {/* SHAPE & DEPTH */}
+                    {tab === 'shape' && (
+                      <>
+                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Border Radius</div>
+                        <div className="row g-2 mb-4">
+                          {radiusTokens.map(t => {
+                            const v = vals[t.name] || '0rem';
+                            const numV = parseFloat(v) || 0;
+                            const label = t.name.split('.').pop();
                             return (
-                              <div key={t.id} className="border rounded px-3 py-2 d-flex align-items-center gap-2">
-                                <div className="flex-grow-1">
-                                  <span className="fw-semibold font-monospace" style={{ fontSize: 11 }}>{t.name}</span>
-                                  <span className="badge bg-secondary-subtle text-secondary ms-1" style={{ fontSize: 9 }}>{t.category}</span>
+                              <div key={t.id} className="col-6">
+                                <div className="border rounded p-2">
+                                  <div className="d-flex align-items-center justify-content-between mb-1">
+                                    <span className="fw-semibold" style={{ fontSize: 11 }}>{label}</span>
+                                    <span className="badge bg-secondary" style={{ fontSize: 9 }}>{v}</span>
+                                    <SaveIndicator name={t.name} />
+                                  </div>
+                                  <input type="range" className="form-range mb-1"
+                                    min={0} max={2} step={0.05} value={numV}
+                                    onChange={e => handleChange(t.name, `${parseFloat(e.target.value).toFixed(2)}rem`)} />
+                                  <div className="bg-primary" style={{ height: 20, borderRadius: `${numV}rem`, opacity: 0.35 }} />
                                 </div>
-                                <input type="text" className="form-control form-control-sm font-monospace"
-                                  style={{ maxWidth: 140, fontSize: 11 }}
-                                  value={vals[t.name] || ''}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Shadows</div>
+                        <div className="d-flex flex-column gap-1">
+                          {shadowTokens.map(t => <TextTokenRow key={t.id} token={t} />)}
+                        </div>
+                      </>
+                    )}
+
+                    {/* SPACING */}
+                    {tab === 'spacing' && (
+                      <>
+                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Spacing Scale</div>
+                        <div className="d-flex flex-column gap-1">
+                          {spacingTokens.sort((a,b) => {
+                            const na = parseFloat(a.name.split('.').pop()) || 0;
+                            const nb = parseFloat(b.name.split('.').pop()) || 0;
+                            return na - nb;
+                          }).map(t => {
+                            const v = vals[t.name] || '';
+                            const numV = parseFloat(v) || 0;
+                            const pxV = v.includes('rem') ? numV * 16 : numV;
+                            return (
+                              <div key={t.id} className="border rounded px-2 py-1 d-flex align-items-center gap-2">
+                                <span className="fw-semibold font-monospace text-muted flex-shrink-0" style={{ fontSize: 10, width: 60 }}>{t.name.split('.').slice(1).join('.')}</span>
+                                <div className="bg-primary flex-shrink-0" style={{ height: 14, width: Math.min(pxV * 2, 120), borderRadius: 2, opacity: 0.4, transition: 'width .2s' }} />
+                                <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
+                                  style={{ maxWidth: 90, fontSize: 10 }} value={v}
                                   onChange={e => handleChange(t.name, e.target.value)} />
-                                {isSaving && <div className="spinner-border spinner-border-sm text-primary" style={{ width: 12, height: 12, borderWidth: 2 }} />}
-                                {isSaved  && <span className="text-success" style={{ fontSize: 11 }}>✓</span>}
+                                <SaveIndicator name={t.name} />
                               </div>
                             );
                           })}
                         </div>
                       </>
-                    );
-                  })()}
+                    )}
+
+                    {/* ANIMATION */}
+                    {tab === 'animation' && (
+                      <>
+                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Animation Tokens</div>
+                        <div className="d-flex flex-column gap-1">
+                          {animTokens.map(t => <TextTokenRow key={t.id} token={t} />)}
+                        </div>
+                      </>
+                    )}
+
+                    {/* OTHER */}
+                    {tab === 'other' && (
+                      <>
+                        {[
+                          { label: 'Opacity', list: opacityTokens },
+                          { label: 'Border',  list: borderTokens },
+                          { label: 'Other',   list: otherTokens },
+                        ].filter(g => g.list.length > 0).map(({ label, list }) => (
+                          <div key={label} className="mb-4">
+                            <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>{label}</div>
+                            <div className="d-flex flex-column gap-1">
+                              {list.map(t => {
+                                const v = vals[t.name] || '';
+                                const isOpacity = t.category === 'opacity';
+                                if (isOpacity) {
+                                  return (
+                                    <div key={t.id} className="border rounded px-3 py-2 d-flex align-items-center gap-2">
+                                      <div className="flex-grow-1">
+                                        <div className="fw-semibold" style={{ fontSize: 11 }}>{t.name.split('.').pop()}</div>
+                                        <div className="text-muted font-monospace" style={{ fontSize: 9 }}>{t.name}</div>
+                                      </div>
+                                      <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 160 }}>
+                                        <input type="range" className="form-range flex-grow-1"
+                                          min={0} max={1} step={0.05} value={parseFloat(v) || 0}
+                                          onChange={e => handleChange(t.name, parseFloat(e.target.value).toFixed(2))} />
+                                        <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 32 }}>{v}</span>
+                                        <div className="rounded" style={{ width: 18, height: 18, backgroundColor: 'var(--bs-primary)', opacity: parseFloat(v) || 1, border: '1px solid #ccc' }} />
+                                      </div>
+                                      <SaveIndicator name={t.name} />
+                                    </div>
+                                  );
+                                }
+                                return <TextTokenRow key={t.id} token={t} />;
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
                 </div>
 
-                {/* RIGHT: Live Preview */}
-                <div className="col-lg-5 p-4 bg-light" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
-                  <div className="mb-3 text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1.2 }}>Live Preview</div>
-
-                  {/* Buttons */}
-                  <div className="mb-3 p-3 bg-white rounded border">
-                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>BUTTONS</div>
-                    <div className="d-flex flex-wrap gap-2 mb-2">
-                      {TOKEN_COLOR_DEFS.slice(0, 4).map(({ name, label }) => (
-                        <button key={name} className="btn btn-sm text-white fw-semibold"
-                          style={{ ...previewStyle(name.split('.')[1]), borderRadius: radiusVal, fontSize: 11 }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="d-flex flex-wrap gap-2">
-                      {TOKEN_COLOR_DEFS.slice(0, 4).map(({ name, label }) => (
-                        <button key={name} className="btn btn-sm"
-                          style={{ ...outlineStyle(name.split('.')[1]), borderRadius: radiusVal, fontSize: 11, background: 'transparent', border: '1px solid' }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                {/* RIGHT: Live Preview — fully reactive to ALL token changes */}
+                <div className="col-lg-5 d-flex flex-column" style={{ background: '#f3f4f6' }}>
+                  <div className="px-3 pt-2 pb-1 border-bottom d-flex align-items-center justify-content-between" style={{ flexShrink: 0 }}>
+                    <span className="text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1 }}>Live Preview</span>
+                    <span className="text-success" style={{ fontSize: 10 }}>
+                      <svg width="7" height="7" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
+                      {' '}live
+                    </span>
                   </div>
 
-                  {/* Badges */}
-                  <div className="mb-3 p-3 bg-white rounded border">
-                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>BADGES</div>
-                    <div className="d-flex flex-wrap gap-2">
-                      {TOKEN_COLOR_DEFS.map(({ name, label }) => {
-                        const v = vals[name];
-                        return (
-                          <span key={name} className="badge"
-                            style={{ backgroundColor: v || undefined, borderRadius: radiusVal, fontSize: 10, padding: '4px 10px' }}>
-                            {label}
+                  <div className="p-3" style={{ overflowY: 'auto', flex: 1, maxHeight: '62vh' }}>
+
+                    {/* ── Semantic Colors ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>COLORS</div>
+                      <div className="d-flex gap-1 flex-wrap">
+                        {SEMANTIC.map(name => {
+                          const v = pv(name);
+                          return (
+                            <div key={name} className="text-center" style={{ width: 36 }}>
+                              <div className="rounded border mb-1" style={{ width: 32, height: 32, backgroundColor: v || '#e5e7eb', transition: 'background .2s' }} />
+                              <div style={{ fontSize: 8, color: '#6b7280' }}>{name}</div>
+                              <div className="font-monospace" style={{ fontSize: 7, color: '#9ca3af' }}>{v || '—'}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* ── Buttons ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>BUTTONS</div>
+                      <div className="d-flex flex-wrap gap-1 mb-2">
+                        {['primary','success','danger','warning'].map(name => (
+                          <button key={name} className="btn btn-sm"
+                            style={{ ...solidBtn(name), borderRadius: rVal, fontSize: 11, transition: vals['animation.duration.normal'] ? `all ${vals['animation.duration.normal']} ${vals['animation.easing.default'] || 'ease'}` : undefined }}>
+                            {name.charAt(0).toUpperCase()+name.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="d-flex flex-wrap gap-1 mb-2">
+                        {['primary','success','danger','warning'].map(name => (
+                          <button key={name} className="btn btn-sm"
+                            style={{ ...outlineBtn(name), borderRadius: rVal, fontSize: 11, border: '1px solid', transition: vals['animation.duration.normal'] ? `all ${vals['animation.duration.normal']} ${vals['animation.easing.default'] || 'ease'}` : undefined }}>
+                            {name.charAt(0).toUpperCase()+name.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Soft buttons */}
+                      <div className="d-flex flex-wrap gap-1">
+                        {['primary','success','danger','info'].map(name => {
+                          const v = pv(name);
+                          return (
+                            <button key={name} className="btn btn-sm"
+                              style={{ backgroundColor: v ? v+'22' : undefined, color: v || undefined, border: 'none', borderRadius: rVal, fontSize: 11 }}>
+                              {name.charAt(0).toUpperCase()+name.slice(1)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* ── Badges & Alerts ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>BADGES & ALERTS</div>
+                      <div className="d-flex flex-wrap gap-1 mb-2">
+                        {SEMANTIC.map(name => {
+                          const v = pv(name);
+                          return <span key={name} className="badge" style={{ backgroundColor: v || undefined, borderRadius: rVal, fontSize: 10, transition: 'background .2s' }}>{name}</span>;
+                        })}
+                      </div>
+                      <div className="rounded p-2 mt-2" style={{ backgroundColor: pv('success') ? pv('success')+'18' : '#d1fae5', borderLeft: `3px solid ${pv('success') || '#0ab39c'}`, fontSize: 11, color: pv('success') || '#065f46', transition: 'all .2s' }}>
+                        Success alert — colors update live
+                      </div>
+                      <div className="rounded p-2 mt-1" style={{ backgroundColor: pv('danger') ? pv('danger')+'18' : '#fee2e2', borderLeft: `3px solid ${pv('danger') || '#f06548'}`, fontSize: 11, color: pv('danger') || '#991b1b', transition: 'all .2s' }}>
+                        Danger alert — radius updates live
+                      </div>
+                    </div>
+
+                    {/* ── Typography ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>TYPOGRAPHY</div>
+                      {[
+                        { label: 'h1', size: vals['font.size.4xl'] || vals['font.size.3xl'] || '2rem',   weight: vals['font.weight.bold'] || '700' },
+                        { label: 'h2', size: vals['font.size.2xl'] || '1.5rem',  weight: vals['font.weight.semibold'] || vals['font.weight.bold'] || '600' },
+                        { label: 'h3', size: vals['font.size.xl']  || '1.25rem', weight: vals['font.weight.semibold'] || '600' },
+                        { label: 'p',  size: vals['font.size.base'] || vals['font.size.md'] || '1rem',   weight: vals['font.weight.normal'] || vals['font.weight.regular'] || '400' },
+                        { label: 'sm', size: vals['font.size.sm']  || '0.875rem',weight: vals['font.weight.normal'] || '400' },
+                        { label: 'xs', size: vals['font.size.xs']  || '0.75rem', weight: vals['font.weight.normal'] || '400' },
+                      ].map(({ label, size, weight }) => (
+                        <div key={label} className="d-flex align-items-baseline gap-2 mb-1" style={{ transition: 'all .2s' }}>
+                          <span className="text-muted flex-shrink-0 font-monospace" style={{ fontSize: 9, width: 18 }}>{label}</span>
+                          <span className="text-muted flex-shrink-0" style={{ fontSize: 8, width: 32 }}>{size}</span>
+                          <span style={{
+                            fontSize: size,
+                            fontWeight: weight,
+                            fontFamily: vals['font.family.base'] || vals['font.family.sans'] || undefined,
+                            lineHeight: vals['font.line-height.normal'] || vals['font.lineHeight.normal'] || 1.5,
+                            letterSpacing: vals['font.tracking.normal'] || vals['font.letter-spacing.normal'] || undefined,
+                            color: label === 'h1' || label === 'h2' ? (pv('primary') || undefined) : undefined,
+                            transition: 'all .2s',
+                          }}>
+                            {label === 'xs' ? 'Caption text' : label === 'sm' ? 'Small text sample' : 'The quick brown fox'}
                           </span>
-                        );
-                      })}
+                        </div>
+                      ))}
                     </div>
-                  </div>
 
-                  {/* Color swatches */}
-                  <div className="mb-3 p-3 bg-white rounded border">
-                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>COLOR PALETTE</div>
-                    <div className="d-flex gap-1 flex-wrap">
-                      {TOKEN_COLOR_DEFS.map(({ name, label }) => {
-                        const v = vals[name];
-                        return (
-                          <div key={name} className="d-flex flex-column align-items-center" style={{ width: 44 }}>
-                            <div className="rounded border mb-1" style={{ width: 36, height: 36, backgroundColor: v || '#ccc' }} />
-                            <div style={{ fontSize: 9, textAlign: 'center', color: '#666' }}>{label}</div>
-                            <div className="font-monospace" style={{ fontSize: 8, color: '#999' }}>{v || '—'}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Card sample */}
-                  <div className="mb-3 p-3 bg-white rounded border">
-                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>CARD SAMPLE</div>
-                    <div className="border rounded p-3" style={{ borderRadius: radiusVal }}>
-                      <div className="fw-semibold mb-1" style={{ fontSize: 13, color: vals['color.primary'] || undefined }}>Card Title</div>
-                      <div className="text-muted mb-2" style={{ fontSize: 12 }}>Supporting body text</div>
-                      <div className="d-flex gap-2">
-                        <button className="btn btn-sm text-white"
-                          style={{ ...previewStyle('primary'), borderRadius: radiusVal, fontSize: 11 }}>Save</button>
-                        <button className="btn btn-sm"
-                          style={{ ...outlineStyle('secondary'), borderRadius: radiusVal, fontSize: 11, background: 'transparent', border: '1px solid' }}>Cancel</button>
+                    {/* ── Card with Shadow + Radius ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>CARD — SHADOW + RADIUS</div>
+                      <div style={{
+                        borderRadius: rVal,
+                        boxShadow: vals['shadow.md'] || vals['shadow.default'] || '0 2px 8px rgba(0,0,0,0.08)',
+                        padding: vals['spacing.4'] || vals['spacing.md'] || '1rem',
+                        border: `1px solid ${pv('primary') ? pv('primary')+'30' : '#e5e7eb'}`,
+                        backgroundColor: '#fff',
+                        transition: 'all .2s',
+                        fontFamily: vals['font.family.base'] || undefined,
+                      }}>
+                        <div style={{ fontSize: vals['font.size.lg'] || '1.125rem', fontWeight: vals['font.weight.semibold'] || '600', color: pv('primary') || '#1f2937', marginBottom: vals['spacing.2'] || '0.5rem', transition: 'all .2s' }}>
+                          Card Title
+                        </div>
+                        <div style={{ fontSize: vals['font.size.sm'] || '0.875rem', color: '#6b7280', marginBottom: vals['spacing.3'] || '0.75rem', transition: 'all .2s' }}>
+                          Card body text with live typography and spacing tokens.
+                        </div>
+                        <div className="d-flex gap-2">
+                          <button className="btn btn-sm" style={{ ...solidBtn('primary'), borderRadius: rVal, fontSize: 11, transition: 'all .2s' }}>Save</button>
+                          <button className="btn btn-sm" style={{ ...outlineBtn('secondary'), borderRadius: rVal, fontSize: 11, border: '1px solid', transition: 'all .2s' }}>Cancel</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* API endpoint */}
-                  <div className="p-3 bg-white rounded border">
-                    <div className="text-muted mb-2" style={{ fontSize: 10 }}>API ENDPOINTS</div>
-                    {[
-                      { label: 'JSON', url: site.endpoints?.tokens },
-                      { label: 'CSS',  url: site.endpoints?.css },
-                    ].map(({ label, url }) => (
-                      <div key={label} className="d-flex align-items-center gap-2 mb-1">
-                        <span className="badge bg-primary" style={{ fontSize: 9, minWidth: 32 }}>{label}</span>
-                        <a href={url} target="_blank" rel="noreferrer"
-                          className="text-truncate text-decoration-none text-muted font-monospace"
-                          style={{ fontSize: 10 }}>{url}</a>
+                    {/* ── Form Elements ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>FORM ELEMENTS</div>
+                      <div className="mb-2">
+                        <label style={{ fontSize: 11, fontWeight: vals['font.weight.medium'] || '500', fontFamily: vals['font.family.base'] || undefined, marginBottom: vals['spacing.1'] || '0.25rem', display: 'block', color: '#374151' }}>
+                          Label
+                        </label>
+                        <input type="text" className="form-control form-control-sm" readOnly defaultValue="Input field"
+                          style={{ borderRadius: rVal, fontSize: vals['font.size.sm'] || '0.875rem', fontFamily: vals['font.family.base'] || undefined, borderColor: pv('primary') ? pv('primary')+'88' : undefined, outline: 'none', transition: 'all .2s' }} />
                       </div>
-                    ))}
+                      <select className="form-select form-select-sm"
+                        style={{ borderRadius: rVal, fontSize: 11, borderColor: pv('primary') ? pv('primary')+'88' : undefined, transition: 'all .2s' }}>
+                        <option>Option 1</option>
+                        <option>Option 2</option>
+                      </select>
+                    </div>
+
+                    {/* ── Radius Scale ── */}
+                    <div className="mb-3 p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>RADIUS SCALE</div>
+                      <div className="d-flex gap-2 flex-wrap">
+                        {radiusTokens.sort((a,b) => (parseFloat(vals[a.name])||0) - (parseFloat(vals[b.name])||0)).map(t => {
+                          const v = vals[t.name] || '0rem';
+                          const label = t.name.split('.').pop();
+                          return (
+                            <div key={t.id} className="text-center">
+                              <div style={{ width: 32, height: 32, backgroundColor: pv('primary') || '#6366f1', borderRadius: v, opacity: 0.7, transition: 'all .2s', margin: '0 auto 2px' }} />
+                              <div style={{ fontSize: 8, color: '#6b7280' }}>{label}</div>
+                              <div style={{ fontSize: 7, color: '#9ca3af' }}>{v}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* ── Shadow Scale ── */}
+                    {shadowTokens.length > 0 && (
+                      <div className="mb-3 p-3 bg-white rounded border">
+                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>SHADOW SCALE</div>
+                        <div className="d-flex flex-column gap-2">
+                          {shadowTokens.slice(0,6).map(t => {
+                            const v = vals[t.name] || 'none';
+                            const label = t.name.split('.').pop();
+                            return (
+                              <div key={t.id} className="d-flex align-items-center gap-2">
+                                <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: 9, width: 32 }}>{label}</span>
+                                <div style={{ flex: 1, height: 28, borderRadius: rVal, boxShadow: v, backgroundColor: '#fff', border: '1px solid #e5e7eb', transition: 'box-shadow .2s' }} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Spacing Scale ── */}
+                    {spacingTokens.length > 0 && (
+                      <div className="mb-3 p-3 bg-white rounded border">
+                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>SPACING SCALE</div>
+                        <div className="d-flex flex-column gap-1">
+                          {spacingTokens.filter(t => {
+                            const n = parseFloat(t.name.split('.').pop());
+                            return [1,2,3,4,6,8,10,12].includes(n);
+                          }).sort((a,b) => parseFloat(a.name.split('.').pop()) - parseFloat(b.name.split('.').pop())).map(t => {
+                            const v = vals[t.name] || '0';
+                            const pxV = v.includes('rem') ? parseFloat(v) * 16 : parseFloat(v);
+                            const label = t.name.split('.').pop();
+                            return (
+                              <div key={t.id} className="d-flex align-items-center gap-2">
+                                <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: 8, width: 16 }}>{label}</span>
+                                <div style={{ height: 12, width: Math.min(pxV * 2, 140), backgroundColor: pv('primary') || '#6366f1', borderRadius: 2, opacity: 0.5, transition: 'width .2s', minWidth: 2 }} />
+                                <span className="text-muted" style={{ fontSize: 8 }}>{v}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Opacity ── */}
+                    {opacityTokens.length > 0 && (
+                      <div className="mb-3 p-3 bg-white rounded border">
+                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>OPACITY SCALE</div>
+                        <div className="d-flex gap-1 flex-wrap">
+                          {opacityTokens.map(t => {
+                            const v = parseFloat(vals[t.name]) || 1;
+                            const label = t.name.split('.').pop();
+                            return (
+                              <div key={t.id} className="text-center">
+                                <div style={{ width: 28, height: 28, backgroundColor: pv('primary') || '#6366f1', opacity: v, borderRadius: rVal, transition: 'opacity .2s', margin: '0 auto 2px', border: '1px solid #e5e7eb' }} />
+                                <div style={{ fontSize: 8, color: '#6b7280' }}>{label}</div>
+                                <div style={{ fontSize: 7, color: '#9ca3af' }}>{v}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Animation ── */}
+                    {animTokens.length > 0 && (
+                      <div className="mb-3 p-3 bg-white rounded border">
+                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>ANIMATION</div>
+                        <div className="d-flex gap-2 flex-wrap">
+                          {animTokens.filter(t => t.name.includes('duration')).map(t => {
+                            const v = vals[t.name] || '200ms';
+                            const label = t.name.split('.').pop();
+                            return (
+                              <div key={t.id} className="text-center">
+                                <button className="btn btn-sm" style={{
+                                  ...solidBtn('primary'), borderRadius: rVal, fontSize: 10,
+                                  transition: `all ${v} ${vals['animation.easing.default'] || vals['animation.easing.ease-in-out'] || 'ease-in-out'}`
+                                }}>
+                                  {label}
+                                </button>
+                                <div style={{ fontSize: 8, color: '#9ca3af', marginTop: 2 }}>{v}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── API Endpoints ── */}
+                    <div className="p-3 bg-white rounded border">
+                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>API ENDPOINTS</div>
+                      {[{ label: 'JSON', url: site.endpoints?.tokens }, { label: 'CSS', url: site.endpoints?.css }].map(({ label, url }) => (
+                        <div key={label} className="d-flex align-items-center gap-2 mb-1">
+                          <span className="badge bg-primary" style={{ fontSize: 8, minWidth: 28 }}>{label}</span>
+                          <a href={url} target="_blank" rel="noreferrer"
+                            className="text-truncate text-decoration-none text-muted font-monospace" style={{ fontSize: 9 }}>{url}</a>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1097,9 +1636,9 @@ const SiteTokenEditor = ({ site, onClose }) => {
           )}
 
           <div className="modal-footer border-top py-2">
-            <span className="text-muted small me-auto">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="#0ab39c"><circle cx="5" cy="5" r="5"/></svg>
-              {' '}Auto-saves on change · Broadcasts to all connected apps
+            <span className="text-muted me-auto" style={{ fontSize: 11 }}>
+              <svg width="8" height="8" viewBox="0 0 10 10" fill="#0ab39c"><circle cx="5" cy="5" r="5"/></svg>
+              {' '}Auto-saves on change · Broadcasts to all connected apps via API
             </span>
             <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
           </div>

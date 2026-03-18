@@ -106,4 +106,16 @@ class DsThemeController extends Controller
 
         return response()->json($newTheme->load('tokens'), 201);
     }
+
+    /** Seed a full professional token set into the theme */
+    public function seedDefaults(DsTheme $dsTheme): JsonResponse
+    {
+        $seeder = new \Database\Seeders\DesignTokenSeeder();
+        $seeder->run($dsTheme->id);
+        $this->service->invalidateCache($dsTheme->id);
+        return response()->json([
+            'message'      => 'Full token set seeded successfully.',
+            'tokens_count' => $dsTheme->tokens()->count(),
+        ]);
+    }
 }
