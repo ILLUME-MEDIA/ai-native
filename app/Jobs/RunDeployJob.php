@@ -271,6 +271,9 @@ class RunDeployJob implements ShouldQueue
         foreach (scandir($localDir) as $item) {
             if ($item === '.' || $item === '..') continue;
 
+            // Check stop flag every file
+            $this->checkStopped();
+
             $local  = $localDir . '/' . $item;
             $remote = $remotePath . $item;
 

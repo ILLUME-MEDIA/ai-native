@@ -314,7 +314,17 @@ export default function DeployManager() {
   const stopDeploy = async (p, e) => {
     e?.stopPropagation();
     await apiFetch(`${API}/projects/${p.id}/stop`, { method: 'POST' });
-    setTimeout(() => { fetchProjects(true); fetchLogs(p.id, true); }, 800);
+    // Poll every second until status leaves 'deploying'
+    const poll = setInterval(async () => {
+      const fresh = await fetchProjects(true);
+      const updated = fresh?.find(x => x.id === p.id);
+      if (!updated || updated.status !== 'deploying') {
+        clearInterval(poll);
+        fetchLogs(p.id, true);
+      }
+    }, 1000);
+    // Safety timeout — stop polling after 30s regardless
+    setTimeout(() => clearInterval(poll), 30000);
   };
 
   const copyWebhook = async (p, e) => {
