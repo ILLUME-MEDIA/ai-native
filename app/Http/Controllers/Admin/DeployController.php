@@ -16,7 +16,7 @@ class DeployController extends Controller
     public function index()
     {
         return response()->json(
-            DeployProject::latest()->get()->map->toApiArray()
+            DeployProject::latest()->get()->map(fn($p) => $p->toApiArray())
         );
     }
 

@@ -52,14 +52,23 @@ class DeployProject extends Model
         return [$m[1] ?? null, $m[2] ?? null];
     }
 
-    public function getPlainToken(): ?string      { return $this->github_token; }
-    public function getPlainFtpPassword(): ?string { return $this->ftp_password; }
-    public function getPlainFtpHost(): ?string     { return $this->ftp_host; }
-    public function getPlainFtpUsername(): ?string { return $this->ftp_username; }
+    private function decryptField(string $field): ?string
+    {
+        try { return $this->$field; } catch (\Throwable) { return null; }
+    }
+
+    public function getPlainToken(): ?string      { return $this->decryptField('github_token'); }
+    public function getPlainFtpPassword(): ?string { return $this->decryptField('ftp_password'); }
+    public function getPlainFtpHost(): ?string     { return $this->decryptField('ftp_host'); }
+    public function getPlainFtpUsername(): ?string { return $this->decryptField('ftp_username'); }
 
     public function webhookUrl(): string
     {
-        return url("/api/deploy/webhook/{$this->id}/{$this->webhook_secret}");
+        try {
+            return url("/api/deploy/webhook/{$this->id}/{$this->webhook_secret}");
+        } catch (\Throwable) {
+            return "/api/deploy/webhook/{$this->id}/{$this->webhook_secret}";
+        }
     }
 
     public static function detectFramework(array $rootFiles): string
@@ -95,13 +104,13 @@ class DeployProject extends Model
             'id'               => $this->id,
             'name'             => $this->name,
             'repo_url'         => $this->repo_url,
-            'has_token'        => !empty($this->github_token),
+            'has_token'        => !empty($this->getPlainToken()),
             'branch'           => $this->branch,
             'framework'        => $this->framework,
             'build_command'    => $this->build_command,
             'build_output_dir' => $this->build_output_dir,
             'node_path'        => $this->node_path,
-            'has_ftp_host'     => !empty($this->ftp_host),
+            'has_ftp_host'     => !empty($this->getPlainFtpHost()),
             'ftp_username'     => $this->getPlainFtpUsername(),
             'ftp_path'         => $this->ftp_path,
             'ftp_port'         => $this->ftp_port,
