@@ -345,6 +345,9 @@ export const routes = [
     path: '/apps/cal',
     Component: lazy(() => import('@admin/views/admin/apps/cal'))
   }, {
+    path: '/apps/deploy',
+    Component: lazy(() => import('@admin/views/admin/apps/deploy/Index'))
+  }, {
     path: '/apps/kanban',
     Component: lazy(() => import('@admin/views/admin/apps/kanban'))
   }, {

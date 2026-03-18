@@ -601,6 +601,11 @@ export const menuItems = [{
     slug: "pages:kanban",
     label: "Kanban Board"
   }, {
+    icon: "rocket",
+    url: "/apps/deploy",
+    slug: "pages:deploy",
+    label: "Deploy Manager"
+  }, {
     icon: "mail-check",
     url: "/apps/otp-auth",
     slug: "pages:otp-auth",
