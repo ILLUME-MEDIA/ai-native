@@ -7,6 +7,7 @@ use App\Jobs\RunDeployJob;
 use App\Models\DeployLog;
 use App\Models\DeployProject;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class DeployController extends Controller
@@ -161,6 +162,25 @@ class DeployController extends Controller
         RunDeployJob::dispatch($project->id, $log->id);
 
         return response()->json(['log_id' => $log->id]);
+    }
+
+    // ── Stop a running deploy ─────────────────────────────────────────────────
+
+    public function stop($id)
+    {
+        $project = DeployProject::findOrFail($id);
+
+        Cache::put("deploy_stop_{$id}", true, now()->addMinutes(2));
+
+        // Update the currently running log to cancelled
+        $project->logs()->where('status', 'running')->update([
+            'status' => 'cancelled',
+            'output' => \DB::raw("CONCAT(IFNULL(output,''), '\n[" . date('H:i:s') . "] [WARN] Stop requested by user...')"),
+        ]);
+
+        $project->update(['status' => 'idle']);
+
+        return response()->json(['stopped' => true]);
     }
 
     // ── Auto-detect framework from repo ──────────────────────────────────────

@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use ZipArchive;
 
@@ -49,6 +50,7 @@ class RunDeployJob implements ShouldQueue
             $extractDir = $tmpBase . '_src';
 
             // ── 1. Get latest commit hash from GitHub API ────────────────────
+            $this->checkStopped();
             $this->log($lines, "\n[1/4] Fetching latest commit info...");
             $commitHash = $this->commitHash ?? $this->fetchHeadCommit($project, $lines);
             if ($commitHash) {
@@ -56,16 +58,19 @@ class RunDeployJob implements ShouldQueue
             }
 
             // ── 2. Download repo ZIP ─────────────────────────────────────────
+            $this->checkStopped();
             $this->log($lines, "\n[2/4] Downloading repository...");
             $this->downloadRepo($project, $zipPath, $lines);
 
             // ── 3. Extract ───────────────────────────────────────────────────
+            $this->checkStopped();
             $this->log($lines, "\n[3/4] Extracting...");
             $sourceDir = $this->extractZip($zipPath, $extractDir, $lines);
 
             // ── 4. Build (if build_command is set) ───────────────────────────
             $deployDir = $sourceDir;
             if ($project->build_command) {
+                $this->checkStopped();
                 $this->log($lines, "\n[4/4] Building — {$project->build_command}");
                 $this->runBuild($project, $sourceDir, $lines);
 
@@ -84,6 +89,7 @@ class RunDeployJob implements ShouldQueue
             }
 
             // ── 5. FTP Upload ────────────────────────────────────────────────
+            $this->checkStopped();
             $this->log($lines, "\n[5/5] Uploading to {$project->ftp_path}...");
             $uploaded = $this->ftpUpload($project, $deployDir, $lines);
 
@@ -103,14 +109,15 @@ class RunDeployJob implements ShouldQueue
             ]);
 
         } catch (\Throwable $e) {
-            $this->log($lines, "\n[ERROR] " . $e->getMessage());
+            $stopped = $e instanceof \App\Exceptions\DeployStoppedException;
+            $this->log($lines, $stopped ? "\n[WARN] Deploy stopped by user." : "\n[ERROR] " . $e->getMessage());
 
             $log->update([
-                'status'          => 'failed',
+                'status'          => $stopped ? 'cancelled' : 'failed',
                 'output'          => implode("\n", $lines),
                 'duration_seconds'=> (int) now()->diffInSeconds($started),
             ]);
-            $project->update(['status' => 'failed']);
+            $project->update(['status' => $stopped ? 'idle' : 'failed']);
 
         } finally {
             if ($zipPath && file_exists($zipPath))   @unlink($zipPath);
@@ -289,6 +296,14 @@ class RunDeployJob implements ShouldQueue
         $token = $project->getPlainToken();
         if ($token) $h['Authorization'] = "token {$token}";
         return $h;
+    }
+
+    private function checkStopped(): void
+    {
+        if (Cache::has("deploy_stop_{$this->projectId}")) {
+            Cache::forget("deploy_stop_{$this->projectId}");
+            throw new \App\Exceptions\DeployStoppedException();
+        }
     }
 
     private function log(array &$lines, string $text): void

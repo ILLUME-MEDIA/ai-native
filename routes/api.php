@@ -129,6 +129,7 @@ Route::prefix('admin/deploy')->group(function () {
     Route::delete('projects/{id}',      [\App\Http\Controllers\Admin\DeployController::class, 'destroy']);
     Route::get('projects/{id}/logs',    [\App\Http\Controllers\Admin\DeployController::class, 'logs']);
     Route::post('projects/{id}/deploy',  [\App\Http\Controllers\Admin\DeployController::class, 'deploy']);
+    Route::post('projects/{id}/stop',    [\App\Http\Controllers\Admin\DeployController::class, 'stop']);
     Route::post('projects/{id}/reveal',  [\App\Http\Controllers\Admin\DeployController::class, 'reveal']);
     Route::post('detect',                [\App\Http\Controllers\Admin\DeployController::class, 'detect']);
     Route::get('detect-node',            [\App\Http\Controllers\Admin\DeployController::class, 'detectNode']);

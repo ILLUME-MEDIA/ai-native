@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API = '/api/admin/deploy';
 
-const STATUS_COLOR = { idle: 'secondary', deploying: 'warning', success: 'success', failed: 'danger' };
+const STATUS_COLOR = { idle: 'secondary', deploying: 'warning', success: 'success', failed: 'danger', cancelled: 'secondary', running: 'warning' };
 
 const FRAMEWORKS = [
   { value: '',       label: '— Select framework —' },
@@ -46,6 +46,7 @@ const ago = (iso) => {
 
 const apiFetch = (url, opts = {}) =>
   fetch(url, {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     ...opts,
   });
@@ -77,6 +78,49 @@ const SvgTrash = () => (
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     <path d="M10 11v6M14 11v6" />
     <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </svg>
+);
+const SvgRefresh = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+  </svg>
+);
+const SvgChevronDown = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+const SvgChevronUp = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="18 15 12 9 6 15" />
+  </svg>
+);
+const SvgCopy = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+const SvgCheck = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+const SvgUpload = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="16 16 12 12 8 16" /><line x1="12" y1="12" x2="12" y2="21" />
+    <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+  </svg>
+);
+const SvgArrowLeft = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+  </svg>
+);
+const SvgArrowRight = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
   </svg>
 );
 
@@ -123,6 +167,7 @@ function RevealInput({ value, onChange, placeholder, revealed, onReveal, isLoadi
 export default function DeployManager() {
   const [projects,    setProjects]    = useState([]);
   const [loading,     setLoading]     = useState(true);
+  const [view,        setView]        = useState('list'); // 'list' | 'detail'
   const [selected,    setSelected]    = useState(null);
   const [showForm,    setShowForm]    = useState(false);
   const [editId,      setEditId]      = useState(null);
@@ -237,8 +282,9 @@ export default function DeployManager() {
   const deleteProject = async (p, e) => {
     e?.stopPropagation();
     if (!confirm(`Delete "${p.name}"? All deploy logs will be removed.`)) return;
-    await apiFetch(`${API}/projects/${p.id}`, { method: 'DELETE' });
-    if (selected === p.id) setSelected(null);
+    const r = await apiFetch(`${API}/projects/${p.id}`, { method: 'DELETE' });
+    if (!r.ok) { alert('Delete failed. Please try again.'); return; }
+    if (selected === p.id) { setSelected(null); setView('list'); }
     fetchProjects();
   };
 
@@ -263,6 +309,12 @@ export default function DeployManager() {
       setDeploying(prev => ({ ...prev, [p.id]: false }));
     }
     setTimeout(() => setDeploying(d => ({ ...d, [p.id]: false })), 5000);
+  };
+
+  const stopDeploy = async (p, e) => {
+    e?.stopPropagation();
+    await apiFetch(`${API}/projects/${p.id}/stop`, { method: 'POST' });
+    setTimeout(() => { fetchProjects(true); fetchLogs(p.id, true); }, 800);
   };
 
   const copyWebhook = async (p, e) => {
@@ -333,105 +385,122 @@ export default function DeployManager() {
       }
       setShowForm(false);
       const fresh = await fetchProjects(true);
-      const id = d.id || editId || fresh[0]?.id;
-      if (id) setSelected(id);
+      const id = d.id || editId || fresh?.[0]?.id;
+      if (id) { setSelected(id); setView('detail'); fetchLogs(id, true); }
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
   };
 
-  const selectedProject = projects.find(p => p.id === selected);
-
   // ── render ────────────────────────────────────────────────────────────────
+
+  const selectedProject = projects.find(p => p.id === selected);
 
   return (
     <div className="container-fluid">
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <div>
-          <h4 className="mb-0 fw-semibold"><i className="ri-rocket-line me-2 text-primary" />Deploy Manager</h4>
-          <p className="text-muted small mb-0">Connect GitHub repos → auto-build → auto-deploy to cPanel on every commit.</p>
-        </div>
-        <button className="btn btn-primary btn-sm" onClick={openAdd}>
-          <i className="ri-add-line me-1" />Add Project
-        </button>
-      </div>
 
-      <div className="row g-3">
-        {/* ── Left: projects list ─────────────────────────────────────── */}
-        <div className="col-lg-4 col-xl-3">
-          {loading ? (
-            <div className="text-center py-5"><div className="spinner-border text-primary" /></div>
-          ) : projects.length === 0 ? (
-            <div className="card text-center py-5">
-              <i className="ri-git-repository-line fs-1 text-muted d-block mb-2" />
-              <p className="text-muted small mb-3">No projects yet.</p>
-              <button className="btn btn-primary btn-sm mx-auto" style={{ width: 130 }} onClick={openAdd}>
-                <i className="ri-add-line me-1" />Add Project
-              </button>
+      {/* ══ LIST VIEW ══════════════════════════════════════════════════════ */}
+      {view === 'list' && (
+        <>
+          <div className="d-flex align-items-center justify-content-between mb-3">
+            <div>
+              <h4 className="mb-0 fw-semibold">Deploy Manager</h4>
+              <p className="text-muted small mb-0">GitHub → auto-build → FTP deploy on every commit.</p>
             </div>
-          ) : (
-            <div className="d-flex flex-column gap-2">
-              {projects.map(p => {
-                const isDeploying = deploying[p.id] || p.status === 'deploying';
-                return (
-                  <div key={p.id}
-                    className={`card ${selected === p.id ? 'border-primary shadow-sm' : ''}`}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => setSelected(p.id)}>
-                    <div className="card-body py-2 px-3">
-                      <div className="d-flex align-items-center gap-2">
-                        <span className={`bg-${STATUS_COLOR[p.status] || 'secondary'} rounded-circle`}
-                          style={{ width: 8, height: 8, display: 'inline-block', flexShrink: 0 }} />
-                        <div className="flex-fill min-w-0">
-                          <div className="fw-semibold small text-truncate">{p.name}</div>
-                          <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                            <i className="ri-git-branch-line me-1" />{p.branch}
-                            {p.framework && <><span className="mx-1">·</span>{p.framework}</>}
-                            <span className="mx-1">·</span>{ago(p.last_deployed_at)}
-                          </div>
-                        </div>
-                        <button className="btn btn-sm p-0 px-1 border-0 text-success"
-                          disabled={isDeploying}
-                          onClick={e => triggerDeploy(p, e)} title="Deploy Now">
-                          {isDeploying
-                            ? <span className="spinner-border spinner-border-sm" style={{ width: 14, height: 14 }} />
-                            : <i className="ri-upload-cloud-2-line fs-6" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+            <button className="btn btn-primary btn-sm" onClick={openAdd}>+ Add Project</button>
+          </div>
 
-        {/* ── Right: project detail ────────────────────────────────────── */}
-        <div className="col-lg-8 col-xl-9">
-          {!selectedProject ? (
-            <div className="card text-center py-5">
-              <i className="ri-arrow-left-line fs-1 text-muted mb-2" />
-              <p className="text-muted">Select a project to view details and logs.</p>
+          <div className="card">
+            <div className="card-body p-0">
+              {loading ? (
+                <div className="text-center py-5"><div className="spinner-border text-primary" /></div>
+              ) : projects.length === 0 ? (
+                <div className="text-center py-5">
+                  <p className="text-muted mb-3">No deploy projects yet.</p>
+                  <button className="btn btn-primary btn-sm" onClick={openAdd}>+ Add First Project</button>
+                </div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-hover align-middle mb-0">
+                    <thead className="table-light">
+                      <tr>
+                        <th>Project</th>
+                        <th>Framework</th>
+                        <th>Branch</th>
+                        <th>Mode</th>
+                        <th>Status</th>
+                        <th>Last Deployed</th>
+                        <th className="text-end">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projects.map(p => {
+                        const isDeploying = deploying[p.id] || p.status === 'deploying';
+                        return (
+                          <tr key={p.id} style={{ cursor: 'pointer' }}
+                            onClick={() => { setSelected(p.id); setView('detail'); fetchLogs(p.id); }}>
+                            <td>
+                              <div className="d-flex align-items-center gap-2">
+                                <span className={`bg-${STATUS_COLOR[p.status] || 'secondary'} rounded-circle flex-shrink-0`}
+                                  style={{ width: 8, height: 8, display: 'inline-block' }} />
+                                <span className="fw-semibold">{p.name}</span>
+                              </div>
+                            </td>
+                            <td><span className="badge bg-secondary-subtle text-secondary">{p.framework || '—'}</span></td>
+                            <td><code className="small">{p.branch || 'main'}</code></td>
+                            <td>
+                              {p.deploy_mode === 'poll'
+                                ? <span className="badge bg-info-subtle text-info border border-info-subtle">Poll {p.poll_interval}m</span>
+                                : <span className="badge bg-secondary-subtle text-secondary border">Webhook</span>}
+                            </td>
+                            <td>
+                              <span className={`badge bg-${STATUS_COLOR[p.status] || 'secondary'}`}>
+                                {isDeploying && <span className="spinner-border spinner-border-sm me-1" style={{ width: 8, height: 8 }} />}
+                                {p.status || 'idle'}
+                              </span>
+                            </td>
+                            <td className="text-muted small">{ago(p.last_deployed_at)}</td>
+                            <td className="text-end" onClick={e => e.stopPropagation()}>
+                              <div className="d-flex gap-1 justify-content-end">
+                                {isDeploying
+                                  ? <button className="btn btn-sm btn-danger" onClick={e => stopDeploy(p, e)}>Stop</button>
+                                  : <button className="btn btn-sm btn-success" onClick={e => triggerDeploy(p, e)}>Deploy</button>}
+                                <button className="btn btn-sm btn-outline-primary" onClick={e => openEdit(p, e)}>Edit</button>
+                                <button className="btn btn-sm btn-outline-danger" onClick={e => deleteProject(p, e)}><SvgTrash /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          ) : (
-            <ProjectDetail
-              project={selectedProject}
-              logs={logs}
-              logsLoading={logsLoading}
-              openLog={openLog}
-              setOpenLog={setOpenLog}
-              logEndRef={logEndRef}
-              deploying={deploying}
-              copied={copied}
-              onDeploy={triggerDeploy}
-              onEdit={openEdit}
-              onDelete={deleteProject}
-              onToggleAuto={toggleAutoDeploy}
-              onCopyWebhook={copyWebhook}
-              onRefreshLogs={() => { setLogs([]); fetchLogs(selectedProject.id); }}
-            />
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
+
+      {/* ══ DETAIL VIEW ════════════════════════════════════════════════════ */}
+      {view === 'detail' && selectedProject && (
+        <ProjectDetail
+          project={selectedProject}
+          logs={logs}
+          logsLoading={logsLoading}
+          openLog={openLog}
+          setOpenLog={setOpenLog}
+          logEndRef={logEndRef}
+          deploying={deploying}
+          copied={copied}
+          onBack={() => setView('list')}
+          onDeploy={triggerDeploy}
+          onStop={stopDeploy}
+          onEdit={openEdit}
+          onDelete={deleteProject}
+          onToggleAuto={toggleAutoDeploy}
+          onCopyWebhook={copyWebhook}
+          onRefreshLogs={() => { setLogs([]); fetchLogs(selectedProject.id); }}
+        />
+      )}
 
       {/* ── Add / Edit modal ──────────────────────────────────────────── */}
       {showForm && (
@@ -459,16 +528,19 @@ export default function DeployManager() {
 // ══════════════════════════════════════════════════════════════════════════════
 function ProjectDetail({
   project: p, logs, logsLoading, openLog, setOpenLog, logEndRef,
-  deploying, copied, onDeploy, onEdit, onDelete, onToggleAuto, onCopyWebhook, onRefreshLogs,
+  deploying, copied, onBack, onDeploy, onStop, onEdit, onDelete, onToggleAuto, onCopyWebhook, onRefreshLogs,
 }) {
   const isDeploying = deploying[p.id] || p.status === 'deploying';
 
   return (
     <div className="d-flex flex-column gap-3">
 
-      {/* ── Header card ───────────────────────────────────────────────── */}
+      {/* ── Back + Header ──────────────────────────────────────────────── */}
       <div className="card">
         <div className="card-body">
+          <button className="btn btn-sm btn-outline-secondary mb-3" onClick={onBack}>
+            ← Back to Projects
+          </button>
           <div className="d-flex flex-wrap align-items-start gap-3">
             <div className="flex-fill">
               <div className="d-flex align-items-center gap-2 mb-1 flex-wrap">
@@ -479,40 +551,37 @@ function ProjectDetail({
                 </span>
                 {p.deploy_mode === 'poll'
                   ? <span className="badge bg-info-subtle text-info border border-info-subtle small">
-                      <i className="ri-radar-line me-1" />Poll {p.poll_interval}min
+                      Poll {p.poll_interval}min
                     </span>
-                  : <span className="badge bg-secondary-subtle text-secondary border small">
-                      <i className="ri-webhook-line me-1" />Webhook
-                    </span>}
+                  : <span className="badge bg-secondary-subtle text-secondary border small">Webhook</span>}
               </div>
-              <a href={p.repo_url} target="_blank" rel="noreferrer" className="text-muted small">
-                <i className="ri-github-line me-1" />{p.repo_url}
-              </a>
+              <a href={p.repo_url} target="_blank" rel="noreferrer" className="text-muted small">{p.repo_url}</a>
               <div className="d-flex flex-wrap gap-3 mt-2 small text-muted">
-                <span><i className="ri-git-branch-line me-1" />{p.branch}</span>
-                {p.framework && <span><i className="ri-code-box-line me-1" />{p.framework}</span>}
-                {p.build_command && <span className="font-monospace"><i className="ri-hammer-line me-1" />{p.build_command}</span>}
-                {p.build_output_dir && <span className="font-monospace"><i className="ri-folder-line me-1" />{p.build_output_dir}/</span>}
-                {p.ftp_path && <span className="font-monospace"><i className="ri-server-line me-1" />{p.ftp_path}</span>}
+                <span>branch: {p.branch}</span>
+                {p.framework && <span>{p.framework}</span>}
+                {p.build_command && <span className="font-monospace">{p.build_command}</span>}
+                {p.build_output_dir && <span className="font-monospace">{p.build_output_dir}/</span>}
+                {p.ftp_path && <span className="font-monospace">{p.ftp_path}</span>}
               </div>
               {p.last_commit_hash && (
                 <div className="mt-1 small text-muted">
-                  <i className="ri-git-commit-line me-1" />
-                  <span className="font-monospace">{p.last_commit_hash.slice(0, 7)}</span>
+                  commit: <span className="font-monospace">{p.last_commit_hash.slice(0, 7)}</span>
                   {p.last_deployed_at && <span className="ms-2">deployed {ago(p.last_deployed_at)}</span>}
                 </div>
               )}
             </div>
 
             <div className="d-flex gap-2 flex-shrink-0">
-              <button className={`btn btn-sm ${isDeploying ? 'btn-secondary' : 'btn-success'}`}
-                disabled={isDeploying} onClick={e => onDeploy(p, e)}>
-                {isDeploying
-                  ? <><span className="spinner-border spinner-border-sm me-1" />Deploying...</>
-                  : <><i className="ri-upload-cloud-line me-1" />Deploy Now</>}
-              </button>
+              {isDeploying
+                ? <button className="btn btn-sm btn-danger" onClick={e => onStop(p, e)}>
+                    <span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />
+                    Stop
+                  </button>
+                : <button className="btn btn-sm btn-success" onClick={e => onDeploy(p, e)}>
+                    <SvgUpload /><span className="ms-1">Deploy Now</span>
+                  </button>}
               <button className="btn btn-sm btn-outline-primary" onClick={e => onEdit(p, e)}>
-                <i className="ri-pencil-line me-1" />Edit
+                Edit
               </button>
               <button className="btn btn-sm btn-outline-danger" onClick={e => onDelete(p, e)}>
                 <SvgTrash />
@@ -531,11 +600,11 @@ function ProjectDetail({
             </div>
             {p.deploy_mode === 'webhook' && (
               <div className="input-group input-group-sm" style={{ maxWidth: 400 }}>
-                <span className="input-group-text text-muted small"><i className="ri-webhook-line" /></span>
+                <span className="input-group-text text-muted small">URL</span>
                 <input type="text" className="form-control font-monospace"
                   readOnly value={p.webhook_url} style={{ fontSize: '0.68rem' }} />
                 <button className="btn btn-outline-secondary" onClick={e => onCopyWebhook(p, e)}>
-                  <i className={copied === p.id ? 'ri-check-line text-success' : 'ri-file-copy-line'} />
+                  {copied === p.id ? <SvgCheck /> : <SvgCopy />}
                 </button>
               </div>
             )}
@@ -546,11 +615,11 @@ function ProjectDetail({
       {/* ── Deploy Logs ───────────────────────────────────────────────── */}
       <div className="card">
         <div className="card-header d-flex align-items-center justify-content-between py-2">
-          <span className="fw-semibold small"><i className="ri-terminal-box-line me-1" />Deploy Logs</span>
+          <span className="fw-semibold small">Deploy Logs</span>
           <div className="d-flex align-items-center gap-2">
             <span className="text-muted" style={{ fontSize: '0.7rem' }}>Auto-deleted after 3 days</span>
             <button className="btn btn-sm btn-outline-secondary py-0 px-2" onClick={onRefreshLogs}>
-              <i className="ri-refresh-line" />
+              <SvgRefresh />
             </button>
           </div>
         </div>
@@ -562,7 +631,6 @@ function ProjectDetail({
             </div>
           ) : logs.length === 0 ? (
             <div className="text-center text-muted small py-5">
-              <i className="ri-inbox-line d-block fs-2 mb-2" />
               No deploy logs yet. Hit <strong>Deploy Now</strong> to start.
             </div>
           ) : (
@@ -591,7 +659,7 @@ function ProjectDetail({
                     {log.duration_seconds ? ` · ${log.duration_seconds}s` : ''}
                     {' · '}{new Date(log.created_at).toLocaleString()}
                   </span>
-                  <i className={`ri-arrow-${openLog === log.id ? 'up' : 'down'}-s-line text-muted flex-shrink-0`} />
+                  <span className="text-muted flex-shrink-0">{openLog === log.id ? <SvgChevronUp /> : <SvgChevronDown />}</span>
                 </div>
 
                 {/* Terminal output */}
@@ -637,7 +705,7 @@ function ProjectFormModal({
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">
-              <i className="ri-rocket-line me-2" />{editId ? 'Edit Project' : 'Add Deploy Project'}
+              {editId ? 'Edit Project' : 'Add Deploy Project'}
             </h5>
             <button className="btn-close" onClick={onClose} />
           </div>
@@ -661,14 +729,14 @@ function ProjectFormModal({
             {/* Tabs */}
             <ul className="nav nav-tabs mb-3">
               {[
-                { key: 'repo',  icon: 'ri-github-line',   label: 'Repository' },
-                { key: 'build', icon: 'ri-hammer-line',    label: 'Build' },
-                { key: 'ftp',   icon: 'ri-server-line',    label: 'FTP & Deploy' },
+                { key: 'repo',  label: 'Repository' },
+                { key: 'build', label: 'Build' },
+                { key: 'ftp',   label: 'FTP & Deploy' },
               ].map(t => (
                 <li className="nav-item" key={t.key}>
                   <button className={`nav-link${formTab === t.key ? ' active' : ''}`}
                     onClick={() => setFormTab(t.key)}>
-                    <i className={`${t.icon} me-1`} />{t.label}
+                    {t.label}
                   </button>
                 </li>
               ))}
@@ -721,11 +789,11 @@ function ProjectFormModal({
                     disabled={detecting || !form.repo_url}>
                     {detecting
                       ? <><span className="spinner-border spinner-border-sm me-1" />Detecting...</>
-                      : <><i className="ri-search-eye-line me-1" />Auto-Detect Framework</>}
+                      : <>Auto-Detect Framework</>}
                   </button>
                   {detectInfo && (
                     <span className="text-success small">
-                      <i className="ri-checkbox-circle-line me-1" />
+                      <SvgCheck />
                       <strong>{detectInfo.framework}</strong>
                       {detectInfo.build_command && <> · <code>{detectInfo.build_command}</code></>}
                       {detectInfo.build_output_dir && <> → <code>{detectInfo.build_output_dir}/</code></>}
@@ -736,7 +804,7 @@ function ProjectFormModal({
 
                 <div className="d-flex justify-content-end mt-3">
                   <button className="btn btn-primary btn-sm" onClick={() => setFormTab('build')}>
-                    Next: Build <i className="ri-arrow-right-line ms-1" />
+                    Next: Build <SvgArrowRight />
                   </button>
                 </div>
               </div>
@@ -750,13 +818,13 @@ function ProjectFormModal({
                 <div className="d-flex align-items-center gap-2 mb-3 p-2 rounded bg-light small">
                   <span className="badge bg-primary rounded-pill">1</span>
                   <span className="font-monospace">npm install</span>
-                  <i className="ri-arrow-right-line text-muted" />
+                  <span className="text-muted"><SvgArrowRight /></span>
                   <span className="badge bg-success rounded-pill">2</span>
                   <span className="font-monospace">{form.build_command || <em className="text-muted">no build</em>}</span>
-                  <i className="ri-arrow-right-line text-muted" />
+                  <span className="text-muted"><SvgArrowRight /></span>
                   <span className="badge bg-info rounded-pill">3</span>
                   <span className="font-monospace">{form.build_output_dir ? `${form.build_output_dir}/` : <em className="text-muted">root</em>}</span>
-                  <i className="ri-arrow-right-line text-muted" />
+                  <span className="text-muted"><SvgArrowRight /></span>
                   <span className="badge bg-warning text-dark rounded-pill">4</span>
                   <span>FTP upload</span>
                 </div>
@@ -839,10 +907,10 @@ function ProjectFormModal({
 
                 <div className="d-flex justify-content-between mt-2">
                   <button className="btn btn-outline-secondary btn-sm" onClick={() => setFormTab('repo')}>
-                    <i className="ri-arrow-left-line me-1" />Back
+                    <SvgArrowLeft /> Back
                   </button>
                   <button className="btn btn-primary btn-sm" onClick={() => setFormTab('ftp')}>
-                    Next: FTP <i className="ri-arrow-right-line ms-1" />
+                    Next: FTP <SvgArrowRight />
                   </button>
                 </div>
               </div>
@@ -920,13 +988,11 @@ function ProjectFormModal({
                   {[
                     {
                       key: 'webhook',
-                      icon: 'ri-webhook-line',
                       title: 'Webhook (instant)',
                       desc: 'GitHub sends push event to your server. Add the webhook URL to your GitHub repo.',
                     },
                     {
                       key: 'poll',
-                      icon: 'ri-radar-line',
                       title: 'Poll (no webhook needed)',
                       desc: 'CMS checks GitHub every N minutes. No public webhook URL required.',
                     },
@@ -940,7 +1006,6 @@ function ProjectFormModal({
                           <div className="d-flex align-items-center gap-2 mb-1">
                             <input type="radio" className="form-check-input mt-0" readOnly
                               checked={form.deploy_mode === mode.key} />
-                            <i className={`${mode.icon} fs-5`} />
                             <strong className="small">{mode.title}</strong>
                           </div>
                           <p className="text-muted mb-0" style={{ fontSize: '0.75rem' }}>{mode.desc}</p>
@@ -975,7 +1040,7 @@ function ProjectFormModal({
 
                 <div className="d-flex justify-content-start mt-3">
                   <button className="btn btn-outline-secondary btn-sm" onClick={() => setFormTab('build')}>
-                    <i className="ri-arrow-left-line me-1" />Back
+                    <SvgArrowLeft /> Back
                   </button>
                 </div>
               </div>
@@ -987,7 +1052,7 @@ function ProjectFormModal({
             <button className="btn btn-primary" onClick={onSave} disabled={saving}>
               {saving
                 ? <><span className="spinner-border spinner-border-sm me-1" />Saving...</>
-                : <><i className="ri-save-line me-1" />{editId ? 'Save Changes' : 'Create Project'}</>}
+                : <>{editId ? 'Save Changes' : 'Create Project'}</>}
             </button>
           </div>
         </div>
