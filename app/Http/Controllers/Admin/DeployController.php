@@ -16,9 +16,18 @@ class DeployController extends Controller
 
     public function index()
     {
-        return response()->json(
-            DeployProject::latest()->get()->map(fn($p) => $p->toApiArray())
-        );
+        try {
+            $projects = DeployProject::latest()->get()->map(fn($p) => $p->toApiArray());
+            return response()->json($projects);
+        } catch (\Throwable $e) {
+            \Log::error('DeployController@index failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'error'   => true,
+                'message' => 'Failed to load projects: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function store(Request $r)

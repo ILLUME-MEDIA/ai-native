@@ -186,6 +186,7 @@ export default function DeployManager() {
   const [openLog,     setOpenLog]     = useState(null);
   const [deploying,   setDeploying]   = useState({});
   const [copied,      setCopied]      = useState(null);
+  const [fetchError,  setFetchError]  = useState('');
   const logEndRef = useRef(null);
   const pollRef   = useRef(null);
 
@@ -195,9 +196,22 @@ export default function DeployManager() {
     if (!quiet) setLoading(true);
     try {
       const r = await apiFetch(`${API}/projects`);
-      const data = await r.json();
-      setProjects(data);
-      return data;
+      let data;
+      try { data = await r.json(); } catch { data = null; }
+      if (!r.ok) {
+        const msg = (data && data.message) ? data.message : `Server error ${r.status}`;
+        setFetchError(msg);
+        setProjects([]);
+        return [];
+      }
+      const list = Array.isArray(data) ? data : [];
+      setFetchError('');
+      setProjects(list);
+      return list;
+    } catch (err) {
+      setFetchError(err.message || 'Failed to load projects');
+      setProjects([]);
+      return [];
     } finally { if (!quiet) setLoading(false); }
   }, []);
 
@@ -395,20 +409,18 @@ export default function DeployManager() {
     try {
       const url    = editId ? `${API}/projects/${editId}` : `${API}/projects`;
       const method = editId ? 'PUT' : 'POST';
-      const r      = await apiFetch(url, { method, body: JSON.stringify(body) });
-      const d      = await r.json();
+      const r = await apiFetch(url, { method, body: JSON.stringify(body) });
+      let d;
+      try { d = await r.json(); } catch { d = {}; }
       if (!r.ok) {
-        setFormErr(Object.values(d.errors || {}).flat().join(', ') || d.message || 'Save failed');
+        setFormErr(Object.values(d.errors || {}).flat().join(', ') || d.message || `Save failed (${r.status})`);
         return;
       }
       setShowForm(false);
-      await fetchProjects(true);        // always refresh the list
+      setView('list');             // always go to list first so the user sees data
+      fetchProjects(false);        // full reload with spinner (not quiet) — errors show in UI
       if (editId) {
-        // update: stay on detail view if already there
-        if (view === 'detail') fetchLogs(editId, true);
-      } else {
-        // create: go to list so user sees the new row
-        setView('list');
+        setSelected(editId);       // keep selection for detail view after user clicks row
       }
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
@@ -434,7 +446,19 @@ export default function DeployManager() {
 
           <div className="card">
             <div className="card-body p-0">
-              {loading ? (
+              {fetchError ? (
+                <div className="text-center py-5">
+                  <div className="alert alert-danger d-inline-block text-start" style={{ maxWidth: 500 }}>
+                    <strong>Failed to load projects:</strong><br />
+                    <code style={{ fontSize: '0.8rem' }}>{fetchError}</code>
+                  </div>
+                  <div className="mt-2">
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => fetchProjects()}>
+                      <SvgRefresh /><span className="ms-1">Retry</span>
+                    </button>
+                  </div>
+                </div>
+              ) : loading ? (
                 <div className="text-center py-5"><div className="spinner-border text-primary" /></div>
               ) : projects.length === 0 ? (
                 <div className="text-center py-5">
