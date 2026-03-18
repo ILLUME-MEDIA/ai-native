@@ -44,6 +44,7 @@ class RunDeployJob implements ShouldQueue
         try {
             $this->log($lines, "=== Deploy started: {$project->name} ===");
             $this->log($lines, "Branch: {$project->branch} | Framework: " . ($project->framework ?: 'auto'));
+            $this->flush($log, $lines);
 
             $tmpBase    = sys_get_temp_dir() . '/deploy_' . $project->id . '_' . time();
             $zipPath    = $tmpBase . '.zip';
@@ -51,27 +52,34 @@ class RunDeployJob implements ShouldQueue
 
             // ── 1. Get latest commit hash from GitHub API ────────────────────
             $this->checkStopped();
-            $this->log($lines, "\n[1/4] Fetching latest commit info...");
+            $this->log($lines, "\n[1/5] Fetching latest commit info...");
+            $this->flush($log, $lines);
             $commitHash = $this->commitHash ?? $this->fetchHeadCommit($project, $lines);
             if ($commitHash) {
                 $log->update(['commit_hash' => substr($commitHash, 0, 40)]);
             }
+            $this->flush($log, $lines);
 
             // ── 2. Download repo ZIP ─────────────────────────────────────────
             $this->checkStopped();
-            $this->log($lines, "\n[2/4] Downloading repository...");
+            $this->log($lines, "\n[2/5] Downloading repository...");
+            $this->flush($log, $lines);
             $this->downloadRepo($project, $zipPath, $lines);
+            $this->flush($log, $lines);
 
             // ── 3. Extract ───────────────────────────────────────────────────
             $this->checkStopped();
-            $this->log($lines, "\n[3/4] Extracting...");
+            $this->log($lines, "\n[3/5] Extracting...");
+            $this->flush($log, $lines);
             $sourceDir = $this->extractZip($zipPath, $extractDir, $lines);
+            $this->flush($log, $lines);
 
             // ── 4. Build (if build_command is set) ───────────────────────────
             $deployDir = $sourceDir;
             if ($project->build_command) {
                 $this->checkStopped();
-                $this->log($lines, "\n[4/4] Building — {$project->build_command}");
+                $this->log($lines, "\n[4/5] Building — {$project->build_command}");
+                $this->flush($log, $lines);
                 $this->runBuild($project, $sourceDir, $lines);
 
                 $outDir    = $project->build_output_dir ?: 'dist';
@@ -84,13 +92,16 @@ class RunDeployJob implements ShouldQueue
                     );
                 }
                 $this->log($lines, "Build output dir: {$outDir}");
+                $this->flush($log, $lines);
             } else {
-                $this->log($lines, "\n[4/4] No build step — uploading source directly.");
+                $this->log($lines, "\n[4/5] No build step — uploading source directly.");
+                $this->flush($log, $lines);
             }
 
             // ── 5. FTP Upload ────────────────────────────────────────────────
             $this->checkStopped();
             $this->log($lines, "\n[5/5] Uploading to {$project->ftp_path}...");
+            $this->flush($log, $lines);
             $uploaded = $this->ftpUpload($project, $deployDir, $lines);
 
             $this->log($lines, "\n=== Deploy complete. {$uploaded} files uploaded. ===");
@@ -307,6 +318,11 @@ class RunDeployJob implements ShouldQueue
             Cache::forget("deploy_stop_{$this->projectId}");
             throw new \App\Exceptions\DeployStoppedException();
         }
+    }
+
+    private function flush(DeployLog $log, array $lines): void
+    {
+        $log->update(['output' => implode("\n", $lines)]);
     }
 
     private function log(array &$lines, string $text): void

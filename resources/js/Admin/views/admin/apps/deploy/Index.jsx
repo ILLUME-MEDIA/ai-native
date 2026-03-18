@@ -207,7 +207,12 @@ export default function DeployManager() {
       const r = await apiFetch(`${API}/projects/${projectId}/logs`);
       const data = await r.json();
       setLogs(data);
-      if (data.length) setOpenLog(prev => prev ?? data[0]?.id);
+      // Auto-open the first (latest) log; if a running/pending log exists, open that one
+      setOpenLog(prev => {
+        if (prev) return prev; // keep user's selection
+        const active = data.find(l => l.status === 'running' || l.status === 'pending');
+        return (active ?? data[0])?.id ?? null;
+      });
     } finally { if (!quiet) setLogsLoading(false); }
   }, []);
 
@@ -224,7 +229,7 @@ export default function DeployManager() {
           const still = fresh.find(p => p.id === selected);
           if (still) fetchLogs(selected, true);
         }
-      }, 3000);
+      }, 2000);
     }
     return () => clearInterval(pollRef.current);
   }, [projects, deploying, selected, fetchProjects, fetchLogs]);
@@ -284,8 +289,9 @@ export default function DeployManager() {
     if (!confirm(`Delete "${p.name}"? All deploy logs will be removed.`)) return;
     const r = await apiFetch(`${API}/projects/${p.id}`, { method: 'DELETE' });
     if (!r.ok) { alert('Delete failed. Please try again.'); return; }
+    // Optimistically remove from list immediately
+    setProjects(prev => prev.filter(x => x.id !== p.id));
     if (selected === p.id) { setSelected(null); setView('list'); }
-    fetchProjects();
   };
 
   const toggleAutoDeploy = async (p, e) => {
@@ -303,6 +309,8 @@ export default function DeployManager() {
     const d = await r.json();
     if (r.ok) {
       setSelected(p.id);
+      setView('detail');
+      setOpenLog(null); // reset so fetchLogs will auto-open the new running log
       setTimeout(() => { fetchProjects(true); fetchLogs(p.id, true); }, 1200);
     } else {
       alert(d.message || 'Deploy failed to start');
