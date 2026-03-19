@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 
 const api = (path, options = {}) => axios({ url: `/api/yelp/${path}`, ...options });
@@ -181,7 +181,8 @@ function JobsTab() {
     const [modal, setModal] = useState(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
-    const [running, setRunning] = useState({}); // { [job.id]: AbortController }
+    const [stopping, setStopping] = useState({}); // { [job.id]: true }
+    const pollRef = useRef(null);
 
     const empty = {
         name: '',
@@ -203,9 +204,29 @@ function JobsTab() {
         setEntities(e.data);
         setYelpFields(yf.data);
         setLoading(false);
+        return j.data;
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    // Start polling if any job is running/pending
+    const startPollingIfNeeded = useCallback((jobList) => {
+        const hasActive = jobList.some(j => ['running', 'pending'].includes(j.latest_log?.[0]?.status));
+        if (hasActive && !pollRef.current) {
+            pollRef.current = setInterval(async () => {
+                const { data } = await api('jobs');
+                setJobs(data);
+                const stillActive = data.some(j => ['running', 'pending'].includes(j.latest_log?.[0]?.status));
+                if (!stillActive) {
+                    clearInterval(pollRef.current);
+                    pollRef.current = null;
+                }
+            }, 4000);
+        }
+    }, []);
+
+    useEffect(() => {
+        load().then(startPollingIfNeeded);
+        return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+    }, [load, startPollingIfNeeded]);
 
     const openEdit = (job) => {
         const sc = job.search_columns || {};
@@ -257,20 +278,27 @@ function JobsTab() {
     };
 
     const runNow = async (job) => {
-        const controller = new AbortController();
-        setRunning(r => ({ ...r, [job.id]: controller }));
         try {
-            await api(`jobs/${job.id}/run`, { method: 'post', signal: controller.signal });
-            load();
+            await api(`jobs/${job.id}/run`, { method: 'post' });
         } catch (e) {
-            if (!e?.message?.includes('cancel') && !e?.code === 'ERR_CANCELED') load();
-        } finally {
-            setRunning(r => { const n = { ...r }; delete n[job.id]; return n; });
+            alert(e.response?.data?.error || 'Failed to start job.');
+            return;
         }
+        // Immediately refresh so status shows pending/running, then start polling
+        const jobList = await load();
+        startPollingIfNeeded(jobList);
     };
 
-    const stopJob = (job) => {
-        running[job.id]?.abort();
+    const stopJob = async (job) => {
+        const log = job.latest_log?.[0];
+        if (!log) return;
+        setStopping(s => ({ ...s, [job.id]: true }));
+        try {
+            await api(`logs/${log.id}/stop`, { method: 'post' });
+        } catch { /* ignore */ }
+        setStopping(s => { const n = { ...s }; delete n[job.id]; return n; });
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        load();
     };
 
     const toggleMapping = (yelpKey) => {
@@ -299,6 +327,7 @@ function JobsTab() {
                     <tbody className="divide-y divide-gray-200 bg-white">
                         {jobs.map(job => {
                             const log = job.latest_log?.[0];
+                            const isActive = ['running', 'pending'].includes(log?.status);
                             return (
                                 <tr key={job.id}>
                                     <td className="px-4 py-2 font-medium">{job.name}</td>
@@ -307,12 +336,12 @@ function JobsTab() {
                                     <td className="px-4 py-2"><Badge color={job.auto_merge ? 'green' : 'yellow'}>{job.auto_merge ? 'On' : 'Manual'}</Badge></td>
                                     <td className="px-4 py-2"><Badge color={{ completed: 'green', failed: 'red', running: 'blue', paused: 'yellow', pending: 'gray' }[log?.status] ?? 'gray'}>{log?.status ?? 'never'}</Badge></td>
                                     <td className="px-4 py-2 flex gap-1">
-                                        {running[job.id]
-                                            ? <Btn variant="danger" onClick={() => stopJob(job)}>Stop</Btn>
+                                        {isActive
+                                            ? <Btn variant="danger" onClick={() => stopJob(job)} disabled={!!stopping[job.id]}>{stopping[job.id] ? 'Stopping...' : 'Stop'}</Btn>
                                             : <Btn variant="success" onClick={() => runNow(job)}>Run</Btn>
                                         }
-                                        <Btn variant="ghost" onClick={() => openEdit(job)}>Edit</Btn>
-                                        <Btn variant="danger" onClick={async () => { if (confirm(`Delete "${job.name}"?`)) { await api(`jobs/${job.id}`, { method: 'delete' }); load(); } }}>Delete</Btn>
+                                        <Btn variant="ghost" onClick={() => openEdit(job)} disabled={isActive}>Edit</Btn>
+                                        <Btn variant="danger" onClick={async () => { if (confirm(`Delete "${job.name}"?`)) { await api(`jobs/${job.id}`, { method: 'delete' }); load(); } }} disabled={isActive}>Delete</Btn>
                                     </td>
                                 </tr>
                             );
