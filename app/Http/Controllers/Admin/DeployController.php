@@ -224,8 +224,8 @@ class DeployController extends Controller
 
         Cache::put("deploy_stop_{$id}", true, now()->addMinutes(2));
 
-        // Update the currently running log to cancelled
-        $project->logs()->where('status', 'running')->update([
+        // Update running or pending logs to cancelled
+        $project->logs()->whereIn('status', ['running', 'pending'])->update([
             'status' => 'cancelled',
             'output' => \DB::raw("CONCAT(IFNULL(output,''), '\n[" . date('H:i:s') . "] [WARN] Stop requested by user...')"),
         ]);

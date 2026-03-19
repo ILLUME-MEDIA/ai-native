@@ -454,11 +454,16 @@ export default function DeployManager() {
         return;
       }
       setShowForm(false);
-      setView('list');             // always go to list first so the user sees data
-      fetchProjects(false);        // full reload with spinner (not quiet) — errors show in UI
+      // Immediately update local state from the API response so the list
+      // reflects the change without waiting for a full refetch
       if (editId) {
-        setSelected(editId);       // keep selection for detail view after user clicks row
+        setProjects(prev => prev.map(p => p.id === editId ? d : p));
+      } else {
+        setProjects(prev => [d, ...prev]);
       }
+      setView('list');
+      // Background quiet refresh to stay consistent with server
+      fetchProjects(true);
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
   };

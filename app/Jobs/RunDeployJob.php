@@ -210,19 +210,30 @@ class RunDeployJob implements ShouldQueue
 
     private function runBuild(DeployProject $project, string $dir, array &$lines): void
     {
-        $pathPrefix = '';
+        // Build an env array so node_path works cross-platform without shell-specific syntax
+        $env = [];
         if ($project->node_path) {
-            $pathPrefix = 'PATH=' . escapeshellarg(rtrim($project->node_path, '/')) . ':"$PATH" ';
+            $nodePath = rtrim($project->node_path, '/\\');
+            $sep      = PHP_OS_FAMILY === 'Windows' ? ';' : ':';
+            $env      = array_merge(getenv() ?: [], ['PATH' => $nodePath . $sep . (getenv('PATH') ?: '')]);
         }
 
-        $this->execCmd("{$pathPrefix}npm install --prefer-offline 2>&1", $dir, $lines);
-        $this->execCmd("{$pathPrefix}{$project->build_command} 2>&1", $dir, $lines);
+        $this->execCmd('npm install --prefer-offline 2>&1', $dir, $lines, $env);
+        $this->execCmd($project->build_command . ' 2>&1',   $dir, $lines, $env);
     }
 
-    private function execCmd(string $cmd, string $cwd, array &$lines): void
+    private function execCmd(string $cmd, string $cwd, array &$lines, array $env = []): void
     {
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $proc        = proc_open("bash -c " . escapeshellarg($cmd), $descriptors, $pipes, $cwd, null);
+        $procEnv     = $env ?: null; // null = inherit parent environment
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $shell = 'cmd /c ' . $cmd;
+        } else {
+            $shell = 'bash -c ' . escapeshellarg($cmd);
+        }
+
+        $proc = proc_open($shell, $descriptors, $pipes, $cwd, $procEnv);
 
         if (!is_resource($proc)) {
             throw new \RuntimeException("Failed to start process: {$cmd}");
