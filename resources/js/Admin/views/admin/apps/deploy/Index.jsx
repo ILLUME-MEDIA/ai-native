@@ -184,6 +184,7 @@ export default function DeployManager() {
   const [nodeInfo,      setNodeInfo]      = useState(null); // { node_path, node_version, npm_version }
   const [logs,        setLogs]        = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError,   setLogsError]   = useState('');
   const [openLog,     setOpenLog]     = useState(null);
   const [deploying,   setDeploying]   = useState({});
   const [copied,      setCopied]      = useState(null);
@@ -223,14 +224,28 @@ export default function DeployManager() {
     if (!quiet) setLogsLoading(true);
     try {
       const r = await apiFetch(`${API}/projects/${projectId}/logs`);
-      const data = await r.json();
-      setLogs(data);
+      let data;
+      try { data = await r.json(); } catch { data = null; }
+      if (!r.ok) {
+        const msg = (data && (data.message || data.error)) ? (data.message || data.error) : `Failed to load logs (HTTP ${r.status})`;
+        setLogsError(msg);
+        setLogs([]);
+        setOpenLog(null);
+        return;
+      }
+      const list = Array.isArray(data) ? data : [];
+      setLogsError('');
+      setLogs(list);
       // Auto-open the first (latest) log; if a running/pending log exists, open that one
       setOpenLog(prev => {
         if (prev) return prev; // keep user's selection
-        const active = data.find(l => l.status === 'running' || l.status === 'pending');
-        return (active ?? data[0])?.id ?? null;
+        const active = list.find(l => l.status === 'running' || l.status === 'pending');
+        return (active ?? list[0])?.id ?? null;
       });
+    } catch (err) {
+      setLogsError(err.message || 'Failed to load logs');
+      setLogs([]);
+      setOpenLog(null);
     } finally { if (!quiet) setLogsLoading(false); }
   }, []);
 
@@ -767,6 +782,13 @@ function ProjectDetail({
           {logsLoading ? (
             <div className="text-center py-4">
               <div className="spinner-border spinner-border-sm text-primary" />
+            </div>
+          ) : logsError ? (
+            <div className="p-3">
+              <div className="alert alert-danger mb-0 small">
+                <strong>Failed to load logs:</strong><br />
+                <code style={{ fontSize: '0.8rem' }}>{logsError}</code>
+              </div>
             </div>
           ) : logs.length === 0 ? (
             <div className="text-center text-muted small py-5">

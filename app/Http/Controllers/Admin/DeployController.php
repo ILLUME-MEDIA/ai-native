@@ -160,6 +160,10 @@ class DeployController extends Controller
             return response()->json(['message' => 'Already deploying.'], 409);
         }
 
+        // If the user previously hit "Stop", a short-lived cache flag may still exist.
+        // Clear it so a new deploy doesn't immediately cancel itself.
+        Cache::forget("deploy_stop_{$id}");
+
         $log = DeployLog::create([
             'project_id'   => $project->id,
             'status'       => 'pending',
@@ -169,9 +173,14 @@ class DeployController extends Controller
 
         $project->update(['status' => 'deploying']);
 
+        // Write an immediate line so UI doesn't show "blank pending"
+        $log->update([
+            'output' => '[' . date('H:i:s') . "] Starting deploy… waiting for worker start",
+        ]);
+
         // Run in a detached background process — no queue worker needed.
-        // This works on shared hosting (cPanel) where queue:work can't run persistently.
-        $this->runDeployInBackground($log->id);
+        // Designed for shared hosting (cPanel) where queue:work can't run persistently.
+        $this->runDeployInBackground($log->id, $project->id);
 
         return response()->json(['log_id' => $log->id]);
     }
@@ -199,21 +208,64 @@ class DeployController extends Controller
 
     // ── Background dispatch helper ────────────────────────────────────────────
 
-    private function runDeployInBackground(int $logId): void
+    private function runDeployInBackground(int $logId, int $projectId): void
     {
-        $php     = PHP_BINARY;
         $artisan = base_path('artisan');
 
+        // ── Windows (local dev) ──────────────────────────────────────────────
         if (PHP_OS_FAMILY === 'Windows') {
-            // Windows (local dev): open a detached process
+            $php = PHP_BINARY;
             $cmd = "start /B \"\" \"{$php}\" \"{$artisan}\" deploy:run {$logId}";
             pclose(popen($cmd, 'r'));
-        } else {
-            // Linux/Mac (production): detach with & and redirect output
-            $cmd = escapeshellarg($php) . ' ' . escapeshellarg($artisan)
-                . ' deploy:run ' . (int)$logId . ' > /dev/null 2>&1 &';
-            exec($cmd);
+            return;
         }
+
+        // ── Linux/cPanel — Method 1: PHP-FPM / LiteSpeed (most reliable) ─────
+        // Use Laravel's terminating callback: it runs *after* the response is sent,
+        // while the app container + DB are still available.
+        if (function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request')) {
+            ignore_user_abort(true);
+            set_time_limit(0);
+
+            app()->terminating(function () use ($logId, $projectId) {
+                try {
+                    if (function_exists('fastcgi_finish_request')) {
+                        @fastcgi_finish_request();
+                    } elseif (function_exists('litespeed_finish_request')) {
+                        @litespeed_finish_request();
+                    }
+
+                    $log = DeployLog::find($logId);
+                    if ($log && $log->status === 'pending') {
+                        (new \App\Jobs\RunDeployJob($projectId, $logId))->handle();
+                    }
+                } catch (\Throwable $e) {
+                    // Best-effort: record why the worker didn't start
+                    try {
+                        DeployLog::where('id', $logId)->update([
+                            'status' => 'failed',
+                            'output' => \DB::raw(
+                                "CONCAT(IFNULL(output,''), '\n[" . date('H:i:s') . "] [ERROR] Background start failed: " .
+                                addslashes($e->getMessage()) . "')"
+                            ),
+                        ]);
+                        DeployProject::where('id', $projectId)->update(['status' => 'failed']);
+                    } catch (\Throwable) {
+                        // swallow
+                    }
+                }
+            });
+            return;
+        }
+
+        // ── Linux — Method 2: nohup background process ───────────────────────
+        // Fallback for mod_php or systems without fastcgi_finish_request.
+        // PHP_BINARY in a web context may be php-fpm/cgi; try CLI binary first.
+        $phpCli = trim(shell_exec('which php 2>/dev/null') ?: '') ?: PHP_BINARY;
+        $cmd    = 'nohup ' . escapeshellarg($phpCli) . ' '
+                . escapeshellarg($artisan) . ' deploy:run ' . (int)$logId
+                . ' > /dev/null 2>&1 &';
+        @exec($cmd);
     }
 
     // ── Stop a running deploy ─────────────────────────────────────────────────
