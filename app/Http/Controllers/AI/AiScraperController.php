@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\AI;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\EnrichPlaylistJob;
 use App\Models\AiDuty;
 use App\Models\AiPlatform;
 use App\Models\PlatformGenre;
@@ -54,14 +53,14 @@ class AiScraperController extends Controller
             $playlist = $this->scraperService->syncToDatabase($playlistData);
             $this->ensurePlaylistSyncDutyExists($playlist);
 
-            // Dispatch enrichment in background (YouTube stats + AI tags/genres)
-            EnrichPlaylistJob::dispatch($playlist->playlist_id);
+            // Run enrichment synchronously (YouTube stats + AI tags/genres)
+            $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
 
-            // Return the playlist with all data for immediate display
+            // Return the playlist with all data
             return response()->json([
-                'message' => 'Playlist added and synced! Enrichment (stats, tags, genres) is running in background.',
-                'enriching' => true,
-                'playlist' => $playlist->fresh()->load('videos')->loadCount('videos'),
+                'message' => "Playlist added! {$enrichResult['enriched']} videos enriched with stats, tags & genres.",
+                'enriching' => false,
+                'playlist' => $playlist->fresh()->loadCount('videos'),
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -82,12 +81,12 @@ class AiScraperController extends Controller
             $playlistData = $this->scraperService->fetchPlaylist($playlist->playlist_id, 10000);
             $this->scraperService->syncToDatabase($playlistData);
 
-            // Dispatch enrichment in background instead of blocking the response
-            EnrichPlaylistJob::dispatch($playlist->playlist_id);
+            // Run enrichment synchronously
+            $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
 
             return response()->json([
-                'message' => 'Playlist synced! Enrichment (stats, tags, genres) is running in background.',
-                'enriching' => true,
+                'message' => "Playlist synced! {$enrichResult['enriched']} videos enriched with stats, tags & genres.",
+                'enriching' => false,
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -96,13 +95,19 @@ class AiScraperController extends Controller
 
     public function enrich(YoutubePlaylist $playlist)
     {
-        // Dispatch to background queue — avoids 504 timeout on large playlists
-        EnrichPlaylistJob::dispatch($playlist->playlist_id);
+        set_time_limit(900); // Allow up to 15 minutes for large playlists
 
-        return response()->json([
-            'message' => 'Enrichment queued! YouTube stats, tags & genres will be updated in background.',
-            'enriching' => true,
-        ], 202);
+        try {
+            $result = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
+
+            return response()->json([
+                'message' => "Enrichment complete! {$result['enriched']} of {$result['total']} videos updated with stats, tags & genres.",
+                'enriched' => $result['enriched'],
+                'total'    => $result['total'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**

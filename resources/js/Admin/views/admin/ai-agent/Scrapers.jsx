@@ -394,7 +394,7 @@ const Scrapers = () => {
             setMaxResults('');
             setShowModal(false);
 
-            // Add playlist to list immediately — no need to wait for enrichment
+            // Enrichment already ran synchronously — reload everything
             if (response.data.playlist) {
                 setPlaylists(prev => [response.data.playlist, ...prev]);
 
@@ -408,10 +408,7 @@ const Scrapers = () => {
                     }
                 }
 
-                // Start background polling so stats/tags appear as they arrive
-                if (response.data.enriching) {
-                    startEnrichPolling(response.data.playlist.playlist_id);
-                }
+                loadVideos(1);
             } else {
                 refreshAll();
             }
@@ -431,13 +428,10 @@ const Scrapers = () => {
     const handleSync = async (id) => {
         setSyncingIds(prev => new Set([...prev, id]));
         try {
-            const pl = playlists.find(p => p.id === id);
             const res = await axios.post(`/api/ai/scrapers/${id}/sync`);
+            // Sync + enrichment now run synchronously — reload everything immediately
             refreshAll();
-            if (res.data.enriching && pl?.playlist_id) {
-                startEnrichPolling(pl.playlist_id);
-            }
-            alert(res.data.message || 'Sync complete. Enrichment is running in background.');
+            alert(res.data.message || 'Sync & enrichment complete.');
         } catch (error) {
             alert('Sync failed: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -447,18 +441,15 @@ const Scrapers = () => {
 
     const handleEnrich = async (id) => {
         const pl = playlists.find(p => p.id === id);
-        // enrichingIds = disables button during HTTP call only (clears in finally — fast)
         setEnrichingIds(prev => new Set([...prev, id]));
         try {
             const res = await axios.post(`/api/ai/scrapers/${id}/enrich`);
-            if (pl?.playlist_id) {
-                startEnrichPolling(pl.playlist_id);
-            }
-            alert(res.data.message || 'Enrichment queued! Stats & tags will update in background.');
+            // Enrich now runs synchronously — reload videos immediately to show new tags/genres
+            loadVideos(1);
+            alert(res.data.message || 'Enrichment complete! Tags & genres have been updated.');
         } catch (error) {
             alert('Enrich failed: ' + (error.response?.data?.error || error.message));
         } finally {
-            // Clear button loading state immediately — background work tracked via pollingIds
             setEnrichingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
         }
     };

@@ -2058,30 +2058,11 @@ class YouTubeScraperService
             return [];
 
         try {
-            $tags = [];
-            $genres = [];
+            // Always call these — they handle Mistral internally and fall back to rule-based extraction
+            $tags   = $this->generateTagsOnly($video->title, $video->description ?? '');
+            $genres = $this->generateGenresOnly($video->title, $video->description ?? '', $video->channel_name ?? '');
 
-            // Prefer Mistral when API key is set (no default model; we use mistral-small for this task)
-            if (Config::get('services.mistral.key') || $this->mistralApiKey) {
-                $tags = $this->generateTagsOnly($video->title, $video->description ?? '');
-                $genres = $this->generateGenresOnly($video->title, $video->description ?? '', $video->channel_name ?? '');
-            }
-
-            if (empty($tags) && empty($genres)) {
-                $prompt = "Analyze this video title and description. Generate 5 highly relevant SEO tags and 2 music/content genres.
-            Return ONLY a JSON object: {\"tags\": [\"tag1\", \"tag2\", ...], \"genres\": [\"genre1\", \"genre2\"]}.
-            Title: {$video->title}
-            Description: {$video->description}";
-                $response = $this->aiManager->execute($prompt, ['mode' => 'json']);
-                $result = $response['text'] ?? null;
-                if ($result && is_string($result)) {
-                    $result = json_decode($result, true);
-                }
-                $tags = $result['tags'] ?? [];
-                $genres = $result['genres'] ?? [];
-            } else {
-                $result = ['tags' => $tags, 'genres' => $genres];
-            }
+            $result = ['tags' => $tags, 'genres' => $genres];
 
             if (!empty($tags) || !empty($genres)) {
                 $existingGenres = $video->genres ?? [];
