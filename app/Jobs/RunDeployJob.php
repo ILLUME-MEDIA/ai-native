@@ -210,12 +210,15 @@ class RunDeployJob implements ShouldQueue
 
     private function runBuild(DeployProject $project, string $dir, array &$lines, DeployLog $log): void
     {
-        // Build an env array so node_path works cross-platform without shell-specific syntax
-        $env = [];
+        // CI=true makes build tools (Vite, CRA, etc.) switch to non-interactive mode:
+        // no spinners, no progress bars, and — crucially — line-buffered stdout instead
+        // of the fully-buffered mode they use when no TTY is detected.
+        $env = array_merge(getenv() ?: [], ['CI' => 'true']);
+
         if ($project->node_path) {
-            $nodePath = rtrim($project->node_path, '/\\');
-            $sep      = PHP_OS_FAMILY === 'Windows' ? ';' : ':';
-            $env      = array_merge(getenv() ?: [], ['PATH' => $nodePath . $sep . (getenv('PATH') ?: '')]);
+            $nodePath   = rtrim($project->node_path, '/\\');
+            $sep        = PHP_OS_FAMILY === 'Windows' ? ';' : ':';
+            $env['PATH'] = $nodePath . $sep . ($env['PATH'] ?? getenv('PATH') ?: '');
         }
 
         $this->execCmd('npm install --prefer-offline 2>&1', $dir, $lines, $env, $log);
@@ -230,7 +233,13 @@ class RunDeployJob implements ShouldQueue
         if (PHP_OS_FAMILY === 'Windows') {
             $shell = 'cmd /c ' . $cmd;
         } else {
-            $shell = 'bash -c ' . escapeshellarg($cmd);
+            // stdbuf forces line-buffered stdout/stderr so we can stream output in
+            // real-time even when the child process is running inside a pipe (no TTY).
+            // This pairs with CI=true (set in runBuild) for maximum compatibility.
+            $stdbuf = file_exists('/usr/bin/stdbuf') ? '/usr/bin/stdbuf'
+                    : (file_exists('/bin/stdbuf')     ? '/bin/stdbuf' : null);
+            $prefix = $stdbuf ? "{$stdbuf} -oL -eL " : '';
+            $shell  = $prefix . 'bash -c ' . escapeshellarg($cmd);
         }
 
         $proc = proc_open($shell, $descriptors, $pipes, $cwd, $procEnv);

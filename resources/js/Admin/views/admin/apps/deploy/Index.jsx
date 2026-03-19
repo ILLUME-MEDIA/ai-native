@@ -281,6 +281,14 @@ export default function DeployManager() {
     if (selected) { setLogs([]); setOpenLog(null); setLiveLog(null); fetchLogs(selected); }
   }, [selected]); // eslint-disable-line
 
+  // Auto-start live polling if we land on a detail view that already has a running log
+  // (covers poll-triggered deploys where triggerDeploy wasn't called by the user)
+  useEffect(() => {
+    if (!selected || liveLog) return;
+    const active = logs.find(l => l.status === 'running' || l.status === 'pending');
+    if (active) startLivePolling(selected, active.id);
+  }, [selected, logs]); // eslint-disable-line
+
   // Auto-scroll terminal when output changes
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, openLog, liveLog]);
 
@@ -347,7 +355,8 @@ export default function DeployManager() {
       const d = await r.json();
       setProjects(prev => prev.map(x => x.id === p.id ? d : x));
     }
-    fetchProjects(true);
+    // No fetchProjects(true) — calling it immediately after PUT can overwrite the
+    // correct optimistic state with stale cached data returned by the server.
   };
 
   const triggerDeploy = async (p, e) => {
@@ -467,8 +476,9 @@ export default function DeployManager() {
         setProjects(prev => [d, ...prev]);
       }
       setView('list');
-      // Background quiet refresh to stay consistent with server
-      fetchProjects(true);
+      // Delay background refresh so it doesn't race with our optimistic update
+      // and overwrite correct state with a stale server response.
+      setTimeout(() => fetchProjects(true), 3000);
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
   };
