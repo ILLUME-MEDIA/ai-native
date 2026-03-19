@@ -188,6 +188,16 @@ class YelpController extends Controller
      */
     public function jobsRun(YelpJob $job): JsonResponse
     {
+        // Prevent duplicate runs — return existing active log if already running/pending
+        $existing = YelpJobLog::where('job_id', $job->id)
+            ->whereIn('status', ['running', 'pending'])
+            ->latest()
+            ->first();
+
+        if ($existing) {
+            return response()->json(['error' => 'Job is already running.', 'log' => $existing], 409);
+        }
+
         // Check if any account has quota
         $hasQuota = YelpAccount::where('is_active', true)->get()
             ->contains(fn ($a) => $a->hasQuota());

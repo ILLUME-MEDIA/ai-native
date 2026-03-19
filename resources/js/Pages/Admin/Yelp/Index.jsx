@@ -281,8 +281,11 @@ function JobsTab() {
         try {
             await api(`jobs/${job.id}/run`, { method: 'post' });
         } catch (e) {
-            alert(e.response?.data?.error || 'Failed to start job.');
-            return;
+            // 409 = already running, just start polling to reflect current state
+            if (e.response?.status !== 409) {
+                alert(e.response?.data?.error || 'Failed to start job.');
+                return;
+            }
         }
         // Immediately refresh so status shows pending/running, then start polling
         const jobList = await load();
