@@ -605,6 +605,7 @@ export default function DeployManager() {
           project={selectedProject}
           logs={logs}
           logsLoading={logsLoading}
+          logsError={logsError}
           openLog={openLog}
           setOpenLog={setOpenLog}
           logEndRef={logEndRef}
@@ -681,7 +682,7 @@ function TerminalOutput({ output, isLive, logEndRef }) {
 // Right panel: project detail + logs
 // ══════════════════════════════════════════════════════════════════════════════
 function ProjectDetail({
-  project: p, logs, logsLoading, openLog, setOpenLog, logEndRef,
+  project: p, logs, logsLoading, logsError, openLog, setOpenLog, logEndRef,
   deploying, liveLog, copied, onBack, onDeploy, onStop, onEdit, onDelete, onToggleAuto, onCopyWebhook, onRefreshLogs,
 }) {
   const isDeploying = deploying[p.id] || p.status === 'deploying' || (liveLog && (liveLog.status === 'running' || liveLog.status === 'pending'));
