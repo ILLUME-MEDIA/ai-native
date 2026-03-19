@@ -110,7 +110,7 @@ class RunDeployJob implements ShouldQueue
                 'status'          => 'success',
                 'commit_hash'     => $commitHash ? substr($commitHash, 0, 40) : $log->commit_hash,
                 'output'          => implode("\n", $lines),
-                'duration_seconds'=> (int) now()->diffInSeconds($started),
+                'duration_seconds'=> max(0, abs((int) now()->diffInSeconds($started))),
             ]);
 
             $project->update([
@@ -126,7 +126,7 @@ class RunDeployJob implements ShouldQueue
             $log->update([
                 'status'          => $stopped ? 'cancelled' : 'failed',
                 'output'          => implode("\n", $lines),
-                'duration_seconds'=> (int) now()->diffInSeconds($started),
+                'duration_seconds'=> max(0, abs((int) now()->diffInSeconds($started))),
             ]);
             $project->update(['status' => $stopped ? 'idle' : 'failed']);
 
@@ -246,6 +246,13 @@ class RunDeployJob implements ShouldQueue
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $procEnv     = $env ?: null; // null = inherit parent environment
 
+        // On Linux we write the exit code to a temp file so we can read it after
+        // the process ends.  This is necessary because many cPanel/shared-hosting
+        // servers compile PHP with --enable-sigchild, which makes proc_close()
+        // and proc_get_status()['exitcode'] always return -1 regardless of the
+        // real exit code.  Writing it via the shell itself is always reliable.
+        $exitFile = null;
+
         if (PHP_OS_FAMILY === 'Windows') {
             $shell = 'cmd /c ' . $cmd;
         } else {
@@ -255,7 +262,10 @@ class RunDeployJob implements ShouldQueue
             $stdbuf = file_exists('/usr/bin/stdbuf') ? '/usr/bin/stdbuf'
                     : (file_exists('/bin/stdbuf')     ? '/bin/stdbuf' : null);
             $prefix = $stdbuf ? "{$stdbuf} -oL -eL " : '';
-            $shell  = $prefix . 'bash -c ' . escapeshellarg($cmd);
+
+            $exitFile = sys_get_temp_dir() . '/dep_exit_' . $this->logId . '_' . getmypid();
+            // Subshell so the exit code of CMD is captured even when CMD uses set -e
+            $shell = $prefix . 'bash -c ' . escapeshellarg("({$cmd}); echo \$? > " . escapeshellarg($exitFile));
         }
 
         $proc = proc_open($shell, $descriptors, $pipes, $cwd, $procEnv);
@@ -301,7 +311,7 @@ class RunDeployJob implements ShouldQueue
                 // Stop signal from user — kill subprocess immediately
                 if (Cache::has("deploy_stop_{$this->projectId}")) {
                     Cache::forget("deploy_stop_{$this->projectId}");
-                    $this->killProc($proc, $pipes);
+                    $this->killProc($proc, $pipes, $exitFile);
                     throw new \App\Exceptions\DeployStoppedException();
                 }
 
@@ -310,7 +320,7 @@ class RunDeployJob implements ShouldQueue
                 if ($elapsed >= $timeout) {
                     $this->log($lines, "[ERROR] Command timed out after {$elapsed}s — killed.");
                     if ($log) $this->flush($log, $lines);
-                    $this->killProc($proc, $pipes);
+                    $this->killProc($proc, $pipes, $exitFile);
                     throw new \RuntimeException("Command timed out ({$timeout}s): {$cmd}");
                 }
             }
@@ -333,7 +343,20 @@ class RunDeployJob implements ShouldQueue
 
         if ($log) $this->flush($log, $lines);
 
-        $exitCode = proc_close($proc);
+        proc_close($proc); // frees resources; return value is unreliable on --enable-sigchild builds
+
+        // Read the real exit code from the temp file (Linux only).
+        // Fall back to 0 if the file is missing (e.g. process was killed before writing).
+        $exitCode = 0;
+        if ($exitFile) {
+            if (file_exists($exitFile)) {
+                $exitCode = (int)trim(file_get_contents($exitFile));
+                @unlink($exitFile);
+            }
+            // If the file is absent the process was likely killed (stop/timeout) and an
+            // exception was already thrown above — treat as 0 to avoid a double error.
+        }
+
         if ($exitCode !== 0) {
             throw new \RuntimeException("Command exited with code {$exitCode}: {$cmd}");
         }
@@ -422,7 +445,7 @@ class RunDeployJob implements ShouldQueue
      * On Linux we kill the entire process group so child processes
      * (bash → npm → node) are all cleaned up.
      */
-    private function killProc($proc, array $pipes): void
+    private function killProc($proc, array $pipes, ?string $exitFile = null): void
     {
         if (PHP_OS_FAMILY !== 'Windows') {
             $pid = proc_get_status($proc)['pid'] ?? null;
@@ -440,6 +463,7 @@ class RunDeployJob implements ShouldQueue
         }
         @proc_terminate($proc);
         @proc_close($proc);
+        if ($exitFile && file_exists($exitFile)) @unlink($exitFile);
     }
 
     private function flush(DeployLog $log, array $lines): void
