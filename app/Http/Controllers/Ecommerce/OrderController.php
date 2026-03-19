@@ -163,7 +163,13 @@ class OrderController extends Controller
             ]);
         }
 
-        CartItem::where('session_id', $sid)->where('business_id', $data['business_id'])->delete();
+        // Clear cart — also cover guest cart (X-Session-Id) if user checked out with OTP token
+        $sidsToDelete = [$sid];
+        $headerSid = $request->header('X-Session-Id');
+        if ($headerSid && $headerSid !== $sid) {
+            $sidsToDelete[] = $headerSid;
+        }
+        CartItem::whereIn('session_id', $sidsToDelete)->where('business_id', $data['business_id'])->delete();
 
         $order->load('business');
 

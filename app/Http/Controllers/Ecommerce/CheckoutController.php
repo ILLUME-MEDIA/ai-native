@@ -157,9 +157,16 @@ class CheckoutController extends Controller
             OrderItem::create(array_merge($item, ['order_id' => $order->id]));
         }
 
-        // Clear session cart if it was used (use same $sid — not a fresh sessionId() call)
+        // Clear session cart if it was used.
+        // Also clear any guest cart tied to X-Session-Id — handles the case where
+        // the user added items as a guest (X-Session-Id) then checked out with OTP token.
         if ($usingSessionCart) {
-            CartItem::where('session_id', $sid)
+            $sidsToDelete = [$sid];
+            $headerSid = $request->header('X-Session-Id');
+            if ($headerSid && $headerSid !== $sid) {
+                $sidsToDelete[] = $headerSid;
+            }
+            CartItem::whereIn('session_id', $sidsToDelete)
                 ->where('business_id', $data['business_id'])
                 ->delete();
         }
@@ -392,7 +399,8 @@ class CheckoutController extends Controller
                 }
             } catch (\Throwable) {}
         }
-        return $request->header('X-Session-Id') ?? Str::uuid()->toString();
+        return $request->header('X-Session-Id')
+            ?? (session()->isStarted() ? session()->getId() : Str::uuid()->toString());
     }
 
     private function extractBearer(Request $request): ?string
