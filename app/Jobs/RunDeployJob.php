@@ -216,16 +216,32 @@ class RunDeployJob implements ShouldQueue
         $env = array_merge(getenv() ?: [], ['CI' => 'true']);
 
         if ($project->node_path) {
-            $nodePath   = rtrim($project->node_path, '/\\');
-            $sep        = PHP_OS_FAMILY === 'Windows' ? ';' : ':';
+            $nodePath    = rtrim($project->node_path, '/\\');
+            $sep         = PHP_OS_FAMILY === 'Windows' ? ';' : ':';
             $env['PATH'] = $nodePath . $sep . ($env['PATH'] ?? getenv('PATH') ?: '');
         }
+
+        // Log node/npm version first — helps diagnose version-incompatibility hangs.
+        // Vite requires Node >=14, react-scripts requires >=14, etc.
+        // If node is too old the build will hang with zero output.
+        $this->execCmd('node --version && npm --version 2>&1', $dir, $lines, $env, $log);
 
         $this->execCmd('npm install --prefer-offline 2>&1', $dir, $lines, $env, $log);
         $this->execCmd($project->build_command . ' 2>&1',   $dir, $lines, $env, $log);
     }
 
-    private function execCmd(string $cmd, string $cwd, array &$lines, array $env = [], ?DeployLog $log = null): void
+    /**
+     * Run a shell command, streaming its stdout/stderr to $lines in real-time.
+     * Flushes to DB every 500 ms so the frontend can show live output.
+     * Respects the stop-deploy flag and terminates the subprocess when signalled.
+     * Throws RuntimeException if the command exits with a non-zero code.
+     * Throws DeployStoppedException if the user requests a stop while running.
+     *
+     * @param  int $timeout  Max seconds to wait (default 600 = 10 min). Prevents
+     *                        hung builds (e.g. Node version incompatibility) from
+     *                        blocking the worker indefinitely.
+     */
+    private function execCmd(string $cmd, string $cwd, array &$lines, array $env = [], ?DeployLog $log = null, int $timeout = 600): void
     {
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $procEnv     = $env ?: null; // null = inherit parent environment
@@ -253,6 +269,8 @@ class RunDeployJob implements ShouldQueue
         stream_set_blocking($pipes[2], false);
 
         $lastFlush = microtime(true);
+        $startedAt = microtime(true);
+        $tick      = 0;
 
         // Stream output line-by-line so the frontend sees live logs
         while (true) {
@@ -276,6 +294,25 @@ class RunDeployJob implements ShouldQueue
             if ($log && (microtime(true) - $lastFlush) >= 0.5) {
                 $this->flush($log, $lines);
                 $lastFlush = microtime(true);
+            }
+
+            // Every ~1 s: check stop signal and enforce timeout
+            if (++$tick % 10 === 0) {
+                // Stop signal from user — kill subprocess immediately
+                if (Cache::has("deploy_stop_{$this->projectId}")) {
+                    Cache::forget("deploy_stop_{$this->projectId}");
+                    $this->killProc($proc, $pipes);
+                    throw new \App\Exceptions\DeployStoppedException();
+                }
+
+                // Hard timeout — prevents hung builds from blocking the worker forever
+                $elapsed = (int)(microtime(true) - $startedAt);
+                if ($elapsed >= $timeout) {
+                    $this->log($lines, "[ERROR] Command timed out after {$elapsed}s — killed.");
+                    if ($log) $this->flush($log, $lines);
+                    $this->killProc($proc, $pipes);
+                    throw new \RuntimeException("Command timed out ({$timeout}s): {$cmd}");
+                }
             }
 
             if (!$status['running']) break;
@@ -377,6 +414,32 @@ class RunDeployJob implements ShouldQueue
             Cache::forget("deploy_stop_{$this->projectId}");
             throw new \App\Exceptions\DeployStoppedException();
         }
+    }
+
+    /**
+     * Terminate a running subprocess and close its pipes.
+     * Sends SIGTERM first, then SIGKILL after 500 ms if still running.
+     * On Linux we kill the entire process group so child processes
+     * (bash → npm → node) are all cleaned up.
+     */
+    private function killProc($proc, array $pipes): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            $pid = proc_get_status($proc)['pid'] ?? null;
+            if ($pid) {
+                // Negative PID = signal the whole process group
+                @posix_kill(-$pid, 15); // SIGTERM
+                usleep(500_000);
+                if (@proc_get_status($proc)['running']) {
+                    @posix_kill(-$pid, 9); // SIGKILL
+                }
+            }
+        }
+        foreach ($pipes as $pipe) {
+            if (is_resource($pipe)) @fclose($pipe);
+        }
+        @proc_terminate($proc);
+        @proc_close($proc);
     }
 
     private function flush(DeployLog $log, array $lines): void
