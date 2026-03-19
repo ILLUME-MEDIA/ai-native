@@ -716,62 +716,47 @@ const Scrapers = () => {
             return;
         }
 
-        // Confirm before starting
-        if (!confirm(`AI will analyze ${allPlaylistVideos.length} videos and assign appropriate genres from ${selectedPlatform} platform. Continue?`)) {
+        if (!confirm(`AI will read each video title and pick the best matching genres from the ${selectedPlatform} genre list.\n\nVideos: ${allPlaylistVideos.length}\nAvailable genres: ${availableGenres.length}\n\nContinue?`)) {
             return;
         }
 
         // Close manual selector and show progress
         setShowManualSelectorModal(false);
         setGenerating(true);
+        cancelGenerationRef.current = false;
         setGenerationProgress({ current: 0, total: allPlaylistVideos.length });
 
         try {
             let updated = 0;
             for (let i = 0; i < allPlaylistVideos.length; i++) {
+                if (cancelGenerationRef.current) break;
+
                 const video = allPlaylistVideos[i];
                 setGenerationProgress({ current: i + 1, total: allPlaylistVideos.length });
 
-                // Smart genre matching based on title and description
-                const videoText = `${video.title} ${video.description || ''}`.toLowerCase();
-                const matchedGenres = availableGenres
-                    .filter(genre => {
-                        const genreWords = genre.toLowerCase().split(/[\s&\/]+/);
-                        return genreWords.some(word => videoText.includes(word.toLowerCase()));
-                    })
-                    .slice(0, 3); // Max 3 genres per video
-
-                // If no matches, pick 1-2 random genres
-                if (matchedGenres.length === 0) {
-                    const randomCount = Math.min(2, availableGenres.length);
-                    const shuffled = [...availableGenres].sort(() => 0.5 - Math.random());
-                    matchedGenres.push(...shuffled.slice(0, randomCount));
+                try {
+                    // Send title + available genre list to backend — AI picks the best matches
+                    await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`, {
+                        available_genres: availableGenres,
+                    });
+                    updated++;
+                } catch (error) {
+                    console.error(`Error updating video ${video.video_id}:`, error);
                 }
-
-                // Update video with genres
-                if (matchedGenres.length > 0) {
-                    try {
-                        await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`, {
-                            platform: selectedPlatform,
-                            genres: matchedGenres
-                        });
-                        updated++;
-                    } catch (error) {
-                        console.error(`Error updating video ${video.video_id}:`, error);
-                    }
-                }
-
-                // Small delay to prevent overwhelming the server
-                await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            alert(`✅ AI Genre Assignment Complete!\n\nUpdated ${updated} out of ${allPlaylistVideos.length} videos with ${selectedPlatform} genres.`);
+            const cancelled = cancelGenerationRef.current;
+            alert(cancelled
+                ? `AI genre assignment cancelled after ${updated} videos.`
+                : `✅ AI Genre Assignment Complete!\n\nUpdated ${updated} of ${allPlaylistVideos.length} videos with ${selectedPlatform} genres.`
+            );
             loadVideos();
         } catch (error) {
             console.error('Error in AI genre assignment:', error);
             alert('Failed to assign genres: ' + (error.response?.data?.error || error.message));
         } finally {
             setGenerating(false);
+            cancelGenerationRef.current = false;
             setGenerationProgress({ current: 0, total: 0 });
             setShowMetadataModal(true);
         }

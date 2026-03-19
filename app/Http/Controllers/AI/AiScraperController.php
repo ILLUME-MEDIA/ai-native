@@ -750,17 +750,37 @@ IMPORTANT:
     public function generateMetadataForVideo(Request $request, string $videoId)
     {
         try {
+            // If available_genres list provided — AI picks from that list
+            if ($request->filled('available_genres')) {
+                $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+                $genres = $this->scraperService->pickGenresFromList(
+                    $video->title,
+                    $video->description ?? '',
+                    $request->available_genres,
+                    3
+                );
+                $video->update([
+                    'genres' => $genres,
+                    'tags_generated_at' => now(),
+                ]);
+                return response()->json([
+                    'status'  => 'success',
+                    'message' => 'Genres assigned by AI',
+                    'genres'  => $genres,
+                ]);
+            }
+
             // If genres are provided in request, use them directly (manual assignment)
             if ($request->has('genres')) {
-                $video = \App\Models\YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+                $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
                 $video->update([
                     'genres' => $request->genres,
                     'tags_generated_at' => now(),
                 ]);
                 return response()->json([
-                    'status' => 'success',
+                    'status'  => 'success',
                     'message' => 'Genres updated',
-                    'genres' => $request->genres
+                    'genres'  => $request->genres,
                 ]);
             }
 

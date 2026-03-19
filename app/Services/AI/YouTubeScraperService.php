@@ -2277,6 +2277,77 @@ Return only the genres as a comma-separated list, without explanations or additi
     }
 
     /**
+     * Pick genres from a specific list using AI.
+     * Sends the video title to Mistral and asks it to select the best matching
+     * genres strictly from the provided $availableGenres list.
+     * Falls back to keyword matching against the list when Mistral is unavailable.
+     */
+    public function pickGenresFromList(string $title, string $description = '', array $availableGenres = [], int $maxPick = 3): array
+    {
+        if (empty($title) || empty($availableGenres)) {
+            return [];
+        }
+
+        $genreList = implode(', ', $availableGenres);
+        $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
+
+        if (!empty($key)) {
+            try {
+                $systemMessage = "You are a genre classification assistant. You MUST only return genres from the list provided. No extra text, no explanations, only comma-separated genres from the list.";
+
+                $userMessage = "Video title: \"{$title}\"" .
+                    (!empty($description) ? "\nDescription: " . substr($description, 0, 300) : '') .
+                    "\n\nAvailable genres: {$genreList}" .
+                    "\n\nPick the {$maxPick} most relevant genres for this video strictly from the list above. Return only the genre names separated by commas.";
+
+                $content = $this->callMistral($userMessage, 'mistral-large-latest', $systemMessage, 0.1);
+
+                if ($content) {
+                    $picked = array_map('trim', explode(',', $content));
+                    // Only keep genres that actually exist in the available list (case-insensitive)
+                    $availableLower = array_map('strtolower', $availableGenres);
+                    $valid = array_filter($picked, function ($g) use ($availableGenres, $availableLower) {
+                        $idx = array_search(strtolower($g), $availableLower);
+                        return $idx !== false;
+                    });
+                    // Return original-casing from the available list
+                    $result = [];
+                    foreach ($valid as $g) {
+                        $idx = array_search(strtolower($g), $availableLower);
+                        if ($idx !== false) {
+                            $result[] = $availableGenres[$idx];
+                        }
+                    }
+                    $result = array_values(array_unique(array_slice($result, 0, $maxPick)));
+                    if (!empty($result)) {
+                        return $result;
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning("pickGenresFromList Mistral error: " . $e->getMessage());
+            }
+        }
+
+        // Fallback: keyword matching against the provided list
+        $text = strtolower($title . ' ' . $description);
+        $matched = [];
+        foreach ($availableGenres as $genre) {
+            $words = preg_split('/[\s&\/\-]+/', strtolower($genre));
+            foreach ($words as $word) {
+                if (strlen($word) > 3 && str_contains($text, $word)) {
+                    $matched[] = $genre;
+                    break;
+                }
+            }
+        }
+        if (!empty($matched)) {
+            return array_slice(array_unique($matched), 0, $maxPick);
+        }
+        // Last resort: return first N from list
+        return array_slice($availableGenres, 0, min(2, count($availableGenres)));
+    }
+
+    /**
      * Fallback basic genre detection from title, channel name, and description
      */
     protected function generateBasicGenres(string $title, string $channelName = '', string $description = ''): array
