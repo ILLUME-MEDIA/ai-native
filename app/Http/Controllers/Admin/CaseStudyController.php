@@ -380,12 +380,17 @@ class CaseStudyController extends Controller
 
         // Featured image: file upload takes priority, then URL
         if ($request->hasFile('featured_image')) {
+            $uploadDir = public_path('uploads/case-studies');
+            if (! is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
             $file                   = $request->file('featured_image');
             $filename               = Str::random(40) . '.' . $file->getClientOriginalExtension();
-            $file->move(public_path('uploads/case-studies'), $filename);
+            $file->move($uploadDir, $filename);
             $data['featured_image'] = asset('uploads/case-studies/' . $filename);
-        } elseif ($request->filled('featured_image_url')) {
-            $data['featured_image'] = $request->featured_image_url;
+        } elseif ($request->has('featured_image_url')) {
+            // Empty string = clear the image; non-empty = set new URL
+            $data['featured_image'] = $request->featured_image_url ?? '';
         }
 
         return $data;
