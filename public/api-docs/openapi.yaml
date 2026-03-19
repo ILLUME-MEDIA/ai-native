@@ -70,7 +70,15 @@ info:
     Authorization: Bearer <token>
     Body: { "business_id": 1, "customer_name": "Ali", "customer_phone": "0300..." }
     ```
-    Cart items are converted into an order and the cart is cleared.
+    Cart items are converted into an order and the **cart is automatically cleared**.
+
+    ### Step 7 — Track orders (optional)
+
+    ```
+    GET /api/ecommerce/my-orders
+    Authorization: Bearer <token>
+    ```
+    Returns all orders for the current session. Use `GET /api/ecommerce/my-orders/{id}` for tracking detail.
 
     ---
 
@@ -98,8 +106,8 @@ info:
     | Endpoint type | Auth |
     |---------------|------|
     | Browse (GET businesses, menu, sellers) | None |
-    | Cart + Order (OTP user) | `Authorization: Bearer <otp-token>` |
-    | Cart + Order (guest) | `X-Session-Id: <uuid>` header |
+    | Cart + Order + My Orders (OTP user) | `Authorization: Bearer <otp-token>` |
+    | Cart + Order + My Orders (guest) | `X-Session-Id: <uuid>` header |
     | Admin CRUD | `Authorization: Bearer <sanctum-token>` |
 
     ---
@@ -168,9 +176,10 @@ tags:
 
       `POST /api/ecommerce/checkout` handles everything in one request:
       - Items inline **or** from session cart
-      - Subtotal → tax → delivery fee → total calculated server-side
+      - Subtotal → tax → delivery fee → platform fee → tip → total calculated server-side
       - COD or Stripe card payment
       - DoorDash auto-dispatch if `delivery_vendor: doordash`
+      - Cart is automatically cleared after order (session-scoped)
       - Returns complete order object
 
       ### External site — pass items directly
@@ -187,6 +196,8 @@ tags:
         "delivery_address": "456 Oak Ave, LA, CA 90001",
         "delivery_fee": 5.99,
         "tax_rate": 10,
+        "tip_type": "percentage",
+        "tip_value": 15,
         "items": [
           { "menu_item_id": 5, "quantity": 2 },
           { "menu_item_id": 8, "quantity": 1, "modifiers": [{"option_id": 3}] }
@@ -198,6 +209,21 @@ tags:
 
       ### Session-based (same as checkout page)
       Omit `items[]` — uses session cart identified by `X-Session-Id` or OTP Bearer token.
+
+  - name: Customer Orders
+    description: |
+      **Customer-facing order history** — scoped to the current session.
+
+      No admin auth needed. Session is identified by:
+      - `Authorization: Bearer <otp-token>` (OTP user)
+      - `X-Session-Id: <uuid>` (guest)
+
+      Customers can only see their own orders.
+
+      | Endpoint | Description |
+      |----------|-------------|
+      | `GET /api/ecommerce/my-orders` | List all orders for current session (paginated) |
+      | `GET /api/ecommerce/my-orders/{id}` | Get single order + tracking info |
 
   - name: Tax
     description: |
@@ -2977,6 +3003,197 @@ paths:
         "200":
           description: Status updated
 
+  # ── CUSTOMER ORDER HISTORY (session-scoped, no admin auth) ───────────────
+
+  /ecommerce/my-orders:
+    get:
+      tags:
+        - Customer Orders
+      summary: List my orders
+      description: |
+        Returns paginated orders belonging to the **current session**.
+
+        Use the same session identifier used for cart/checkout:
+        - OTP user: `Authorization: Bearer <otp-token>`
+        - Guest: `X-Session-Id: <uuid>`
+
+        Returns only orders for the current session — customers cannot see other sessions' orders.
+      security: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+          description: 'Bearer <otp-token>'
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, confirmed, preparing, ready, out_for_delivery, delivered, cancelled]
+          description: Filter by order status
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated orders for the current session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        order_number:
+                          type: string
+                          example: ORD-A1B2C3D4
+                        status:
+                          type: string
+                          enum: [pending, confirmed, preparing, ready, out_for_delivery, delivered, cancelled]
+                        payment_status:
+                          type: string
+                          enum: [unpaid, paid, failed]
+                        subtotal:
+                          type: number
+                        tax:
+                          type: number
+                        delivery_fee:
+                          type: number
+                        platform_fee:
+                          type: number
+                        tip:
+                          type: number
+                        total:
+                          type: number
+                        order_type:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        business:
+                          type: object
+                        items:
+                          type: array
+                          items:
+                            type: object
+                  current_page:
+                    type: integer
+                  total:
+                    type: integer
+
+  /ecommerce/my-orders/{id}:
+    get:
+      tags:
+        - Customer Orders
+      summary: Get my order detail
+      description: |
+        Returns a single order with full detail + tracking info.
+
+        Returns `404` if the order does not belong to the current session.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+          description: 'Bearer <otp-token>'
+        - name: X-Session-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Order detail with tracking
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  order_number:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, confirmed, preparing, ready, out_for_delivery, delivered, cancelled]
+                  payment_status:
+                    type: string
+                    enum: [unpaid, paid, failed]
+                  subtotal:
+                    type: number
+                  tax:
+                    type: number
+                  delivery_fee:
+                    type: number
+                  platform_fee:
+                    type: number
+                  tip:
+                    type: number
+                  total:
+                    type: number
+                  customer_name:
+                    type: string
+                  customer_phone:
+                    type: string
+                  customer_email:
+                    type: string
+                  delivery_address:
+                    type: string
+                    nullable: true
+                  tracking:
+                    type: object
+                    nullable: true
+                    description: Live tracking info (DoorDash or own driver)
+                    properties:
+                      vendor:
+                        type: string
+                        example: doordash
+                      delivery_id:
+                        type: string
+                        nullable: true
+                      status:
+                        type: string
+                        nullable: true
+                      status_label:
+                        type: string
+                        nullable: true
+                      tracking_url:
+                        type: string
+                        nullable: true
+                  business:
+                    type: object
+                  items:
+                    type: array
+                    items:
+                      type: object
+        "404":
+          description: Order not found or does not belong to this session
+
   # ── UNIFIED CHECKOUT ──────────────────────────────────────────────────────
 
   /ecommerce/checkout:
@@ -3107,6 +3324,17 @@ paths:
                             quantity:
                               type: integer
                               default: 1
+                tip_type:
+                  type: string
+                  nullable: true
+                  enum: [none, percentage, fixed]
+                  description: How to calculate the tip. `percentage` = % of subtotal, `fixed` = flat dollar amount.
+                  example: percentage
+                tip_value:
+                  type: number
+                  nullable: true
+                  description: Tip amount (percent if `tip_type=percentage`, dollars if `tip_type=fixed`)
+                  example: 15
                 payment_method:
                   type: string
                   enum: [cod, stripe]
@@ -3203,6 +3431,14 @@ paths:
                       delivery_fee:
                         type: number
                         example: 5.99
+                      platform_fee:
+                        type: number
+                        example: 1.00
+                        description: Platform service fee (calculated server-side from business config)
+                      tip:
+                        type: number
+                        example: 3.75
+                        description: Tip amount (calculated from tip_type + tip_value)
                       total:
                         type: number
                         example: 33.48

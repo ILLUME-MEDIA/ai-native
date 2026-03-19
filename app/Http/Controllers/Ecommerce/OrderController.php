@@ -194,6 +194,62 @@ class OrderController extends Controller
         return response()->json($order->fresh()->load(['business', 'items']), 201);
     }
 
+    /**
+     * GET /api/ecommerce/my-orders
+     * Returns paginated orders scoped to the current session.
+     */
+    public function myOrders(Request $request): JsonResponse
+    {
+        $sid = $this->sessionId($request);
+
+        $q = Order::with(['business', 'items'])
+            ->where('session_id', $sid)
+            ->orderByDesc('id');
+
+        if ($request->filled('status')) {
+            $q->where('status', $request->status);
+        }
+
+        return response()->json($q->paginate((int) $request->get('per_page', 20)));
+    }
+
+    /**
+     * GET /api/ecommerce/my-orders/{order}
+     * Returns a single order — only if it belongs to the current session.
+     */
+    public function myOrderShow(Request $request, Order $order): JsonResponse
+    {
+        $sid = $this->sessionId($request);
+
+        if ($order->session_id !== $sid) {
+            return response()->json(['message' => 'Not found.'], 404);
+        }
+
+        $order->load(['business', 'items']);
+
+        $tracking = null;
+        if ($order->doordash_delivery_id) {
+            $tracking = [
+                'vendor'       => 'doordash',
+                'delivery_id'  => $order->doordash_delivery_id,
+                'status'       => $order->doordash_status,
+                'status_label' => \App\Services\DoorDashService::statusLabel($order->doordash_status ?? ''),
+                'tracking_url' => $order->doordash_tracking_url,
+            ];
+        } elseif ($order->tracking_url) {
+            $tracking = [
+                'vendor'       => $order->delivery_vendor,
+                'tracking_url' => $order->tracking_url,
+                'status'       => $order->driver_status,
+            ];
+        }
+
+        $data = $order->toArray();
+        $data['tracking'] = $tracking;
+
+        return response()->json($data);
+    }
+
     public function updateStatus(Request $request, Order $order): JsonResponse
     {
         $data = $request->validate([

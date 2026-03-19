@@ -75,9 +75,14 @@ class CheckoutController extends Controller
             'stripe_payment_method_id'       => 'nullable|string|starts_with:pm_',
         ]);
 
+        // Resolve session ID once — reused for cart fetch, order creation, and cart clear
+        $sid = $this->sessionId($request);
+
         // ── Resolve order line-items ──────────────────────────────────────────
 
-        if (!empty($data['items'])) {
+        $usingSessionCart = empty($data['items']);
+
+        if (!$usingSessionCart) {
             // External site: items passed directly in the request body
             $lineItems = $this->buildFromPayload($data['items']);
             if (empty($lineItems)) {
@@ -85,7 +90,6 @@ class CheckoutController extends Controller
             }
         } else {
             // Session-based: use existing cart (same as POST /ecommerce/orders)
-            $sid       = $this->sessionId($request);
             $cartItems = CartItem::where('session_id', $sid)
                 ->where('business_id', $data['business_id'])
                 ->with('menuItem')
@@ -128,7 +132,7 @@ class CheckoutController extends Controller
         $order = Order::create([
             'order_number'       => 'ORD-' . strtoupper(Str::random(8)),
             'business_id'        => $data['business_id'],
-            'session_id'         => $this->sessionId($request),
+            'session_id'         => $sid,
             'user_id'            => auth()->id(),
             'status'             => 'pending',
             'payment_method'     => $data['payment_method'] ?? 'cod',
@@ -153,9 +157,9 @@ class CheckoutController extends Controller
             OrderItem::create(array_merge($item, ['order_id' => $order->id]));
         }
 
-        // Clear session cart if it was used
-        if (empty($data['items'])) {
-            CartItem::where('session_id', $this->sessionId($request))
+        // Clear session cart if it was used (use same $sid — not a fresh sessionId() call)
+        if ($usingSessionCart) {
+            CartItem::where('session_id', $sid)
                 ->where('business_id', $data['business_id'])
                 ->delete();
         }

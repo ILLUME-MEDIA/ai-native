@@ -700,6 +700,10 @@ Route::prefix('ecommerce')->group(function () {
     // Order placement — convert cart to order (session-based, no auth required)
     Route::post('orders',           [OrderController::class, 'store']);
 
+    // Customer order history — scoped to current session (no admin auth needed)
+    Route::get('my-orders',         [OrderController::class, 'myOrders']);
+    Route::get('my-orders/{order}', [OrderController::class, 'myOrderShow']);
+
     // Unified checkout — single call: items + customer + payment → order (external sites)
     Route::post('checkout',         [CheckoutController::class, 'checkout']);
 
