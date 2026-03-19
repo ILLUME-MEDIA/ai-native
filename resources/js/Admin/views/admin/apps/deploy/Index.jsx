@@ -47,6 +47,7 @@ const ago = (iso) => {
 const apiFetch = (url, opts = {}) =>
   fetch(url, {
     credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     ...opts,
   });
@@ -339,9 +340,13 @@ export default function DeployManager() {
 
   const toggleAutoDeploy = async (p, e) => {
     e?.stopPropagation();
-    await apiFetch(`${API}/projects/${p.id}`, {
+    const r = await apiFetch(`${API}/projects/${p.id}`, {
       method: 'PUT', body: JSON.stringify({ auto_deploy: !p.auto_deploy }),
     });
+    if (r.ok) {
+      const d = await r.json();
+      setProjects(prev => prev.map(x => x.id === p.id ? d : x));
+    }
     fetchProjects(true);
   };
 

@@ -80,7 +80,7 @@ class RunDeployJob implements ShouldQueue
                 $this->checkStopped();
                 $this->log($lines, "\n[4/5] Building — {$project->build_command}");
                 $this->flush($log, $lines);
-                $this->runBuild($project, $sourceDir, $lines);
+                $this->runBuild($project, $sourceDir, $lines, $log);
 
                 $outDir    = $project->build_output_dir ?: 'dist';
                 $deployDir = rtrim($sourceDir, '/') . '/' . ltrim($outDir, '/');
@@ -208,7 +208,7 @@ class RunDeployJob implements ShouldQueue
 
     // ── Build ──────────────────────────────────────────────────────────────────
 
-    private function runBuild(DeployProject $project, string $dir, array &$lines): void
+    private function runBuild(DeployProject $project, string $dir, array &$lines, DeployLog $log): void
     {
         // Build an env array so node_path works cross-platform without shell-specific syntax
         $env = [];
@@ -218,11 +218,11 @@ class RunDeployJob implements ShouldQueue
             $env      = array_merge(getenv() ?: [], ['PATH' => $nodePath . $sep . (getenv('PATH') ?: '')]);
         }
 
-        $this->execCmd('npm install --prefer-offline 2>&1', $dir, $lines, $env);
-        $this->execCmd($project->build_command . ' 2>&1',   $dir, $lines, $env);
+        $this->execCmd('npm install --prefer-offline 2>&1', $dir, $lines, $env, $log);
+        $this->execCmd($project->build_command . ' 2>&1',   $dir, $lines, $env, $log);
     }
 
-    private function execCmd(string $cmd, string $cwd, array &$lines, array $env = []): void
+    private function execCmd(string $cmd, string $cwd, array &$lines, array $env = [], ?DeployLog $log = null): void
     {
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $procEnv     = $env ?: null; // null = inherit parent environment
@@ -240,15 +240,54 @@ class RunDeployJob implements ShouldQueue
         }
 
         fclose($pipes[0]);
-        $stdout   = stream_get_contents($pipes[1]);
-        $stderr   = stream_get_contents($pipes[2]);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $lastFlush = microtime(true);
+
+        // Stream output line-by-line so the frontend sees live logs
+        while (true) {
+            $status = proc_get_status($proc);
+
+            $out = fread($pipes[1], 8192) ?: '';
+            $err = fread($pipes[2], 8192) ?: '';
+
+            if ($out !== '') {
+                foreach (explode("\n", rtrim($out, "\n")) as $line) {
+                    if ($line !== '') $this->log($lines, $line);
+                }
+            }
+            if ($err !== '') {
+                foreach (explode("\n", rtrim($err, "\n")) as $line) {
+                    if ($line !== '') $this->log($lines, '[stderr] ' . $line);
+                }
+            }
+
+            // Flush to DB every 500 ms so the frontend polling can show live output
+            if ($log && (microtime(true) - $lastFlush) >= 0.5) {
+                $this->flush($log, $lines);
+                $lastFlush = microtime(true);
+            }
+
+            if (!$status['running']) break;
+
+            usleep(100_000); // 100 ms
+        }
+
+        // Drain any remaining bytes after process exits
+        stream_set_blocking($pipes[1], true);
+        stream_set_blocking($pipes[2], true);
+        $rem1 = stream_get_contents($pipes[1]);
+        $rem2 = stream_get_contents($pipes[2]);
         fclose($pipes[1]);
         fclose($pipes[2]);
+
+        if ($rem1) foreach (explode("\n", rtrim($rem1, "\n")) as $line) if ($line !== '') $this->log($lines, $line);
+        if ($rem2) foreach (explode("\n", rtrim($rem2, "\n")) as $line) if ($line !== '') $this->log($lines, '[stderr] ' . $line);
+
+        if ($log) $this->flush($log, $lines);
+
         $exitCode = proc_close($proc);
-
-        if ($stdout) $this->log($lines, trim($stdout));
-        if ($stderr)  $this->log($lines, "[stderr] " . trim($stderr));
-
         if ($exitCode !== 0) {
             throw new \RuntimeException("Command exited with code {$exitCode}: {$cmd}");
         }
