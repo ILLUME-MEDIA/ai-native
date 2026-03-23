@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -122,6 +123,8 @@ class CaseStudyController extends Controller
         $this->saveSections($id, $request->input('sections', []));
         $this->saveGroups($id, $request->input('group_ids', []));
 
+        $this->clearPublicCache($data['slug'] ?? null);
+
         return $this->freshResponse($id, 201);
     }
 
@@ -146,6 +149,8 @@ class CaseStudyController extends Controller
         $this->saveSections($id, $request->input('sections', []));
         $this->saveGroups($id, $request->input('group_ids', []));
 
+        $this->clearPublicCache($data['slug'] ?? null);
+
         return $this->freshResponse($id);
     }
 
@@ -155,9 +160,13 @@ class CaseStudyController extends Controller
         if (! DB::table($this->table)->where('id', $id)->first()) {
             return response()->json(['message' => 'Not found'], 404);
         }
+        $item = DB::table($this->table)->where('id', $id)->first();
         DB::table($this->sectionsTable)->where('case_study_id', $id)->delete();
         DB::table($this->groupPivot)->where('case_study_id', $id)->delete();
         DB::table($this->table)->where('id', $id)->delete();
+
+        $this->clearPublicCache($item->slug ?? null);
+
         return response()->json(['message' => 'Deleted']);
     }
 
@@ -217,6 +226,8 @@ class CaseStudyController extends Controller
             'updated_at'  => now(),
         ]);
 
+        $this->clearPublicCache();
+
         return response()->json(DB::table($this->groupsTable)->find($id), 201);
     }
 
@@ -239,6 +250,8 @@ class CaseStudyController extends Controller
             'updated_at'  => now(),
         ]);
 
+        $this->clearPublicCache();
+
         return response()->json(DB::table($this->groupsTable)->find($id));
     }
 
@@ -250,6 +263,9 @@ class CaseStudyController extends Controller
         }
         DB::table($this->groupPivot)->where('case_study_group_id', $id)->delete();
         DB::table($this->groupsTable)->where('id', $id)->delete();
+
+        $this->clearPublicCache();
+
         return response()->json(['message' => 'Deleted']);
     }
 
@@ -260,6 +276,9 @@ class CaseStudyController extends Controller
             return response()->json(['message' => 'Not found'], 404);
         }
         $this->saveGroups($id, $request->input('group_ids', []));
+
+        $this->clearPublicCache();
+
         return response()->json(['message' => 'Groups updated', 'groups' => $this->getItemGroups($id)]);
     }
 
@@ -358,6 +377,19 @@ class CaseStudyController extends Controller
                 'created_at'          => now(),
                 'updated_at'          => now(),
             ]);
+        }
+    }
+
+    /**
+     * Clear public-facing case study cache after any write operation.
+     * Clears the list cache always; if a slug is given, clears that item's cache too.
+     */
+    private function clearPublicCache(?string $slug = null): void
+    {
+        Cache::forget('public:case_studies:index');
+
+        if ($slug) {
+            Cache::forget('public:case_studies:show:' . $slug);
         }
     }
 

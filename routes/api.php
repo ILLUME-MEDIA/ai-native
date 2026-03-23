@@ -41,6 +41,7 @@ use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
 use App\Http\Controllers\Delivery\UberDirectController;
 use App\Http\Controllers\Admin\AppSecretsController;
+use App\Http\Controllers\Admin\CacheController;
 use App\Http\Controllers\Admin\EcommerceSettingsController;
 use App\Http\Controllers\Admin\Cal\CalPlatformsController;
 use App\Http\Controllers\Admin\Cal\CalMeetingsController;
@@ -321,6 +322,12 @@ Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $re
 Route::prefix('admin/artisan')->group(function () {
     Route::post('migrate',          [\App\Http\Controllers\Admin\ArtisanController::class, 'migrate']);
     Route::post('cuisines-migrate', [\App\Http\Controllers\Admin\ArtisanController::class, 'cuisinesMigrate']);
+});
+
+// ── Cache Management ────────────────────────────────────────────────────────
+Route::prefix('admin/cache')->group(function () {
+    Route::post('/clear', [CacheController::class, 'clear']);
+    Route::post('/sync',  [CacheController::class, 'syncSchema']);
 });
 
 Route::prefix('admin/app-secrets')->group(function () {

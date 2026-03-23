@@ -46,7 +46,10 @@ class RunDeployJob implements ShouldQueue
             $this->log($lines, "Branch: {$project->branch} | Framework: " . ($project->framework ?: 'auto'));
             $this->flush($log, $lines);
 
-            $tmpBase    = sys_get_temp_dir() . '/deploy_' . $project->id . '_' . time();
+            // Use /tmp (always outside the web app root) so that build tools
+            // (rsbuild, vite) don't traverse up and pick up our own postcss.config.js
+            $systemTmp  = PHP_OS_FAMILY === 'Windows' ? sys_get_temp_dir() : '/tmp';
+            $tmpBase    = $systemTmp . '/deploy_' . $project->id . '_' . time();
             $zipPath    = $tmpBase . '.zip';
             $extractDir = $tmpBase . '_src';
 

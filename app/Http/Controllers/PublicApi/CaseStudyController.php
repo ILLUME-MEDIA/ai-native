@@ -4,6 +4,7 @@ namespace App\Http\Controllers\PublicApi;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -15,6 +16,19 @@ class CaseStudyController extends Controller
      * Paginated list of active case studies, similar to the old CMS.
      */
     public function index(Request $request)
+    {
+        $search = $request->string('search')->toString();
+
+        // Cache only unfiltered requests (search results are always fresh).
+        if ($search === '') {
+            $items = Cache::remember('public:case_studies:index', 300, fn () => $this->fetchIndexData($request));
+            return response()->json($items);
+        }
+
+        return response()->json($this->fetchIndexData($request));
+    }
+
+    private function fetchIndexData(Request $request)
     {
         // Primary table for case studies
         $table = 'case_studies';
@@ -154,8 +168,7 @@ class CaseStudyController extends Controller
             return $item;
         });
 
-        // Return a flat array of case studies (no paginator wrapper)
-        return response()->json($items->values());
+        return $items->values();
     }
 
     /**
@@ -165,6 +178,17 @@ class CaseStudyController extends Controller
      * Assumes a related table like "case_study_sections" with a case_study_id FK.
      */
     public function show(string $slug)
+    {
+        $cached = Cache::remember('public:case_studies:show:' . $slug, 300, fn () => $this->fetchShowData($slug));
+
+        if ($cached === null) {
+            return response()->json(['message' => 'Case study not found.'], 404);
+        }
+
+        return response()->json(['data' => $cached]);
+    }
+
+    private function fetchShowData(string $slug)
     {
         $table = 'case_studies';
         $groupsTable = Schema::hasTable('case_study_groups') ? 'case_study_groups' : 'case_study_group';
@@ -201,7 +225,7 @@ class CaseStudyController extends Controller
             ->first();
 
         if (! $caseStudy) {
-            return response()->json(['message' => 'Case study not found.'], 404);
+            return null;
         }
 
         // Attach dynamic sections if a sections table exists
@@ -243,7 +267,7 @@ class CaseStudyController extends Controller
         }
         $data['sections'] = $sections;
 
-        return response()->json(['data' => $data]);
+        return $data;
     }
 }
 

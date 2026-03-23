@@ -110,6 +110,16 @@ class OrderController extends Controller
         ]);
 
         $sid       = $this->sessionId($request);
+
+        // DEBUG — remove after confirming cart clear works
+        Log::info('ORDER::store sessionId', [
+            'sid'        => $sid,
+            'header_sid' => $request->header('X-Session-Id'),
+            'auth_header'=> $request->header('Authorization') ? substr($request->header('Authorization'), 0, 20).'...' : null,
+            'business_id'=> $data['business_id'],
+            'all_cart_sids' => CartItem::where('business_id', $data['business_id'])->pluck('session_id')->unique()->values(),
+        ]);
+
         $cartItems = CartItem::where('session_id', $sid)
             ->where('business_id', $data['business_id'])
             ->with('menuItem')

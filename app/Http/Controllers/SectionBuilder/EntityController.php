@@ -6,9 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\SectionEntity;
 use App\Services\DynamicEntityService;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class EntityController extends Controller
 {
@@ -146,6 +147,8 @@ class EntityController extends Controller
         }
 
         $entity = SectionEntity::create($data);
+
+        Cache::forget('section_builder_schema_sync_last');
 
         return response()->json($entity, 201);
     }
@@ -311,6 +314,8 @@ class EntityController extends Controller
         // Reload with fields
         $resolved->load('fields');
 
+        Cache::forget('section_builder_schema_sync_last');
+
         return response()->json($resolved);
     }
 
@@ -331,6 +336,8 @@ class EntityController extends Controller
         // Delete section_fields and then the entity record
         $resolved->fields()->delete();
         $resolved->delete();
+
+        Cache::forget('section_builder_schema_sync_last');
 
         return response()->json(['message' => "Table '{$resolved->table_name}' deleted successfully."]);
     }

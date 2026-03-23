@@ -7,6 +7,7 @@ use App\Models\SectionEntity;
 use App\Models\SectionField;
 use App\Services\DynamicEntityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
@@ -106,6 +107,8 @@ class FieldController extends Controller
 
         $field = SectionField::create($data);
 
+        Cache::forget('section_builder_schema_sync_last');
+
         return response()->json($field, 201);
     }
 
@@ -154,6 +157,8 @@ class FieldController extends Controller
         $field->fill($data);
         $field->save();
 
+        Cache::forget('section_builder_schema_sync_last');
+
         return response()->json($field);
     }
 
@@ -173,7 +178,21 @@ class FieldController extends Controller
                 ->update(['sort_order' => $item['sort_order']]);
         }
 
+        Cache::forget('section_builder_schema_sync_last');
+
         return response()->json(['status' => 'ok']);
+    }
+
+    public function destroy($entity, SectionField $field)
+    {
+        $resolved = $this->resolveEntity($entity);
+        abort_unless($field->entity_id === $resolved->id, 404);
+
+        $field->delete();
+
+        Cache::forget('section_builder_schema_sync_last');
+
+        return response()->json(null, 204);
     }
 }
 
