@@ -225,7 +225,10 @@ class RunDeployJob implements ShouldQueue
         // CI=true makes build tools (Vite, CRA, etc.) switch to non-interactive mode:
         // no spinners, no progress bars, and — crucially — line-buffered stdout instead
         // of the fully-buffered mode they use when no TTY is detected.
-        $env = array_merge(getenv() ?: [], ['CI' => 'true']);
+        $env = array_merge(getenv() ?: [], [
+            'CI'           => 'true',
+            'NODE_OPTIONS' => '--max-old-space-size=512',  // prevent OOM kill (exit 137) on shared hosting
+        ]);
 
         if ($project->node_path) {
             $nodePath    = rtrim($project->node_path, '/\\');

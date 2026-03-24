@@ -268,6 +268,7 @@ export default function DeployManager() {
           clearInterval(liveRef.current);
           // Full refresh so project status + log list are up to date
           fetchProjects(true);
+          fetchLogs(projectId, true);
           setLiveLog(null);
         }
       } catch { /* ignore transient network errors */ }
