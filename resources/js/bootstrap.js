@@ -21,5 +21,11 @@ window.axios.interceptors.request.use((config) => {
     if (!config.headers['Authorization'] && window.__SITE_API_KEY__) {
         config.headers['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
     }
+    // Bust browser + cPanel/LiteSpeed proxy cache on every GET request by
+    // appending a timestamp. This ensures admin pages always fetch fresh data
+    // from the database and never serve a stale cached response.
+    if (!config.method || config.method.toLowerCase() === 'get') {
+        config.params = { ...config.params, _t: Date.now() };
+    }
     return config;
 });
