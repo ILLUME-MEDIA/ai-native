@@ -40,7 +40,23 @@ class MuzzhubController extends Controller
             $q->orderBy('name');
         }
 
-        if ($request->filled('search'))        $q->where('name', 'like', '%' . $request->search . '%');
+        if ($request->filled('search')) {
+            $term = '%' . $request->search . '%';
+            $q->where(function ($sub) use ($term) {
+                $sub->where('name',        'like', $term)
+                    ->orWhere('description','like', $term)
+                    ->orWhere('address',    'like', $term)
+                    ->orWhere('address_2',  'like', $term)
+                    ->orWhere('city',       'like', $term)
+                    ->orWhere('state',      'like', $term)
+                    ->orWhere('zip',        'like', $term)
+                    ->orWhere('country',    'like', $term)
+                    ->orWhere('type',       'like', $term)
+                    ->orWhere('cuisine',    'like', $term)
+                    ->orWhere('phone',      'like', $term)
+                    ->orWhere('email',      'like', $term);
+            });
+        }
         if ($request->boolean('active_only'))  $q->where('is_active', true);
         if ($request->filled('type'))          $q->where('type', $request->type);
         if ($request->filled('city'))          $q->where('city', 'like', '%' . $request->city . '%');
