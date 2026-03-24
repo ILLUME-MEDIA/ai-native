@@ -226,8 +226,11 @@ class RunDeployJob implements ShouldQueue
         // no spinners, no progress bars, and — crucially — line-buffered stdout instead
         // of the fully-buffered mode they use when no TTY is detected.
         $env = array_merge(getenv() ?: [], [
-            'CI'           => 'true',
-            'NODE_OPTIONS' => '--max-old-space-size=512',  // prevent OOM kill (exit 137) on shared hosting
+            'CI'                 => 'true',
+            'NODE_OPTIONS'       => '--max-old-space-size=512',  // prevent OOM kill (exit 137) on shared hosting
+            'RAYON_NUM_THREADS'  => '1',   // rspack/rsbuild uses Rust rayon; cPanel nproc limits cause EAGAIN crash
+            'RSPACK_PARALLELISM' => 'false', // disable rspack parallel compilation
+            'UV_THREADPOOL_SIZE' => '2',   // libuv thread pool (node internals)
         ]);
 
         if ($project->node_path) {
