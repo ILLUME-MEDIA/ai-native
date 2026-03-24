@@ -1158,10 +1158,16 @@ const SiteTokenEditor = ({ site, onClose }) => {
             <button className="btn-close" onClick={onClose} />
           </div>
 
-          {loading ? (
+          {!resolvedThemeId ? (
+            <div className="modal-body text-center py-5">
+              <i className="ri-palette-line fs-1 text-muted opacity-50 d-block mb-2" />
+              <div className="fw-semibold mb-1">No theme assigned</div>
+              <div className="text-muted small">Edit this site and select a theme first, then you can edit its tokens.</div>
+            </div>
+          ) : loading ? (
             <div className="modal-body text-center py-5">
               <div className="spinner-border text-primary" />
-              <div className="text-muted mt-2 small">Loading {site.resolved_theme_name} tokens…</div>
+              <div className="text-muted mt-2 small">Loading {site.resolved_theme_name || 'theme'} tokens…</div>
             </div>
           ) : (
             <div className="modal-body p-0">
@@ -1706,6 +1712,17 @@ const SitesTab = () => {
     setModal('edit');
   };
 
+  // Fetch fresh site from API before opening token editor so resolved_theme_id is always current
+  const openTokenEditor = async (site) => {
+    try {
+      const fresh = await call(`${BASE}/${site.id}`);
+      setSites(prev => prev.map(s => s.id === fresh.id ? fresh : s));
+      setEditorSite(fresh);
+    } catch {
+      setEditorSite(site);
+    }
+  };
+
   const openSnippet = (site) => { setActive(site); setModal('snippet'); };
 
   const handleSlugify = (name) => {
@@ -1813,7 +1830,7 @@ const SitesTab = () => {
                     </div>
                   </div>
                   <div className="d-flex gap-1 flex-shrink-0">
-                    <Button variant="outline-success"   size="sm" title="Edit Tokens"  onClick={() => setEditorSite(site)}><SvgTokens /></Button>
+                    <Button variant="outline-success"   size="sm" title="Edit Tokens"  onClick={() => openTokenEditor(site)}><SvgTokens /></Button>
                     <Button variant="outline-secondary" size="sm" title="Code snippet" onClick={() => openSnippet(site)}><SvgCode /></Button>
                     <Button variant="outline-primary"   size="sm" title="Edit site"    onClick={() => openEdit(site)}><SvgEdit /></Button>
                     <Button variant="outline-danger"    size="sm" title="Delete"       onClick={() => handleDelete(site)}><SvgTrash /></Button>
