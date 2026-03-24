@@ -2,7 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API = '/api/admin/deploy';
 
-const STATUS_COLOR = { idle: 'secondary', deploying: 'warning', success: 'success', failed: 'danger', cancelled: 'secondary', running: 'warning' };
+const STATUS_COLOR = { idle: 'secondary', deploying: 'warning', success: 'success', failed: 'danger', cancelled: 'secondary', running: 'primary', pending: 'info' };
+const STATUS_TEXT  = { warning: 'dark' }; // bg-warning needs dark text
+const statusBadgeCls = (s) => {
+  const bg = STATUS_COLOR[s] || 'secondary';
+  const txt = STATUS_TEXT[bg] ? ` text-${STATUS_TEXT[bg]}` : ' text-white';
+  return `badge bg-${bg}${txt} text-nowrap`;
+};
+// Row tint for log list
+const LOG_ROW_BG = { success: '#f0fff4', failed: '#fff5f5', running: '#eff6ff', pending: '#eff6ff', cancelled: '' };
 
 const FRAMEWORKS = [
   { value: '',       label: '— Select framework —' },
@@ -233,12 +241,13 @@ export default function DeployManager() {
         setOpenLog(null);
         return;
       }
-      const list = Array.isArray(data) ? data : [];
+      const list = (Array.isArray(data) ? data : [])
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
       setLogsError('');
       setLogs(list);
-      // Auto-open the first (latest) log; if a running/pending log exists, open that one
+      // Auto-open the latest log; keep user's selection only if that log still exists
       setOpenLog(prev => {
-        if (prev) return prev; // keep user's selection
+        if (prev && list.some(l => l.id === prev)) return prev;
         const active = list.find(l => l.status === 'running' || l.status === 'pending');
         return (active ?? list[0])?.id ?? null;
       });
@@ -573,7 +582,7 @@ export default function DeployManager() {
                                 : <span className="badge bg-secondary-subtle text-secondary border">Webhook</span>}
                             </td>
                             <td>
-                              <span className={`badge bg-${STATUS_COLOR[p.status] || 'secondary'}`}>
+                              <span className={statusBadgeCls(p.status || 'idle')}>
                                 {isDeploying && <span className="spinner-border spinner-border-sm me-1" style={{ width: 8, height: 8 }} />}
                                 {p.status || 'idle'}
                               </span>
@@ -701,7 +710,7 @@ function ProjectDetail({
             <div className="flex-fill">
               <div className="d-flex align-items-center gap-2 mb-1 flex-wrap">
                 <h5 className="mb-0 fw-semibold">{p.name}</h5>
-                <span className={`badge bg-${STATUS_COLOR[p.status] || 'secondary'}`}>
+                <span className={statusBadgeCls(p.status || 'idle')}>
                   {isDeploying && <span className="spinner-border spinner-border-sm me-1" style={{ width: 10, height: 10 }} />}
                   {p.status}
                 </span>
@@ -802,14 +811,14 @@ function ProjectDetail({
                 {/* Log row header */}
                 <div
                   className={`d-flex align-items-center gap-2 px-3 py-2 ${openLog === log.id ? 'bg-light' : ''}`}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', backgroundColor: openLog === log.id ? undefined : (LOG_ROW_BG[liveLog?.id === log.id ? liveLog.status : log.status] || undefined) }}
                   onClick={() => setOpenLog(openLog === log.id ? null : log.id)}>
                   {(() => {
                     const effectiveStatus = liveLog?.id === log.id ? liveLog.status : log.status;
                     const isRunning = effectiveStatus === 'running' || effectiveStatus === 'pending';
                     return (
-                      <span className={`badge bg-${STATUS_COLOR[effectiveStatus] || 'secondary'} text-nowrap`}
-                        style={{ minWidth: 65, fontSize: '0.72rem' }}>
+                      <span className={statusBadgeCls(effectiveStatus)}
+                        style={{ minWidth: 68, fontSize: '0.72rem' }}>
                         {isRunning && <span className="spinner-border spinner-border-sm me-1" style={{ width: 8, height: 8 }} />}
                         {effectiveStatus}
                       </span>

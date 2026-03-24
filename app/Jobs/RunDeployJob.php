@@ -105,6 +105,20 @@ class RunDeployJob implements ShouldQueue
                 }
                 $this->log($lines, "Build output dir: {$outDir}");
                 $this->flush($log, $lines);
+            } elseif ($project->build_output_dir) {
+                // No build command but a deploy subdirectory is specified —
+                // useful when dist/ is pre-built and committed to git (e.g. heavy
+                // packages like @excalidraw that OOM on shared hosting).
+                $outDir    = $project->build_output_dir;
+                $deployDir = rtrim($sourceDir, '/') . '/' . ltrim($outDir, '/');
+                $this->log($lines, "\n[4/5] No build step — deploying from pre-built '{$outDir}' directory.");
+                if (!is_dir($deployDir)) {
+                    throw new \RuntimeException(
+                        "Deploy dir '{$outDir}' not found in repo.\n" .
+                        "Contents: " . implode(', ', array_diff(scandir($sourceDir) ?: [], ['.', '..']))
+                    );
+                }
+                $this->flush($log, $lines);
             } else {
                 $this->log($lines, "\n[4/5] No build step — uploading source directly.");
                 $this->flush($log, $lines);

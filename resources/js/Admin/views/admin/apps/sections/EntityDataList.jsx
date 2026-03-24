@@ -33,6 +33,8 @@ const EntityDataList = () => {
   const fileInputRefs = useRef({});
   const [toast, setToast] = useState(null); // { type: 'success'|'danger', msg: string }
   const toastTimer = useRef(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     clearTimeout(toastTimer.current);
@@ -90,7 +92,8 @@ const EntityDataList = () => {
 
       const { data } = await axios.get(`/api/entities/${slug}`, { params });
 
-      setRows(data.data ?? []);
+      setSelectedIds(new Set());
+    setRows(data.data ?? []);
       setPagination({
         page: data.current_page ?? page,
         perPage: data.per_page ?? pagination.perPage,
@@ -246,6 +249,46 @@ const EntityDataList = () => {
     }
   };
 
+  const toggleRow = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const toggleAll = () => {
+    if (selectedIds.size === rows.length && rows.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(rows.map(r => r.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const count = selectedIds.size;
+    const result = await Swal.fire({
+      title: `Delete ${count} record${count > 1 ? 's' : ''}?`,
+      text: 'This action cannot be undone.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: `Yes, delete ${count}`,
+      cancelButtonText: 'Cancel',
+      buttonsStyling: false,
+      customClass: { confirmButton: 'btn btn-danger me-2', cancelButton: 'btn btn-secondary' },
+    });
+    if (!result.isConfirmed) return;
+    setBulkDeleting(true);
+    try {
+      await Promise.all([...selectedIds].map(id => axios.delete(`/api/entities/${slug}/${id}`)));
+      setSelectedIds(new Set());
+      await fetchData(pagination.page);
+      showToast(`${count} record${count > 1 ? 's' : ''} deleted.`);
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Some deletions failed', 'danger');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const getRelationField = (columnName) =>
     relationFields.find((f) => f.column_name === columnName);
 
@@ -300,6 +343,18 @@ const EntityDataList = () => {
                 <span className="badge bg-secondary-subtle text-secondary">
                   Total records: {pagination.total.toLocaleString()}
                 </span>
+                {selectedIds.size > 0 && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                  >
+                    {bulkDeleting
+                      ? <><Spinner size="sm" className="me-1" />Deleting...</>
+                      : <><Icon icon="trash" className="me-1" />Delete selected ({selectedIds.size})</>}
+                  </Button>
+                )}
               </div>
               <div className="d-flex align-items-center gap-2">
                 <div className="app-search">
@@ -323,6 +378,14 @@ const EntityDataList = () => {
               <Table hover className="mb-0">
                 <thead className="table-light">
                   <tr>
+                    <th style={{ width: 40 }}>
+                      <Form.Check
+                        type="checkbox"
+                        checked={rows.length > 0 && selectedIds.size === rows.length}
+                        ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < rows.length; }}
+                        onChange={toggleAll}
+                      />
+                    </th>
                     {listVisibleFields.map((f) => {
                       const isSorted = sort === f.column_name;
                       const icon =
@@ -351,6 +414,7 @@ const EntityDataList = () => {
                   </tr>
                   {/* Column filter inputs */}
                   <tr>
+                    <th />
                     {listVisibleFields.map((f) => (
                       <th key={f.id}>
                         <FormControl
@@ -386,7 +450,15 @@ const EntityDataList = () => {
                     </tr>
                   )}
                   {rows.map((row) => (
-                    <tr key={row.id} onClick={() => openEdit(row)} style={{ cursor: 'pointer' }}>
+                    <tr key={row.id} onClick={() => openEdit(row)} style={{ cursor: 'pointer' }}
+                      className={selectedIds.has(row.id) ? 'table-active' : ''}>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Form.Check
+                          type="checkbox"
+                          checked={selectedIds.has(row.id)}
+                          onChange={() => toggleRow(row.id)}
+                        />
+                      </td>
                       {listVisibleFields.map((f) => {
                         const relField = getRelationField(f.column_name);
                         const val = row[f.column_name];
