@@ -18,8 +18,35 @@ import { Link } from 'react-router';
 const SectionList = () => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(null);
   // hydrate from server if available
   const { entities } = useInitialProps ? useInitialProps() : { entities: null };
+
+  const handleDelete = async (entity) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete the table "${entity.table_name}" and all its data?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeleting(entity.id);
+    try {
+      const res = await fetch(`/api/section-builder/entities/${entity.id}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.error || 'Failed to delete table.');
+        return;
+      }
+      setData((prev) => prev.filter((e) => e.id !== entity.id));
+    } catch {
+      alert('Network error while deleting table.');
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const columnHelper = createColumnHelper();
 
@@ -75,6 +102,16 @@ const SectionList = () => {
           >
             <Icon icon="edit" className="fs-lg" />
           </Link>
+          <Button
+            variant="soft-danger"
+            size="sm"
+            className="btn-icon"
+            title="Delete table"
+            disabled={deleting === row.original.id}
+            onClick={() => handleDelete(row.original)}
+          >
+            <Icon icon={deleting === row.original.id ? 'loader' : 'trash'} className="fs-lg" />
+          </Button>
         </div>
       ),
     },

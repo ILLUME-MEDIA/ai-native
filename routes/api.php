@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\SectionBuilder\EntityController;
 use App\Http\Controllers\SectionBuilder\FieldController;
 use App\Http\Controllers\SectionBuilder\CombinedEntityController;
+use App\Http\Controllers\SectionBuilder\SectionRelationController;
 use App\Http\Controllers\SectionBuilder\YelpController;
 use App\Http\Controllers\DynamicEntityController;
 use App\Http\Controllers\Mcp\McpEntityController;
@@ -12,10 +13,13 @@ use App\Http\Controllers\Admin\CaseStudyController as AdminCaseStudyController;
 use App\Http\Controllers\Ecommerce\BusinessController;
 use App\Http\Controllers\Ecommerce\MuzzhubController;
 use App\Http\Controllers\Ecommerce\MuzzhubCategoryController;
+use App\Http\Controllers\Ecommerce\CuisineController;
 use App\Http\Controllers\Ecommerce\MenuController;
 use App\Http\Controllers\Ecommerce\MenuItemModifierController;
 use App\Http\Controllers\Ecommerce\MenuCategoryTypeController;
 use App\Http\Controllers\Ecommerce\CartController;
+use App\Http\Controllers\Ecommerce\CheckoutController;
+use App\Http\Controllers\Ecommerce\TaxController;
 use App\Http\Controllers\Ecommerce\OrderController;
 use App\Http\Controllers\Ecommerce\DiscoveryUserController;
 use App\Http\Controllers\Ecommerce\MediaUploadController;
@@ -27,6 +31,30 @@ use App\Http\Controllers\Ecommerce\PosController;
 use App\Http\Controllers\Ecommerce\PosCatalogController;
 use App\Http\Controllers\Ecommerce\PosPaymentController;
 use App\Http\Controllers\Ecommerce\PosWebhookController;
+use App\Http\Controllers\Delivery\DeliveryStaffController;
+use App\Http\Controllers\Delivery\DeliveryZoneController;
+use App\Http\Controllers\Delivery\DeliveryAssignmentController;
+use App\Http\Controllers\Delivery\DeliverySettingsController;
+use App\Http\Controllers\Delivery\UberEatsController;
+use App\Http\Controllers\Delivery\InstacartController;
+use App\Http\Controllers\Delivery\PlatformOrderController;
+use App\Http\Controllers\Delivery\DeliveryQuoteController;
+use App\Http\Controllers\Delivery\UberDirectController;
+use App\Http\Controllers\Admin\AppSecretsController;
+use App\Http\Controllers\Admin\CacheController;
+use App\Http\Controllers\Admin\EcommerceSettingsController;
+use App\Http\Controllers\Admin\Cal\CalPlatformsController;
+use App\Http\Controllers\Admin\Cal\CalMeetingsController;
+use App\Http\Controllers\Admin\KanbanController;
+use App\Http\Controllers\Admin\OpenorgUsersController;
+use App\Http\Controllers\Admin\PlatformUsersController;
+use App\Http\Controllers\Admin\PlatformGenresController;
+use App\Http\Controllers\Webhook\CalWebhookController;
+use App\Http\Controllers\ShipEngine\ShipEngineController;
+use App\Http\Controllers\Admin\DesignSystem\DsThemeController;
+use App\Http\Controllers\Admin\DesignSystem\DsTokenController;
+use App\Http\Controllers\Admin\DesignSystem\DsComponentController;
+use App\Http\Controllers\Admin\DesignSystem\DsSitesController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -40,10 +68,281 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware('auth:sanctum')->group(function () {
+// ── Cal.com Webhooks (public — no auth, signature verified in controller) ──────
+Route::post('/webhooks/cal/{slug}', [CalWebhookController::class, 'handle'])
+    ->middleware('throttle:120,1');
+
+// ── Cal.com Integration ────────────────────────────────────────────────────────
+Route::prefix('admin/cal')->group(function () {
+    // Platforms
+    Route::get('platforms',                          [CalPlatformsController::class, 'index']);
+    Route::post('platforms',                         [CalPlatformsController::class, 'store']);
+    Route::put('platforms/{calPlatform}',            [CalPlatformsController::class, 'update']);
+    Route::delete('platforms/{calPlatform}',         [CalPlatformsController::class, 'destroy']);
+    Route::post('platforms/{calPlatform}/reveal-key',[CalPlatformsController::class, 'revealApiKey']);
+    Route::post('platforms/{calPlatform}/sync',      [CalPlatformsController::class, 'sync']);
+    Route::post('platforms/{calPlatform}/test',      [CalPlatformsController::class, 'testConnection']);
+    // Meetings
+    Route::get('meetings',                           [CalMeetingsController::class, 'index']);
+    Route::post('meetings',                          [CalMeetingsController::class, 'store']);
+    Route::put('meetings/{calMeeting}',              [CalMeetingsController::class, 'update']);
+    Route::delete('meetings/{calMeeting}',           [CalMeetingsController::class, 'destroy']);
+    Route::post('meetings/{calMeeting}/cancel',      [CalMeetingsController::class, 'cancelViaApi']);
+});
+
+// ── Platform Genres ────────────────────────────────────────────────────────────
+Route::prefix('admin/platform-genres')->group(function () {
+    Route::get('/',                                    [PlatformGenresController::class, 'index']);
+    Route::post('/',                                   [PlatformGenresController::class, 'store']);
+    Route::post('/reorder',                            [PlatformGenresController::class, 'reorder']);
+    Route::put('/{platformGenre}',                     [PlatformGenresController::class, 'update']);
+    Route::delete('/{platformGenre}',                  [PlatformGenresController::class, 'destroy']);
+    Route::post('/{platformGenre}/genres',             [PlatformGenresController::class, 'addGenre']);
+    Route::delete('/{platformGenre}/genres',           [PlatformGenresController::class, 'removeGenre']);
+});
+
+// ── OpenOrg Users (legacy — platform-scoped, openorg_users table only) ────────
+Route::prefix('admin/openorg-users')->group(function () {
+    Route::get('/',                        [OpenorgUsersController::class, 'index']);
+    Route::post('/',                       [OpenorgUsersController::class, 'store']);
+    Route::put('/{openorgUser}',           [OpenorgUsersController::class, 'update']);
+    Route::delete('/{openorgUser}',        [OpenorgUsersController::class, 'destroy']);
+});
+
+// ── Platform Users (dynamic — uses each platform's configured users table) ─────
+// Works with openorg_users (default) OR any Section Builder entity table.
+// Usage: GET  /api/admin/platforms/{platform}/users
+//        POST /api/admin/platforms/{platform}/users
+//        PUT  /api/admin/platforms/{platform}/users/{userId}
+//        DELETE /api/admin/platforms/{platform}/users/{userId}
+Route::prefix('admin/platforms/{platform}')->group(function () {
+    Route::get('users',           [PlatformUsersController::class, 'index']);
+    Route::post('users',          [PlatformUsersController::class, 'store']);
+    Route::put('users/{userId}',  [PlatformUsersController::class, 'update']);
+    Route::delete('users/{userId}',[PlatformUsersController::class, 'destroy']);
+});
+
+// ── Deploy Manager ─────────────────────────────────────────────────────────────
+Route::prefix('admin/deploy')->group(function () {
+    Route::get('projects',              [\App\Http\Controllers\Admin\DeployController::class, 'index']);
+    Route::post('projects',             [\App\Http\Controllers\Admin\DeployController::class, 'store']);
+    Route::put('projects/{id}',         [\App\Http\Controllers\Admin\DeployController::class, 'update']);
+    Route::delete('projects/{id}',      [\App\Http\Controllers\Admin\DeployController::class, 'destroy']);
+    Route::get('projects/{id}/logs',                    [\App\Http\Controllers\Admin\DeployController::class, 'logs']);
+    Route::get('projects/{id}/logs/{logId}/output',     [\App\Http\Controllers\Admin\DeployController::class, 'logOutput']);
+    Route::post('projects/{id}/deploy',                 [\App\Http\Controllers\Admin\DeployController::class, 'deploy']);
+    Route::post('projects/{id}/stop',                   [\App\Http\Controllers\Admin\DeployController::class, 'stop']);
+    Route::post('projects/{id}/reveal',                 [\App\Http\Controllers\Admin\DeployController::class, 'reveal']);
+    Route::post('detect',                [\App\Http\Controllers\Admin\DeployController::class, 'detect']);
+    Route::get('detect-node',            [\App\Http\Controllers\Admin\DeployController::class, 'detectNode']);
+});
+
+// GitHub webhook — public, verified by HMAC secret in URL
+Route::post('deploy/webhook/{projectId}/{secret}', [\App\Http\Controllers\DeployWebhookController::class, 'handle'])
+    ->withoutMiddleware(['auth:sanctum']);
+
+// ── Kanban ─────────────────────────────────────────────────────────────────────
+Route::prefix('admin/kanban')->group(function () {
+    // Boards
+    Route::get('boards',                             [KanbanController::class, 'boardsIndex']);
+    Route::post('boards',                            [KanbanController::class, 'boardsStore']);
+    Route::get('boards/{board}',                     [KanbanController::class, 'boardsShow']);
+    Route::put('boards/{board}',                     [KanbanController::class, 'boardsUpdate']);
+    Route::delete('boards/{board}',                  [KanbanController::class, 'boardsDestroy']);
+    Route::post('boards/{board}/columns',            [KanbanController::class, 'columnsStore']);
+    Route::post('boards/{board}/columns/reorder',    [KanbanController::class, 'columnsReorder']);
+    // Columns
+    Route::put('columns/{column}',                   [KanbanController::class, 'columnsUpdate']);
+    Route::delete('columns/{column}',                [KanbanController::class, 'columnsDestroy']);
+    // Cards
+    Route::get('cards',                              [KanbanController::class, 'cardsByEmail']);  // ?email=
+    Route::post('columns/{column}/cards',            [KanbanController::class, 'cardsStore']);
+    Route::put('cards/{card}',                       [KanbanController::class, 'cardsUpdate']);
+    Route::delete('cards/{card}',                    [KanbanController::class, 'cardsDestroy']);
+    Route::patch('cards/{card}/move',                [KanbanController::class, 'cardsMove']);
+});
+
+// ── Ecommerce Settings (platform fee + tip global config) ─────────────────────
+Route::prefix('admin/ecommerce-settings')->group(function () {
+    Route::get('/',           [EcommerceSettingsController::class, 'index']);
+    Route::get('/{group}',    [EcommerceSettingsController::class, 'byGroup']);
+    Route::put('/',           [EcommerceSettingsController::class, 'update']);
+});
+
+// ── Design System Manager ─────────────────────────────────────────────────────
+Route::prefix('admin/design-system')->group(function () {
+    // Themes
+    Route::get('/themes',                        [DsThemeController::class, 'index']);
+    Route::post('/themes',                       [DsThemeController::class, 'store']);
+    Route::get('/themes/{dsTheme}',              [DsThemeController::class, 'show']);
+    Route::put('/themes/{dsTheme}',              [DsThemeController::class, 'update']);
+    Route::delete('/themes/{dsTheme}',           [DsThemeController::class, 'destroy']);
+    Route::post('/themes/{dsTheme}/duplicate',    [DsThemeController::class, 'duplicate']);
+    Route::post('/themes/{dsTheme}/seed-defaults',[DsThemeController::class, 'seedDefaults']);
+    // Exports
+    Route::get('/themes/{dsTheme}/export/json',     [DsThemeController::class, 'exportJson']);
+    Route::get('/themes/{dsTheme}/export/css',      [DsThemeController::class, 'exportCss']);
+    Route::get('/themes/{dsTheme}/export/tailwind', [DsThemeController::class, 'exportTailwind']);
+    Route::get('/themes/{dsTheme}/export/dts',      [DsThemeController::class, 'exportDts']);
+
+    // Tokens
+    Route::get('/tokens',              [DsTokenController::class, 'index']);
+    Route::post('/tokens',             [DsTokenController::class, 'store']);
+    Route::put('/tokens/{dsToken}',    [DsTokenController::class, 'update']);
+    Route::delete('/tokens/{dsToken}', [DsTokenController::class, 'destroy']);
+    Route::post('/tokens/bulk',        [DsTokenController::class, 'bulkUpsert']);
+
+    // Components
+    Route::get('/components',                   [DsComponentController::class, 'index']);
+    Route::post('/components',                  [DsComponentController::class, 'store']);
+    Route::get('/components/{dsComponent}',     [DsComponentController::class, 'show']);
+    Route::put('/components/{dsComponent}',     [DsComponentController::class, 'update']);
+    Route::delete('/components/{dsComponent}',  [DsComponentController::class, 'destroy']);
+    // Component variant resolution (called by React token engine)
+    Route::get('/components/{slug}/resolve',    [DsComponentController::class, 'resolve'])->where('slug', '[a-z\-]+');
+
+    // Variants (nested under component)
+    Route::post('/components/{dsComponent}/variants',                    [DsComponentController::class, 'storeVariant']);
+    Route::put('/components/{dsComponent}/variants/{variant}',           [DsComponentController::class, 'updateVariant']);
+    Route::delete('/components/{dsComponent}/variants/{variant}',        [DsComponentController::class, 'destroyVariant']);
+
+    // Sites (multi-site token distribution)
+    Route::get('/sites',                          [DsSitesController::class, 'index']);
+    Route::post('/sites',                         [DsSitesController::class, 'store']);
+    Route::get('/sites/{dsSite}',                 [DsSitesController::class, 'show']);
+    Route::put('/sites/{dsSite}',                 [DsSitesController::class, 'update']);
+    Route::delete('/sites/{dsSite}',              [DsSitesController::class, 'destroy']);
+    Route::post('/sites/{dsSite}/generate-key',   [DsSitesController::class, 'generateKey']);
+    Route::post('/sites/{dsSite}/reveal-key',     [DsSitesController::class, 'revealKey']);
+});
+
+// ── Public Design Tokens API (no auth — for external apps) ───────────────────
+// Usage from any app:
+//   GET /api/design-tokens         → { 'color.primary': '#405189', 'radius.md': '0.3rem', ... }
+//   GET /api/design-tokens/css     → :root { --bs-primary: #405189; ... }
+//   GET /api/design-tokens/theme   → full theme + tokens array
+Route::get('/design-tokens', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)->first()
+          ?? \App\Models\DesignSystem\DsTheme::first();
+    if (!$theme) return response()->json([]);
+    return response()->json($theme->resolveTokenMap())
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Cache-Control', 'public, max-age=60');
+});
+
+Route::get('/design-tokens/css', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)->first()
+          ?? \App\Models\DesignSystem\DsTheme::first();
+    if (!$theme) return response('/* no theme configured */', 200, ['Content-Type' => 'text/css']);
+    $service = app(\App\Services\DesignSystem\DesignTokenService::class);
+    $css = $service->generateCss($theme->id);
+    return response($css, 200, [
+        'Content-Type'                => 'text/css',
+        'Access-Control-Allow-Origin' => '*',
+        'Cache-Control'               => 'public, max-age=60',
+    ]);
+});
+
+Route::get('/design-tokens/theme', function () {
+    $theme = \App\Models\DesignSystem\DsTheme::where('is_default', true)
+        ->with('tokens')->first()
+        ?? \App\Models\DesignSystem\DsTheme::with('tokens')->first();
+    if (!$theme) return response()->json(null);
+    return response()->json([
+        'theme'     => ['id' => $theme->id, 'name' => $theme->name, 'slug' => $theme->slug],
+        'token_map' => $theme->resolveTokenMap(),
+        'tokens'    => $theme->tokens,
+    ])->header('Access-Control-Allow-Origin', '*')
+      ->header('Cache-Control', 'public, max-age=60');
+});
+
+// ── Public Design Tokens API — Per-Site (no auth) ────────────────────────────
+// Usage:
+//   GET /api/design-tokens/{slug}         → flat token map for that site's theme
+//   GET /api/design-tokens/{slug}/css     → CSS custom properties
+//   GET /api/design-tokens/{slug}/theme   → full theme + tokens
+//   X-DS-Key header also accepted (resolves site by api_key)
+
+$resolveThemeForRequest = function (\Illuminate\Http\Request $request, string $slug) {
+    // Try by slug
+    $site = \App\Models\DesignSystem\DsSite::where('slug', $slug)
+        ->where('is_active', true)->first();
+
+    // Try by API key header if slug not found
+    if (!$site) {
+        $apiKey = $request->header('X-DS-Key');
+        if ($apiKey) {
+            $all = \App\Models\DesignSystem\DsSite::where('is_active', true)->get();
+            foreach ($all as $s) {
+                try {
+                    if (decrypt($s->api_key) === $apiKey) { $site = $s; break; }
+                } catch (\Throwable) {}
+            }
+        }
+    }
+
+    if (!$site) return null;
+    return $site->resolveTheme();
+};
+
+Route::get('/design-tokens/{slug}', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    return response()->json($theme->resolveTokenMap())
+        ->header('Access-Control-Allow-Origin', '*')
+        ->header('Cache-Control', 'public, max-age=60');
+})->where('slug', '[a-z0-9-]+');
+
+Route::get('/design-tokens/{slug}/css', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response('/* site not found */', 404, ['Content-Type' => 'text/css']);
+    $service = app(\App\Services\DesignSystem\DesignTokenService::class);
+    $css = $service->generateCss($theme->id);
+    return response($css, 200, [
+        'Content-Type'                => 'text/css',
+        'Access-Control-Allow-Origin' => '*',
+        'Cache-Control'               => 'public, max-age=60',
+    ]);
+})->where('slug', '[a-z0-9-]+');
+
+Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
+    $theme = $resolveThemeForRequest($request, $slug);
+    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    $theme->load('tokens');
+    return response()->json([
+        'theme'     => ['id' => $theme->id, 'name' => $theme->name, 'slug' => $theme->slug],
+        'token_map' => $theme->resolveTokenMap(),
+        'tokens'    => $theme->tokens,
+    ])->header('Access-Control-Allow-Origin', '*')
+      ->header('Cache-Control', 'public, max-age=60');
+})->where('slug', '[a-z0-9-]+');
+
+// ── App Secrets (system credentials stored in DB instead of .env) ────────────
+// ── Artisan Runner (admin only) ────────────────────────────────────────────
+Route::prefix('admin/artisan')->group(function () {
+    Route::post('migrate',          [\App\Http\Controllers\Admin\ArtisanController::class, 'migrate']);
+    Route::post('cuisines-migrate', [\App\Http\Controllers\Admin\ArtisanController::class, 'cuisinesMigrate']);
+});
+
+// ── Cache Management ────────────────────────────────────────────────────────
+Route::prefix('admin/cache')->group(function () {
+    Route::post('/clear', [CacheController::class, 'clear']);
+    Route::post('/sync',  [CacheController::class, 'syncSchema']);
+});
+
+Route::prefix('admin/app-secrets')->group(function () {
+    Route::get('/',                         [AppSecretsController::class, 'index']);
+    Route::post('/',                        [AppSecretsController::class, 'store']);
+    Route::put('/{appSecret}',              [AppSecretsController::class, 'update']);
+    Route::delete('/{appSecret}',           [AppSecretsController::class, 'destroy']);
+    Route::post('/{appSecret}/reveal',      [AppSecretsController::class, 'reveal']);
+});
+
+Route::group([], function () {
     // ── Case Studies Admin CRUD ─────────────────────────────────────────────
     Route::get('/admin/case-studies',                        [AdminCaseStudyController::class, 'index']);
     Route::post('/admin/case-studies/upload-media',          [AdminCaseStudyController::class, 'uploadMedia']);
+    Route::post('/admin/storage-link',                        [AdminCaseStudyController::class, 'storageLink']);
     Route::post('/admin/case-studies',                       [AdminCaseStudyController::class, 'store']);
     Route::get('/admin/case-studies/{id}',                   [AdminCaseStudyController::class, 'show']);
     Route::patch('/admin/case-studies/{id}',                 [AdminCaseStudyController::class, 'update']);
@@ -68,13 +367,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/section-builder/entities/{entity}', [EntityController::class, 'update'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.update');
-    // Combined endpoint: ek hi API se 2 entities ka data
+    Route::delete('/section-builder/entities/{entity}', [EntityController::class, 'destroy'])
+        ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
+        ->name('api.section-builder.entities.destroy');
+    // Combined endpoint: fetch data from 2 entities in a single request
     Route::get('/section-builder/entities-combined/{first}/{second}', [CombinedEntityController::class, 'index'])
         ->where(['first' => '[0-9]+|[a-zA-Z0-9_-]+', 'second' => '[0-9]+|[a-zA-Z0-9_-]+'])
         ->name('api.section-builder.entities.combined.index');
     Route::get('/section-builder/entities/{entity}/mcp', [EntityController::class, 'getMcpConfig'])
         ->where('entity', '[0-9]+|[a-zA-Z0-9_-]+')
         ->name('api.section-builder.entities.mcp');
+
+    // Section Relations CRUD
+    Route::get('/section-builder/entities/{entityId}/relations',         [SectionRelationController::class, 'index']);
+    Route::post('/section-builder/entities/{entityId}/relations',        [SectionRelationController::class, 'store']);
+    Route::patch('/section-builder/entities/{entityId}/relations/{id}',  [SectionRelationController::class, 'update']);
+    Route::delete('/section-builder/entities/{entityId}/relations/{id}', [SectionRelationController::class, 'destroy']);
 
     // Custom route binding: {entity} can be ID, slug, or table name - auto-creates if table exists
     Route::get('/section-builder/entities/{entity}/fields', [FieldController::class, 'index'])
@@ -101,6 +409,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('muzzhub-categories',                            [MuzzhubCategoryController::class, 'store']);
         Route::patch('muzzhub-categories/{muzzhubCategory}',         [MuzzhubCategoryController::class, 'update']);
         Route::delete('muzzhub-categories/{muzzhubCategory}',        [MuzzhubCategoryController::class, 'destroy']);
+
+        // Cuisines admin (write + activate-all)
+        Route::post('cuisines',                     [CuisineController::class, 'store']);
+        Route::put('cuisines/activate-all',          [CuisineController::class, 'activateAll']);
+        Route::post('cuisines/dedup',               [CuisineController::class, 'dedup']);
+        Route::patch('cuisines/{cuisine}',          [CuisineController::class, 'update']);
+        Route::delete('cuisines/{cuisine}',         [CuisineController::class, 'destroy']);
 
         // Business write (admin)
         Route::post('businesses',                   [BusinessController::class, 'store']);
@@ -138,10 +453,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('orders/{order}/status',       [OrderController::class, 'updateStatus']);
 
         // Discovery Users (admin)
+        // Note: ->where([0-9]+) prevents 'me' from matching these routes
         Route::get('discovery-users',                    [DiscoveryUserController::class, 'index']);
-        Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show']);
-        Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']);
-        Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy']);
+        Route::get('discovery-users/{discoveryUser}',    [DiscoveryUserController::class, 'show'])   ->where('discoveryUser', '[0-9]+');
+        Route::patch('discovery-users/{discoveryUser}',  [DiscoveryUserController::class, 'update']) ->where('discoveryUser', '[0-9]+');
+        Route::delete('discovery-users/{discoveryUser}', [DiscoveryUserController::class, 'destroy'])->where('discoveryUser', '[0-9]+');
 
         // Media Upload (admin)
         Route::post('upload', [MediaUploadController::class, 'upload']);
@@ -173,6 +489,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('accounts',                      [YelpController::class, 'accountsIndex']);
         Route::post('accounts',                     [YelpController::class, 'accountsStore']);
         Route::post('accounts/verify',              [YelpController::class, 'accountsVerify']);
+        Route::post('accounts/{account}/reveal',    [YelpController::class, 'accountsReveal']);
         Route::patch('accounts/{account}',          [YelpController::class, 'accountsUpdate']);
         Route::delete('accounts/{account}',         [YelpController::class, 'accountsDestroy']);
 
@@ -187,7 +504,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('logs',                          [YelpController::class, 'logsIndex']);
         Route::get('logs/{log}',                    [YelpController::class, 'logProgress']);
         Route::get('logs/{log}/rows',               [YelpController::class, 'logRows']);
+        Route::get('logs/{log}/rows/{rowId}',       [YelpController::class, 'rowDetail']);
         Route::post('logs/{log}/stop',              [YelpController::class, 'logStop']);
+
+        // Reconciliation
+        Route::get('reconciliation/summary',        [YelpController::class, 'reconciliationSummary']);
+        Route::get('reconciliation/matches',        [YelpController::class, 'reconciliationMatches']);
+        Route::get('reconciliation/menu-items',     [YelpController::class, 'reconciliationMenuItems']);
+        Route::get('reconciliation/closed',         [YelpController::class, 'reconciliationClosed']);
+        Route::get('reconciliation/not-found',      [YelpController::class, 'reconciliationNotFound']);
+        Route::get('reconciliation/skipped',        [YelpController::class, 'reconciliationSkipped']);
+        Route::post('reconciliation/merge',         [YelpController::class, 'reconciliationMerge']);
+
+        // On-demand menu scraper
+        Route::post('scrape-menu',                  [YelpController::class, 'scrapeMenu']);
     });
 
     //
@@ -304,6 +634,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'store']);
         Route::get('ai/conversations/{conversation}', [\App\Http\Controllers\Workspace\AIConversationController::class, 'show']);
         Route::post('ai/conversations/{conversation}/cancel', [\App\Http\Controllers\Workspace\AIConversationController::class, 'cancel']);
+        Route::delete('ai/conversations/{conversation}', [\App\Http\Controllers\Workspace\AIConversationController::class, 'destroy']);
 
         // Theme
         Route::get('theme', [\App\Http\Controllers\Workspace\ThemeController::class, 'getTheme']);
@@ -348,6 +679,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('muzzhub',                               [MuzzhubController::class, 'index']);
     Route::get('muzzhub/{muzzhub}',                     [MuzzhubController::class, 'show']);
     Route::get('muzzhub-categories',                    [MuzzhubCategoryController::class, 'index']);
+    Route::get('cuisines',                              [CuisineController::class, 'index']);
     Route::get('muzzhub/{muzzhub}/menu-categories',     [MenuController::class, 'muzzhubCategories']);
     Route::get('muzzhub/{muzzhub}/menu-items',          [MenuController::class, 'muzzhubItems']);
 
@@ -364,7 +696,9 @@ Route::prefix('ecommerce')->group(function () {
 
     // Cart — session-based (X-Session-Id header or cookie session)
     // No auth required; pass X-Session-Id UUID to keep same cart across requests.
+    // cart-data alias added as nginx-cache-bypass workaround (nginx cached /cart GET as HTML)
     Route::get('cart',              [CartController::class, 'index']);
+    Route::get('cart-data',         [CartController::class, 'index']);
     Route::post('cart',             [CartController::class, 'store']);
     Route::patch('cart/{cartItem}', [CartController::class, 'update']);
     Route::delete('cart/clear',     [CartController::class, 'clear']);
@@ -372,6 +706,17 @@ Route::prefix('ecommerce')->group(function () {
 
     // Order placement — convert cart to order (session-based, no auth required)
     Route::post('orders',           [OrderController::class, 'store']);
+
+    // Customer order history — scoped to current session (no admin auth needed)
+    Route::get('my-orders',         [OrderController::class, 'myOrders']);
+    Route::get('my-orders/{order}', [OrderController::class, 'myOrderShow']);
+
+    // Unified checkout — single call: items + customer + payment → order (external sites)
+    Route::post('checkout',         [CheckoutController::class, 'checkout']);
+
+    // Tax lookup — ZIP-based US sales tax rates (Avalara tables)
+    Route::get('tax',               [TaxController::class, 'show']);
+    Route::post('tax',              [TaxController::class, 'calculate']);
 });
 
 // ── DoorDash Drive Delivery Routes ───────────────────────────────────────────
@@ -384,18 +729,38 @@ Route::prefix('delivery/doordash')->group(function () {
     Route::post('webhook',          [DoorDashController::class, 'webhook']);
 });
 
+// ── Uber Direct (DaaS) Delivery Routes ───────────────────────────────────────
+Route::prefix('delivery/uber-direct')->group(function () {
+    Route::get('config',              [UberDirectController::class, 'config']);
+    Route::post('quote',              [UberDirectController::class, 'quote']);
+    Route::get('deliveries',          [UberDirectController::class, 'listDeliveries']);
+    Route::get('stores',              [UberDirectController::class, 'findStores']);
+    Route::post('dispatch/{order}',   [UberDirectController::class, 'dispatch']);
+    Route::get('status/{order}',      [UberDirectController::class, 'status']);
+    Route::patch('update/{order}',    [UberDirectController::class, 'update']);
+    Route::post('cancel/{order}',     [UberDirectController::class, 'cancel']);
+    Route::get('proof/{order}',       [UberDirectController::class, 'proofOfDelivery']);
+    // CPP (Courier Pick & Pack)
+    Route::post('cpp/quote',          [UberDirectController::class, 'cppQuote']);
+    Route::post('cpp/dispatch/{order}',[UberDirectController::class, 'cppDispatch']);
+});
+// Uber Direct webhook (no auth — Uber sends unsigned HTTP POSTs)
+Route::post('webhooks/delivery/uber-direct', [UberDirectController::class, 'webhook'])
+    ->withoutMiddleware(['auth:sanctum']);
+
 // ── Discovery User Self-Service Routes (OTP Bearer token required) ───────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify (table=discovery_users)
 Route::prefix('ecommerce/discovery-users/me')->group(function () {
     Route::get('/',          [DiscoveryUserController::class, 'meShow']);
     Route::patch('/',        [DiscoveryUserController::class, 'meUpdate']);
     Route::get('location',   [DiscoveryUserController::class, 'locationShow']);
-    Route::put('location',   [DiscoveryUserController::class, 'locationSave']);
+    Route::post('location',  [DiscoveryUserController::class, 'locationSave']);  // create (upsert)
+    Route::put('location',   [DiscoveryUserController::class, 'locationSave']);  // update (upsert)
     Route::delete('location',[DiscoveryUserController::class, 'locationDestroy']);
 });
 
 // ── POS Admin Routes (Sanctum auth required) ─────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('ecommerce/pos')->group(function () {
+Route::prefix('ecommerce/pos')->group(function () {
     // ── Literal routes first (must come before /{connection} wildcard) ────────
     Route::get('/',                                     [PosController::class, 'index']);
     Route::get('/square/auth-url',                      [PosController::class, 'squareAuthUrl']);
@@ -423,11 +788,178 @@ Route::middleware('auth:sanctum')->prefix('ecommerce/pos')->group(function () {
 });
 
 // ── POS order lookup (admin) ──────────────────────────────────────────────────
-Route::middleware('auth:sanctum')->get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
+Route::get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
 
 // ── POS Webhooks (no auth — verified by signature) ────────────────────────────
 Route::post('webhooks/pos/square', [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
 Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->withoutMiddleware(['auth:sanctum']);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── DELIVERY SYSTEM ───────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Admin: Delivery Staff Management ─────────────────────────────────────────
+Route::prefix('delivery/staff')->group(function () {
+    Route::get('/',                         [DeliveryStaffController::class, 'index']);
+    Route::post('/',                        [DeliveryStaffController::class, 'store']);
+    Route::get('/available',               [DeliveryStaffController::class, 'available']);
+    Route::get('/locations',               [DeliveryStaffController::class, 'locations']);
+    Route::get('/{deliveryStaff}',          [DeliveryStaffController::class, 'show']);
+    Route::patch('/{deliveryStaff}',        [DeliveryStaffController::class, 'update']);
+    Route::delete('/{deliveryStaff}',       [DeliveryStaffController::class, 'destroy']);
+    Route::post('/{deliveryStaff}/token',   [DeliveryStaffController::class, 'generateToken']);
+});
+
+// ── Admin: Delivery Zones Management ──────────────────────────────────────────
+Route::prefix('delivery/zones')->group(function () {
+    Route::get('/',                       [DeliveryZoneController::class, 'index']);
+    Route::post('/',                      [DeliveryZoneController::class, 'store']);
+    Route::post('/reorder',              [DeliveryZoneController::class, 'reorder']);
+    Route::get('/{deliveryZone}',         [DeliveryZoneController::class, 'show']);
+    Route::patch('/{deliveryZone}',       [DeliveryZoneController::class, 'update']);
+    Route::delete('/{deliveryZone}',      [DeliveryZoneController::class, 'destroy']);
+});
+
+// ── Public: Check delivery zone for a coordinate ──────────────────────────────
+Route::get('/delivery/zones/check-point', [DeliveryZoneController::class, 'checkPoint']);
+
+// ── Public/Storefront: Unified Delivery Quote API ─────────────────────────────
+// Single endpoint — pass `vendor` to route to DoorDash / UberEats / Instacart / own
+Route::post('/delivery/quote', [DeliveryQuoteController::class, 'quote']);
+
+// ── Admin: Order Assignment / Dispatch ────────────────────────────────────────
+Route::prefix('delivery/assignments')->group(function () {
+    Route::get('/',                                [DeliveryAssignmentController::class, 'index']);
+    Route::post('/assign',                         [DeliveryAssignmentController::class, 'assign']);
+    Route::post('/auto-assign',                    [DeliveryAssignmentController::class, 'autoAssign']);
+    Route::post('/orders/{order}/unassign',        [DeliveryAssignmentController::class, 'unassign']);
+    Route::patch('/{assignment}/status',           [DeliveryAssignmentController::class, 'updateStatus']);
+});
+
+// ── Admin: Delivery Platform Settings ─────────────────────────────────────────
+Route::prefix('delivery/settings')->group(function () {
+    Route::get('/',               [DeliverySettingsController::class, 'index']);
+    Route::post('/',              [DeliverySettingsController::class, 'upsert']);
+    Route::post('/test',          [DeliverySettingsController::class, 'testConnection']);
+});
+
+// ── Admin: All Platform Orders (UberEats + Instacart unified) ─────────────────
+Route::prefix('delivery/platform-orders')->group(function () {
+    Route::get('/',                                [PlatformOrderController::class, 'index']);
+    Route::get('/summary',                         [PlatformOrderController::class, 'summary']);
+    Route::get('/{platformOrder}',                 [PlatformOrderController::class, 'show']);
+    Route::patch('/{platformOrder}/status',        [PlatformOrderController::class, 'updateStatus']);
+});
+
+// ── Admin: UberEats Order Management ──────────────────────────────────────────
+Route::prefix('delivery/ubereats')->group(function () {
+    Route::get('/config',                          [UberEatsController::class, 'config']);
+    Route::get('/orders',                          [UberEatsController::class, 'orders']);
+    Route::post('/orders/{platformOrder}/accept',  [UberEatsController::class, 'accept']);
+    Route::post('/orders/{platformOrder}/reject',  [UberEatsController::class, 'reject']);
+    Route::patch('/orders/{platformOrder}/status', [UberEatsController::class, 'updateOrderStatus']);
+});
+
+// ── Admin: Instacart Order Management ─────────────────────────────────────────
+Route::prefix('delivery/instacart')->group(function () {
+    Route::get('/config',                          [InstacartController::class, 'config']);
+    Route::get('/orders',                          [InstacartController::class, 'orders']);
+    Route::post('/orders/{platformOrder}/accept',  [InstacartController::class, 'accept']);
+    Route::post('/orders/{platformOrder}/reject',  [InstacartController::class, 'reject']);
+});
+
+// ── Admin: Uber Direct (Delivery as a Service) ────────────────────────────────
+Route::prefix('delivery/uber-direct')->group(function () {
+    Route::get('/config',                      [UberDirectController::class, 'config']);
+    Route::post('/quote',                      [UberDirectController::class, 'quote']);
+    Route::get('/deliveries',                  [UberDirectController::class, 'listDeliveries']);
+    Route::post('/stores',                     [UberDirectController::class, 'findStores']);
+    Route::post('/dispatch/{order}',           [UberDirectController::class, 'dispatch']);
+    Route::get('/status/{order}',              [UberDirectController::class, 'status']);
+    Route::post('/update/{order}',             [UberDirectController::class, 'update']);
+    Route::post('/cancel/{order}',             [UberDirectController::class, 'cancel']);
+    Route::post('/proof/{order}',              [UberDirectController::class, 'proofOfDelivery']);
+    // Courier Pick and Pack (CPP)
+    Route::post('/cpp/quote',                  [UberDirectController::class, 'cppQuote']);
+    Route::post('/cpp/dispatch/{order}',       [UberDirectController::class, 'cppDispatch']);
+});
+
+// ── Platform Webhooks (no auth — signature verified internally) ───────────────
+Route::post('webhooks/delivery/ubereats',     [UberEatsController::class,   'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/instacart',    [InstacartController::class,  'webhook'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/delivery/uber-direct',  [UberDirectController::class, 'webhook'])->withoutMiddleware(['auth:sanctum']);
+
+// ── ShipEngine API Routes (admin auth required) ───────────────────────────────
+Route::prefix('shipengine')->group(function () {
+
+    // Account
+    Route::get('account/settings',           [ShipEngineController::class, 'getAccountSettings']);
+
+    // Addresses
+    Route::post('addresses/validate',        [ShipEngineController::class, 'validateAddresses']);
+
+    // Carriers
+    Route::get('carriers',                   [ShipEngineController::class, 'listCarriers']);
+    Route::get('carriers/{carrierId}',       [ShipEngineController::class, 'getCarrier']);
+    Route::get('carriers/{carrierId}/services', [ShipEngineController::class, 'getCarrierServices']);
+    Route::get('carriers/{carrierId}/packages', [ShipEngineController::class, 'getCarrierPackageTypes']);
+    Route::get('carriers/{carrierId}/options',  [ShipEngineController::class, 'getCarrierOptions']);
+
+    // Rates
+    Route::post('rates',                     [ShipEngineController::class, 'getRates']);
+    Route::post('rates/bulk',                [ShipEngineController::class, 'getBulkRates']);
+    Route::post('rates/estimate',            [ShipEngineController::class, 'estimateRates']);
+
+    // Shipments
+    Route::post('shipments',                 [ShipEngineController::class, 'createShipments']);
+    Route::get('shipments',                  [ShipEngineController::class, 'listShipments']);
+    Route::get('shipments/{shipmentId}',     [ShipEngineController::class, 'getShipment']);
+    Route::put('shipments/{shipmentId}',     [ShipEngineController::class, 'updateShipment']);
+    Route::put('shipments/{shipmentId}/cancel', [ShipEngineController::class, 'cancelShipment']);
+    Route::get('shipments/{shipmentId}/rates',  [ShipEngineController::class, 'getShipmentRates']);
+
+    // Labels
+    Route::post('labels',                            [ShipEngineController::class, 'createLabel']);
+    Route::get('labels',                             [ShipEngineController::class, 'listLabels']);
+    Route::get('labels/{labelId}',                   [ShipEngineController::class, 'getLabel']);
+    Route::put('labels/{labelId}/void',              [ShipEngineController::class, 'voidLabel']);
+    Route::get('labels/{labelId}/track',             [ShipEngineController::class, 'getLabelTrackingInfo']);
+    Route::post('labels/rates/{rateId}',             [ShipEngineController::class, 'createLabelFromRate']);
+    Route::post('labels/shipments/{shipmentId}',     [ShipEngineController::class, 'createLabelFromShipment']);
+
+    // Tracking
+    Route::get('tracking',                   [ShipEngineController::class, 'track']);
+    Route::post('tracking/start',            [ShipEngineController::class, 'startTracking']);
+    Route::post('tracking/stop',             [ShipEngineController::class, 'stopTracking']);
+
+    // Service Points
+    Route::post('service-points/search',                                    [ShipEngineController::class, 'searchServicePoints']);
+    Route::get('service-points/{carrierCode}/{countryCode}/{servicePointId}', [ShipEngineController::class, 'getServicePoint']);
+
+    // Warehouses
+    Route::get('warehouses',                 [ShipEngineController::class, 'listWarehouses']);
+    Route::post('warehouses',                [ShipEngineController::class, 'createWarehouse']);
+    Route::get('warehouses/{warehouseId}',   [ShipEngineController::class, 'getWarehouse']);
+    Route::put('warehouses/{warehouseId}',   [ShipEngineController::class, 'updateWarehouse']);
+    Route::delete('warehouses/{warehouseId}',[ShipEngineController::class, 'deleteWarehouse']);
+
+    // Batches
+    Route::post('batches',                            [ShipEngineController::class, 'createBatch']);
+    Route::get('batches/{batchId}',                   [ShipEngineController::class, 'getBatch']);
+    Route::post('batches/{batchId}/add',              [ShipEngineController::class, 'addToBatch']);
+    Route::post('batches/{batchId}/remove',           [ShipEngineController::class, 'removeFromBatch']);
+    Route::post('batches/{batchId}/process',          [ShipEngineController::class, 'processBatch']);
+
+    // Manifests (LTL / End-of-day)
+    Route::post('manifests',                 [ShipEngineController::class, 'createManifest']);
+    Route::get('manifests',                  [ShipEngineController::class, 'listManifests']);
+    Route::get('manifests/{manifestId}',     [ShipEngineController::class, 'getManifest']);
+
+    // Pickups
+    Route::post('pickups',                   [ShipEngineController::class, 'schedulePickup']);
+    Route::get('pickups',                    [ShipEngineController::class, 'listPickups']);
+    Route::delete('pickups/{pickupId}',      [ShipEngineController::class, 'cancelPickup']);
+});
 
 // ── Stripe Payment Routes (OTP Bearer token required) ────────────────────────
 // Requires Authorization: Bearer <otp-token> from POST /api/otp-auth/verify
@@ -463,6 +995,8 @@ Route::get('/entities/case-studies/{slug}', [CaseStudyController::class, 'show']
 
 Route::middleware(['mcp.auth', 'mcp.check'])->group(function () {
     Route::get('/entities/{entity}', [DynamicEntityController::class, 'index']);
+    Route::get('/entities/{entity}/relation-debug', [DynamicEntityController::class, 'relationDebug']);
+    Route::get('/entities/{entity}/by/{field}/{value}', [DynamicEntityController::class, 'showByField']);
     Route::get('/entities/{entity}/{id}', [DynamicEntityController::class, 'show']);
     Route::post('/entities/{entity}', [DynamicEntityController::class, 'store']);
     Route::put('/entities/{entity}/{id}', [DynamicEntityController::class, 'update']);
@@ -527,3 +1061,22 @@ Route::post('/auth/token', function (\Illuminate\Http\Request $request) {
     ]);
 })->middleware('throttle:10,1')->name('auth.token');
 
+
+// ── Platform User Auth (Public API — per Cal platform) ─────────────────────────
+// {table} = DB table name (openorg_users, se_xdstudio_users …)
+// Platform auto-resolved from table: openorg_users → platform(users_entity_id IS NULL)
+//                                     se_xyz_users  → SectionEntity → platform(users_entity_id)
+// GET  /api/cal/{table}/users?email=  → get user profile          (SITE_API_KEY)
+// POST /api/cal/{table}/users         → find-or-create + token     (SITE_API_KEY)
+// GET  /api/cal/{table}/meetings      → public; Bearer token = user-filtered + kanban_card
+// GET  /api/cal/{table}/cards?email=  → cards by email param or Bearer token
+Route::prefix('cal/{table}')->group(function () {
+    Route::middleware(['site.api.key', 'throttle:60,1'])->group(function () {
+        Route::get('users',  [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'show']);
+        Route::post('users', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'store']);
+    });
+    Route::middleware(['throttle:60,1'])->group(function () {
+        Route::get('meetings', [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'meetings']);
+        Route::get('cards',    [\App\Http\Controllers\Api\PlatformUserAuthController::class, 'cards']);
+    });
+});

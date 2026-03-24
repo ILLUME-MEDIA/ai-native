@@ -1,21 +1,23 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, useForm } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
+import { useState } from 'react';
 
 export default function Register() {
-    const { data, setData, post, processing, errors, reset } = useForm({
+    const {
+        props: { errors = {} },
+    } = usePage();
+
+    const [formData, setFormData] = useState({
         name: '',
         email: '',
         password: '',
         password_confirmation: '',
     });
 
-    const submit = (e) => {
-        e.preventDefault();
-
-        post(route('register'), {
-            onFinish: () => reset('password', 'password_confirmation'),
-        });
-    };
+    const csrfToken =
+        typeof document !== 'undefined'
+            ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
+            : '';
 
     return (
         <AdminAuthLayout
@@ -34,7 +36,8 @@ export default function Register() {
                 </p>
             }
         >
-            <form onSubmit={submit}>
+            <form method="POST" action={route('register')}>
+                {csrfToken && <input type="hidden" name="_token" value={csrfToken} />}
                 <div className="mb-3">
                     <label htmlFor="name" className="form-label">
                         Name <span className="text-danger">*</span>
@@ -43,9 +46,9 @@ export default function Register() {
                         id="name"
                         name="name"
                         className={`form-control ${errors.name ? 'is-invalid' : ''}`}
-                        value={data.name}
+                        value={formData.name}
                         autoComplete="name"
-                        onChange={(e) => setData('name', e.target.value)}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         required
                         autoFocus
                     />
@@ -61,9 +64,9 @@ export default function Register() {
                         type="email"
                         name="email"
                         className={`form-control ${errors.email ? 'is-invalid' : ''}`}
-                        value={data.email}
+                        value={formData.email}
                         autoComplete="username"
-                        onChange={(e) => setData('email', e.target.value)}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         required
                     />
                     {errors.email && <div className="invalid-feedback d-block">{errors.email}</div>}
@@ -78,9 +81,9 @@ export default function Register() {
                         type="password"
                         name="password"
                         className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-                        value={data.password}
+                        value={formData.password}
                         autoComplete="new-password"
-                        onChange={(e) => setData('password', e.target.value)}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                         required
                     />
                     {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
@@ -95,9 +98,11 @@ export default function Register() {
                         type="password"
                         name="password_confirmation"
                         className={`form-control ${errors.password_confirmation ? 'is-invalid' : ''}`}
-                        value={data.password_confirmation}
+                        value={formData.password_confirmation}
                         autoComplete="new-password"
-                        onChange={(e) => setData('password_confirmation', e.target.value)}
+                        onChange={(e) =>
+                            setFormData({ ...formData, password_confirmation: e.target.value })
+                        }
                         required
                     />
                     {errors.password_confirmation && (
@@ -106,7 +111,7 @@ export default function Register() {
                 </div>
 
                 <div className="d-grid">
-                    <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
+                    <button className="btn btn-primary fw-semibold py-2">
                         Create Account
                     </button>
                 </div>

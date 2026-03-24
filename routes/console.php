@@ -21,3 +21,15 @@ Schedule::command('yelp:run-jobs')
     ->withoutOverlapping()
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/yelp-sync.log'));
+
+// Poll GitHub for new commits on "poll" mode deploy projects
+Schedule::command('deploy:poll')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/deploy-poll.log'));
+
+// Auto-delete deploy logs older than 3 days
+Schedule::call(function () {
+    \App\Models\DeployLog::where('created_at', '<', now()->subDays(3))->delete();
+})->daily()->name('deploy-logs-cleanup')->withoutOverlapping();

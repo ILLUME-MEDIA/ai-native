@@ -7,8 +7,8 @@ export default defineConfig({
     server: {
         // Local development server (Vite)
         // Access via: http://127.0.0.1:5173 or http://localhost:5173
-        // host: '127.0.0.1', // Listen on all interfaces (IPv4 + IPv6)
-        // port: 5173,
+        host: '127.0.0.1',
+        port: 5173,
         strictPort: true,
         // cors: true,
         // hmr: {
@@ -40,8 +40,7 @@ export default defineConfig({
     },
     // Build tuning to reduce memory pressure
     build: {
-        // Use terser for minification instead of esbuild (more stable on big bundles)
-        minify: 'terser',
+        minify: 'esbuild',
         // Reasonable target so esbuild/terser don't over‑optimize for cutting‑edge syntax
         target: 'es2018',
         rollupOptions: {

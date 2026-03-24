@@ -114,6 +114,26 @@ input::-webkit-inner-spin-button {
     }
 }
 
+// Fix form-switch toggle thumb not rendering.
+// Root cause: rgba() commas in $form-switch-color are not valid inside a
+// data URI — the SVG background-image silently fails, leaving a plain pill
+// with no white circle indicator. Override with properly URL-encoded SVGs.
+.form-switch {
+  .form-check-input {
+    // Unchecked: semi-transparent dark circle (rgba(0,0,0,.25) encoded)
+    --#{$prefix}form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='rgba%280%2C0%2C0%2C.25%29'/%3e%3c/svg%3e");
+
+    &:focus {
+      --#{$prefix}form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='rgba%280%2C0%2C0%2C.25%29'/%3e%3c/svg%3e");
+    }
+
+    &:checked {
+      // Checked: white circle
+      --#{$prefix}form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23fff'/%3e%3c/svg%3e");
+    }
+  }
+}
+
 // Custom Form Check (Gray Styled)
 .form-check-input-light {
     background-color: rgba(var(--#{$prefix}light-rgb), 0.9);

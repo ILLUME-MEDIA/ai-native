@@ -433,18 +433,18 @@ class YouTubeScraperService
                     }
                     $ytTags = $snippet['tags'] ?? [];
                     if (!empty($ytTags)) {
+                        // Store YouTube tags in metadata only — AI will generate clean single-word tags separately
                         $meta['youtube_tags'] = array_slice($ytTags, 0, 20);
-                        // Merge into tags column
-                        $existingTags = $dbVideo->tags ?? [];
-                        $update['tags'] = array_values(array_unique(array_merge($existingTags, array_slice($ytTags, 0, 20))));
                     }
                     $update['metadata'] = $meta;
 
                     $dbVideo->update($update);
 
                     // ✨ AUTO-GENERATE TAGS & GENRES using Mistral service
-                    // Only generate if not already generated or if tags/genres are empty
-                    if (empty($dbVideo->tags_generated_at) || empty($dbVideo->tags) || empty($dbVideo->genres)) {
+                    // Regenerate if not yet done, empty, or has dirty multi-word YouTube tags
+                    // Dirty = any tag with more than 1 word (includes 2-word YouTube tags like "life lessons")
+                    $hasDirtyTags = !empty($dbVideo->tags) && collect($dbVideo->tags)->contains(fn($t) => str_word_count($t) > 1 || strpos($t, ' ') !== false);
+                    if (empty($dbVideo->tags_generated_at) || empty($dbVideo->tags) || empty($dbVideo->genres) || $hasDirtyTags) {
                         try {
                             $title = $dbVideo->title;
                             $description = $update['description'] ?? $dbVideo->description ?? '';
@@ -453,14 +453,13 @@ class YouTubeScraperService
                             // Generate structured 3-tag system
                             $generatedTags = $this->generateTagsOnly($title, $description);
 
-                            // Generate 3-5 contextual genres
-                            $generatedGenres = $this->generateGenresOnly($title, $description, $channelName);
+                            // Generate 3-5 contextual genres (pass YouTube tags as context hints)
+                            $generatedGenres = $this->generateGenresOnly($title, $description, $channelName, $ytTags);
 
-                            // Merge with existing tags/genres
-                            $existingTags = $dbVideo->tags ?? [];
                             $existingGenres = $dbVideo->genres ?? [];
 
-                            $finalTags = array_values(array_unique(array_merge($existingTags, $generatedTags)));
+                            // AI tags fully replace existing (removes old YouTube multi-word junk), max 7
+                            $finalTags = array_values(array_slice($generatedTags, 0, 7));
                             $finalGenres = array_values(array_unique(array_merge($existingGenres, $generatedGenres)));
 
                             // Update video with AI-generated metadata
@@ -2017,7 +2016,7 @@ class YouTubeScraperService
     /**
      * Call Mistral API for chat completion (no default model in config; use mistral-small for tags/genres).
      */
-    protected function callMistral(string $userMessage, string $model = 'mistral-small'): ?string
+    protected function callMistral(string $userMessage, string $model = 'mistral-small', string $systemMessage = '', float $temperature = 0.7): ?string
     {
         $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
         if (empty($key)) {
@@ -2025,17 +2024,22 @@ class YouTubeScraperService
         }
 
         // Strip invalid UTF-8 bytes (e.g. from YouTube titles/descriptions) to prevent json_encode failure
-        $userMessage = (string) iconv('UTF-8', 'UTF-8//IGNORE', $userMessage);
+        $userMessage   = (string) iconv('UTF-8', 'UTF-8//IGNORE', $userMessage);
+        $systemMessage = (string) iconv('UTF-8', 'UTF-8//IGNORE', $systemMessage);
+
+        $messages = [];
+        if (!empty($systemMessage)) {
+            $messages[] = ['role' => 'system', 'content' => $systemMessage];
+        }
+        $messages[] = ['role' => 'user', 'content' => $userMessage];
 
         $response = Http::withHeaders([
             'Content-Type' => 'application/json',
             'Authorization' => 'Bearer ' . trim($key),
         ])->post('https://api.mistral.ai/v1/chat/completions', [
-            'model' => $model,
-            'messages' => [
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-            'temperature' => 0.7,
+            'model'       => $model,
+            'messages'    => $messages,
+            'temperature' => $temperature,
         ]);
 
         if (!$response->successful()) {
@@ -2054,38 +2058,22 @@ class YouTubeScraperService
             return [];
 
         try {
-            $tags = [];
-            $genres = [];
+            // Always call these — they handle Mistral internally and fall back to rule-based extraction
+            $tags   = $this->generateTagsOnly($video->title, $video->description ?? '');
+            $genres = $this->generateGenresOnly($video->title, $video->description ?? '', $video->channel_name ?? '');
 
-            // Prefer Mistral when API key is set (no default model; we use mistral-small for this task)
-            if (Config::get('services.mistral.key') || $this->mistralApiKey) {
-                $tags = $this->generateTagsOnly($video->title, $video->description ?? '');
-                $genres = $this->generateGenresOnly($video->title, $video->description ?? '', $video->channel_name ?? '');
-            }
-
-            if (empty($tags) && empty($genres)) {
-                $prompt = "Analyze this video title and description. Generate 5 highly relevant SEO tags and 2 music/content genres.
-            Return ONLY a JSON object: {\"tags\": [\"tag1\", \"tag2\", ...], \"genres\": [\"genre1\", \"genre2\"]}.
-            Title: {$video->title}
-            Description: {$video->description}";
-                $response = $this->aiManager->execute($prompt, ['mode' => 'json']);
-                $result = $response['text'] ?? null;
-                if ($result && is_string($result)) {
-                    $result = json_decode($result, true);
-                }
-                $tags = $result['tags'] ?? [];
-                $genres = $result['genres'] ?? [];
-            } else {
-                $result = ['tags' => $tags, 'genres' => $genres];
-            }
+            $result = ['tags' => $tags, 'genres' => $genres];
 
             if (!empty($tags) || !empty($genres)) {
-                $existingTags = $video->tags ?? [];
                 $existingGenres = $video->genres ?? [];
-                $newTags = array_values(array_unique(array_merge($existingTags, $tags)));
+                // AI tags replace existing; single-word only, max 7
+                $cleanTags = array_values(array_slice(
+                    array_filter($tags, fn($t) => str_word_count($t) === 1 && strpos($t, ' ') === false),
+                    0, 7
+                ));
                 $newGenres = array_values(array_unique(array_merge($existingGenres, $genres)));
                 $video->update([
-                    'tags' => $newTags,
+                    'tags' => $cleanTags,
                     'genres' => $newGenres,
                     'tags_generated_at' => now(),
                 ]);
@@ -2100,7 +2088,7 @@ class YouTubeScraperService
 
     public function generateTagsOnly(string $title, string $description = ''): array
     {
-        if (empty($title) && empty($description)) {
+        if (empty($title)) {
             return [];
         }
 
@@ -2110,61 +2098,70 @@ class YouTubeScraperService
             return $this->extractStructuredTags($title, $description);
         }
 
-        try {
-            $prompt = "Given the following YouTube video title and description, generate exactly 3 relevant tags for this video, separated by a vertical bar (|), following this structure:
+        // Words that are too generic to be useful as tags
+        $commonBanned = [
+            'video', 'videos', 'content', 'media', 'show', 'entertainment', 'general',
+            'channel', 'watch', 'new', 'best', 'top', 'great', 'good', 'amazing', 'awesome',
+            'latest', 'today', 'now', 'free', 'online', 'full', 'live', 'real', 'true',
+            'original', 'official', 'the', 'and', 'for', 'with', 'from', 'this', 'that',
+            'etc', 'more', 'other', 'some', 'any', 'all', 'very', 'just', 'also', 'only',
+            'your', 'our', 'their', 'its', 'his', 'her', 'about', 'into', 'over', 'after',
+            'generate', 'title', 'description', 'tags', 'tag', 'response', 'example',
+            'here', 'below', 'above', 'please', 'note', 'important',
+        ];
 
-1. Content type (e.g., 'Music', 'Gaming', 'Education', 'Technology', 'Comedy', 'Entertainment', 'Cooking', 'Travel', 'Sports', 'Health', 'Beauty', 'DIY', 'Documentary', 'Review')
-2. Specific focus (e.g., 'Tutorial', 'Review', 'Gameplay', 'Interview', 'Recipe', 'Workout', 'Makeup', 'Crafting', 'Analysis')
-3. One-word summary (e.g., 'entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring')
+        try {
+            $systemMessage = "You are a precise content tagging assistant. Your ONLY job is to output exactly 7 single-word tags separated by | with zero additional text. No explanations. No punctuation. No numbering. No 'etc'. Just 7 words separated by |.";
+
+            $userMessage = "Video title: \"{$title}\"
+
+Output 7 single-word tags that describe this specific video's topic, niche, and theme. Base tags ONLY on the title words and their meaning.
 
 Rules:
-- DO NOT use generic words like 'video', 'content', 'media', 'the', 'how to' as tags.
-- Each tag must be concise (1-3 words), descriptive, and relevant to the actual content.
-- Focus on what makes this video unique and searchable.
-- Output format: ContentType | Focus | OneWordSummary (no extra text, no numbers, no explanations)
+- Single words only — no spaces, no hyphens, no commas
+- Must be SPECIFIC to this content (not generic filler words)
+- Never output: video, content, media, show, entertainment, general, etc, more, other, watch, channel
+- Extract meaning from the actual title words
 
-Title: {$title}
-Description: " . substr($description, 0, 500) . "
+Output format (exactly this, nothing else):
+Word1 | Word2 | Word3 | Word4 | Word5 | Word6 | Word7";
 
-IMPORTANT: Respond with ONLY the tags in the format \"Tag1 | Tag2 | Tag3\" - no explanations, no additional text, just the three tags separated by vertical bars.
+            $content = $this->callMistral($userMessage, 'mistral-large-latest', $systemMessage, 0.2);
 
-Tags:";
-
-            $content = $this->callMistral($prompt, 'mistral-large-latest');
             if ($content) {
                 $cleanContent = trim($content);
 
-                // Remove any prompt text that might be included
-                if (stripos($cleanContent, 'Title:') !== false || stripos($cleanContent, 'Description:') !== false) {
-                    $tagsIndex = strripos($cleanContent, 'Tags:');
-                    if ($tagsIndex !== false) {
-                        $cleanContent = trim(substr($cleanContent, $tagsIndex + 5));
+                // Strip any lines that look like explanations (keep only first line with |)
+                $lines = explode("\n", $cleanContent);
+                foreach ($lines as $line) {
+                    if (strpos($line, '|') !== false) {
+                        $cleanContent = $line;
+                        break;
                     }
                 }
 
-                // Remove any explanatory text after newline
-                if (strpos($cleanContent, "\n") !== false) {
-                    $cleanContent = trim(explode("\n", $cleanContent)[0]);
-                }
-
-                // Split on | and filter
                 $newTags = array_map('trim', explode('|', $cleanContent));
-                $newTags = array_filter($newTags, function($tag) {
-                    return strlen($tag) > 0 && strlen($tag) < 50 &&
-                           !stripos($tag, 'generate') &&
-                           !stripos($tag, 'title:') &&
-                           !stripos($tag, 'description:');
+                $newTags = array_filter($newTags, function($tag) use ($commonBanned) {
+                    $tagLower = strtolower(trim($tag));
+                    // Must be single word, reasonable length, not banned, not a number
+                    return strlen($tag) > 1
+                        && strlen($tag) < 30
+                        && str_word_count($tag) === 1
+                        && strpos($tag, ' ') === false
+                        && !is_numeric($tag)
+                        && !in_array($tagLower, $commonBanned)
+                        && preg_match('/^[a-zA-Z\x{0080}-\x{FFFF}]+$/u', $tag);
                 });
 
-                // Validate: should be exactly 3 tags
-                if (count($newTags) === 3) {
-                    return array_values($newTags);
+                $newTags = array_values(array_slice($newTags, 0, 7));
+
+                if (count($newTags) >= 1) {
+                    return $newTags;
                 }
 
-                Log::warning("Invalid AI response for tags, using fallback", ['tags' => $newTags]);
+                Log::warning("No valid tags from AI response, using title-based fallback", ['raw' => $content]);
             }
 
-            // Fallback to structured extraction
             return $this->extractStructuredTags($title, $description);
         } catch (\Exception $e) {
             Log::error("Error generating tags: " . $e->getMessage());
@@ -2226,7 +2223,7 @@ Tags:";
         return $tagMap[$detectedType] ?? ['Entertainment', 'Media', 'Content'];
     }
 
-    public function generateGenresOnly(string $title, string $description = '', string $channelName = ''): array
+    public function generateGenresOnly(string $title, string $description = '', string $channelName = '', array $existingTags = []): array
     {
         if (empty($title)) {
             return [];
@@ -2239,10 +2236,14 @@ Tags:";
         }
 
         try {
+            $tagsContext = !empty($existingTags)
+                ? "\nYouTube tags (for context): " . implode(', ', array_slice($existingTags, 0, 15))
+                : '';
+
             $prompt = "Given a YouTube video with the following details:
 Title: {$title}
 Channel: {$channelName}
-Description: " . substr($description, 0, 500) . "
+Description: " . substr($description, 0, 500) . $tagsContext . "
 
 Please generate 3-5 relevant genres for this video content. Consider:
 1. Content type (Educational, Entertainment, Music, Gaming, Tech, etc.)
@@ -2254,7 +2255,7 @@ Common genres include: Education, Entertainment, Music, Gaming, Technology, Come
 
 Return only the genres as a comma-separated list, without explanations or additional text. Maximum 5 genres.";
 
-            $content = $this->callMistral($prompt, 'mistral-large-latest');
+            $content = $this->callMistral($prompt, 'mistral-large-latest', '', 0.3);
             if ($content) {
                 $genres = array_map('trim', explode(',', $content));
                 $genres = array_filter($genres, function($genre) {
@@ -2273,6 +2274,77 @@ Return only the genres as a comma-separated list, without explanations or additi
             Log::error("Error generating genres: " . $e->getMessage());
             return $this->generateBasicGenres($title, $channelName, $description);
         }
+    }
+
+    /**
+     * Pick genres from a specific list using AI.
+     * Sends the video title to Mistral and asks it to select the best matching
+     * genres strictly from the provided $availableGenres list.
+     * Falls back to keyword matching against the list when Mistral is unavailable.
+     */
+    public function pickGenresFromList(string $title, string $description = '', array $availableGenres = [], int $maxPick = 3): array
+    {
+        if (empty($title) || empty($availableGenres)) {
+            return [];
+        }
+
+        $genreList = implode(', ', $availableGenres);
+        $key = Config::get('services.mistral.key') ?: $this->mistralApiKey;
+
+        if (!empty($key)) {
+            try {
+                $systemMessage = "You are a genre classification assistant. You MUST only return genres from the list provided. No extra text, no explanations, only comma-separated genres from the list.";
+
+                $userMessage = "Video title: \"{$title}\"" .
+                    (!empty($description) ? "\nDescription: " . substr($description, 0, 300) : '') .
+                    "\n\nAvailable genres: {$genreList}" .
+                    "\n\nPick the {$maxPick} most relevant genres for this video strictly from the list above. Return only the genre names separated by commas.";
+
+                $content = $this->callMistral($userMessage, 'mistral-large-latest', $systemMessage, 0.1);
+
+                if ($content) {
+                    $picked = array_map('trim', explode(',', $content));
+                    // Only keep genres that actually exist in the available list (case-insensitive)
+                    $availableLower = array_map('strtolower', $availableGenres);
+                    $valid = array_filter($picked, function ($g) use ($availableGenres, $availableLower) {
+                        $idx = array_search(strtolower($g), $availableLower);
+                        return $idx !== false;
+                    });
+                    // Return original-casing from the available list
+                    $result = [];
+                    foreach ($valid as $g) {
+                        $idx = array_search(strtolower($g), $availableLower);
+                        if ($idx !== false) {
+                            $result[] = $availableGenres[$idx];
+                        }
+                    }
+                    $result = array_values(array_unique(array_slice($result, 0, $maxPick)));
+                    if (!empty($result)) {
+                        return $result;
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning("pickGenresFromList Mistral error: " . $e->getMessage());
+            }
+        }
+
+        // Fallback: keyword matching against the provided list
+        $text = strtolower($title . ' ' . $description);
+        $matched = [];
+        foreach ($availableGenres as $genre) {
+            $words = preg_split('/[\s&\/\-]+/', strtolower($genre));
+            foreach ($words as $word) {
+                if (strlen($word) > 3 && str_contains($text, $word)) {
+                    $matched[] = $genre;
+                    break;
+                }
+            }
+        }
+        if (!empty($matched)) {
+            return array_slice(array_unique($matched), 0, $maxPick);
+        }
+        // Last resort: return first N from list
+        return array_slice($availableGenres, 0, min(2, count($availableGenres)));
     }
 
     /**
@@ -2411,17 +2483,18 @@ Return only the genres as a comma-separated list, without explanations or additi
             $existing = YoutubeVideo::where('video_id', $videoId)->first();
 
             if ($existing) {
-                // Merge YouTube's own tags into existing tags (don't overwrite AI-generated ones)
-                if (!empty($videoData['youtube_tags'])) {
-                    $existingTags = $existing->tags ?? [];
-                    $merged = array_values(array_unique(array_merge($existingTags, $videoData['youtube_tags'])));
-                    $payload['tags'] = $merged;
-                }
+                // Never write YouTube raw tags to tags column — AI enrichment handles that
                 $existing->update($payload);
             } else {
-                // New video — set YouTube tags as initial tags
+                // New video — seed with single-word YouTube tags (max 7) as placeholder until AI enrichment runs
                 if (!empty($videoData['youtube_tags'])) {
-                    $payload['tags'] = $videoData['youtube_tags'];
+                    $seedTags = array_values(array_slice(
+                        array_filter($videoData['youtube_tags'], fn($t) => str_word_count($t) === 1 && strpos($t, ' ') === false && strlen($t) > 1),
+                        0, 7
+                    ));
+                    if (!empty($seedTags)) {
+                        $payload['tags'] = $seedTags;
+                    }
                 }
                 YoutubeVideo::create(array_merge(['video_id' => $videoId], $payload));
             }

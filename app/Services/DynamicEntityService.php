@@ -271,8 +271,15 @@ class DynamicEntityService
         $filters = (array) $request->input('filters', []);
         $this->applyFilters($model, $entity, $filters);
 
-        // Sorting
-        $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
+        // Location-based proximity filter: ?lat=&lng=&radius=&unit=miles|km&lat_field=&lng_field=
+        $locationApplied = $this->applyLocationFilter($model, $entity, $request);
+
+        // Sorting — if location active and no explicit sort, order by distance
+        if ($locationApplied && !$request->filled('sort')) {
+            // distance column already added by applyLocationFilter; skip normal sort
+        } else {
+            $this->applySorting($model, $entity, $request->string('sort')->toString(), $request->string('direction')->toString());
+        }
 
         $perPage = (int) $request->input('per_page', 15);
 
@@ -282,6 +289,17 @@ class DynamicEntityService
         $paginator->setCollection(
             $this->enrichCollection($paginator->getCollection(), $entity)
         );
+
+        // Round distance field if location filter was applied
+        if ($locationApplied) {
+            $alias = ($request->input('unit', 'miles') === 'km') ? 'distance_km' : 'distance_miles';
+            $paginator->getCollection()->transform(function ($item) use ($alias) {
+                if (isset($item->{$alias})) {
+                    $item->{$alias} = round((float) $item->{$alias}, 2);
+                }
+                return $item;
+            });
+        }
 
         return $paginator;
     }
@@ -301,6 +319,80 @@ class DynamicEntityService
         $this->enrichRecord($record, $entity, includeChildren: true);
 
         return $record;
+    }
+
+    /**
+     * Fetch a single record by any field value.
+     * e.g. showByField($entity, 'email', 'john@example.com')
+     */
+    public function showByField(SectionEntity $entity, string $field, string $value, array $context = [])
+    {
+        if (! Schema::hasTable($entity->table_name)) {
+            throw new \RuntimeException("Table [{$entity->table_name}] does not exist.");
+        }
+
+        // Validate the field exists (either in section_fields or as an actual DB column)
+        $knownColumns = $entity->fields->pluck('column_name')->all();
+        $fieldAllowed = in_array($field, $knownColumns, true)
+            || Schema::hasColumn($entity->table_name, $field);
+
+        if (! $fieldAllowed) {
+            throw new \RuntimeException("Field '{$field}' does not exist on this entity.");
+        }
+
+        // Comma-separated values → OR LIKE on each value (works for both numeric IDs in
+        // delimited columns like "\t208\t322\t" and regular string searches)
+        if (str_contains($value, ',')) {
+            $vals = array_values(array_filter(array_map('trim', explode(',', $value)), fn($v) => $v !== ''));
+
+            $records = $this->makeBaseQuery($entity, $context)
+                ->where(function ($q) use ($field, $vals) {
+                    foreach ($vals as $v) {
+                        $q->orWhere($field, 'like', '%' . $v . '%');
+                    }
+                })
+                ->get();
+
+            if ($records->isEmpty()) {
+                throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                    "No records found where {$field} contains any of: " . implode(', ', $vals)
+                );
+            }
+
+            return $this->enrichCollection($records, $entity);
+        }
+
+        // Numeric value → exact match, return single record
+        if (is_numeric($value)) {
+            $record = $this->makeBaseQuery($entity, $context)
+                ->where($field, $value)
+                ->first();
+
+            if (! $record) {
+                throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                    "No record found where {$field} = {$value}"
+                );
+            }
+
+            $this->enrichRecord($record, $entity, includeChildren: true);
+
+            return $record;
+        }
+
+        // String value → LIKE keyword search on the specified field, return all matches
+        $records = $this->makeBaseQuery($entity, $context)
+            ->where($field, 'like', '%' . $value . '%')
+            ->get();
+
+        if ($records->isEmpty()) {
+            throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                "No records found where {$field} matches '{$value}'"
+            );
+        }
+
+        $records = $this->enrichCollection($records, $entity);
+
+        return $records;
     }
 
     public function store(SectionEntity $entity, array $payload, array $context = [])
@@ -375,10 +467,13 @@ class DynamicEntityService
     }
 
     /**
-     * Apply per-column filters (Datatables-style).
+     * Apply per-column filters — always uses LIKE (partial match) for all values.
      *
-     * Expected query format:
-     *   GET /api/entities/{slug}?filters[name]=John&filters[status]=active
+     * Single value:          filters[category]=208    → WHERE category LIKE '%208%'
+     * Comma-separated:       filters[category]=208,107 → WHERE (category LIKE '%208%' OR category LIKE '%107%')
+     * Array:                 filters[category][]=208&filters[category][]=107 → same as above
+     *
+     * Works with tab/comma-delimited columns (e.g. "\t208\t288\t322\t").
      */
     protected function applyFilters(Builder $query, SectionEntity $entity, array $filters): void
     {
@@ -393,13 +488,33 @@ class DynamicEntityService
                 continue;
             }
 
-            // Only allow known columns
             if (! in_array($column, $fieldColumns, true) && ! Schema::hasColumn($entity->table_name, $column)) {
                 continue;
             }
 
-            // Simple "LIKE" filter (works for most datatable use-cases)
-            $query->where($column, 'like', '%'.$value.'%');
+            // Normalize to array of trimmed non-empty strings
+            if (is_array($value)) {
+                $vals = array_values(array_filter(array_map('trim', $value), fn($v) => $v !== ''));
+            } elseif (str_contains((string) $value, ',')) {
+                $vals = array_values(array_filter(array_map('trim', explode(',', (string) $value)), fn($v) => $v !== ''));
+            } else {
+                $vals = [trim((string) $value)];
+            }
+
+            if (empty($vals)) {
+                continue;
+            }
+
+            // Always OR LIKE — works for plain values and tab/comma-delimited stored values
+            if (count($vals) === 1) {
+                $query->where($column, 'like', '%' . $vals[0] . '%');
+            } else {
+                $query->where(function (Builder $q) use ($column, $vals) {
+                    foreach ($vals as $v) {
+                        $q->orWhere($column, 'like', '%' . $v . '%');
+                    }
+                });
+            }
         }
     }
 
@@ -409,7 +524,16 @@ class DynamicEntityService
             return;
         }
 
-        $searchable = $entity->fields->where('is_searchable', true)->pluck('column_name')->all();
+        // Always search ALL varchar/text columns from DB schema for comprehensive matching
+        $searchable = $this->getTextColumnsFromSchema($entity->table_name);
+
+        // Fallback: any string/text-type fields defined on the entity
+        if (empty($searchable)) {
+            $searchable = $entity->fields
+                ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+                ->pluck('column_name')
+                ->all();
+        }
 
         if (empty($searchable)) {
             return;
@@ -420,6 +544,105 @@ class DynamicEntityService
                 $inner->orWhere($col, 'like', "%{$term}%");
             }
         });
+    }
+
+    protected function getTextColumnsFromSchema(string $tableName): array
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $rows = DB::select(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                 AND DATA_TYPE IN ('varchar','char','text','tinytext','mediumtext','longtext')",
+                [$database, $tableName]
+            );
+            // Handle both uppercase (COLUMN_NAME) and lowercase (column_name) depending on PDO config
+            $cols = [];
+            foreach ($rows as $row) {
+                $arr = (array) $row;
+                $col = $arr['COLUMN_NAME'] ?? $arr['column_name'] ?? null;
+                if ($col) $cols[] = $col;
+            }
+            return $cols;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Debug: return which columns are being searched for a given entity + term.
+     * Call via GET /api/entities/{entity}?search=term&debug_search=1
+     */
+    public function debugSearch(SectionEntity $entity, string $term): array
+    {
+        $fromSchema = $this->getTextColumnsFromSchema($entity->table_name);
+        $fromFields = $entity->fields
+            ->filter(fn($f) => in_array($f->type, ['string', 'text', 'email', 'textarea', 'longtext', 'slug', 'url']))
+            ->pluck('column_name')
+            ->all();
+        $final = !empty($fromSchema) ? $fromSchema : $fromFields;
+
+        return [
+            'search_term'    => $term,
+            'fields_count'   => $entity->fields->count(),
+            'db_schema_cols' => $fromSchema,
+            'entity_fields'  => $fromFields,
+            'final_columns'  => $final,
+            'final_count'    => count($final),
+        ];
+    }
+
+    /**
+     * Apply Haversine-based proximity filter when lat+lng are provided.
+     *
+     * Params (all optional except lat+lng pair):
+     *   lat        — user latitude  (decimal degrees)
+     *   lng        — user longitude (decimal degrees)
+     *   radius     — search radius, default 100
+     *   unit       — "miles" (default) or "km"
+     *   lat_field  — column name for latitude  (default: latitude)
+     *   lng_field  — column name for longitude (default: longitude)
+     *
+     * When active, adds `distance_miles` or `distance_km` to SELECT and sorts ASC.
+     * Returns true if location filter was applied, false otherwise.
+     */
+    protected function applyLocationFilter(Builder $query, SectionEntity $entity, Request $request): bool
+    {
+        $lat = $request->filled('lat') ? (float) $request->input('lat') : null;
+        $lng = $request->filled('lng') ? (float) $request->input('lng') : null;
+
+        if ($lat === null || $lng === null) {
+            return false;
+        }
+
+        if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+            return false;
+        }
+
+        $unit      = $request->input('unit', 'miles');
+        $earthR    = $unit === 'km' ? 6371 : 3959;
+        $radius    = $request->filled('radius') ? (float) $request->input('radius') : 100;
+        $alias     = $unit === 'km' ? 'distance_km' : 'distance_miles';
+        $latField  = $request->input('lat_field',  'latitude');
+        $lngField  = $request->input('lng_field',  'longitude');
+
+        // Verify columns exist in the table
+        if (
+            !Schema::hasColumn($entity->table_name, $latField) ||
+            !Schema::hasColumn($entity->table_name, $lngField)
+        ) {
+            return false;
+        }
+
+        $expr = "( {$earthR} * acos( LEAST(1, cos(radians({$lat})) * cos(radians(`{$latField}`)) * cos(radians(`{$lngField}`) - radians({$lng})) + sin(radians({$lat})) * sin(radians(`{$latField}`)) ) ) )";
+
+        $query->selectRaw("*, {$expr} AS `{$alias}`")
+              ->whereNotNull($latField)
+              ->whereNotNull($lngField)
+              ->whereRaw("{$expr} <= ?", [$radius])
+              ->orderByRaw("{$expr} ASC");
+
+        return true;
     }
 
     protected function applySorting(Builder $query, SectionEntity $entity, ?string $sort, ?string $direction): void
@@ -439,23 +662,90 @@ class DynamicEntityService
 
     /**
      * Resolve the underlying Eloquent model for an entity.
-     * For now, we use the query builder directly on the table; this can later be
-     * evolved to custom model classes per entity if needed.
+     * Detects the real primary key and whether it is auto-increment.
      */
     protected function resolveModelClass(SectionEntity $entity)
     {
-        // Use an anonymous model bound to the entity's table.
-        $instance = new class extends \Illuminate\Database\Eloquent\Model {};
+        [$pk, $incrementing] = $this->detectPrimaryKeyInfo($entity->table_name);
+
+        $instance = new class($pk, $incrementing) extends \Illuminate\Database\Eloquent\Model {
+            protected $guarded = [];
+            protected $primaryKey;
+            public $incrementing;
+
+            public function __construct(string $pk = 'id', bool $inc = true, array $attributes = [])
+            {
+                $this->primaryKey  = $pk;
+                $this->incrementing = $inc;
+                parent::__construct($attributes);
+            }
+        };
         $instance->setTable($entity->table_name);
 
         return $instance;
     }
 
+    /**
+     * Public alias for detectPrimaryKey — used by controllers.
+     */
+    public function detectPk(string $tableName): string
+    {
+        return $this->detectPrimaryKey($tableName);
+    }
+
+    /**
+     * Detect PK column name + whether it is AUTO_INCREMENT.
+     * Returns [columnName, isAutoIncrement].
+     */
+    protected function detectPrimaryKeyInfo(string $tableName): array
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $row = DB::selectOne(
+                "SELECT c.COLUMN_NAME, c.EXTRA
+                 FROM information_schema.KEY_COLUMN_USAGE k
+                 JOIN information_schema.COLUMNS c
+                   ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
+                  AND c.TABLE_NAME  = k.TABLE_NAME
+                  AND c.COLUMN_NAME = k.COLUMN_NAME
+                 WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ? AND k.CONSTRAINT_NAME = 'PRIMARY'
+                 ORDER BY k.ORDINAL_POSITION LIMIT 1",
+                [$database, $tableName]
+            );
+            $col = $row ? ($row->COLUMN_NAME ?? $row->column_name ?? 'id') : 'id';
+            $inc = $row ? str_contains(strtolower($row->EXTRA ?? $row->extra ?? ''), 'auto_increment') : true;
+            return [$col, $inc];
+        } catch (\Exception $e) {
+            return ['id', true];
+        }
+    }
+
+    /**
+     * Detect the actual primary key column of a table.
+     * Falls back to 'id' if the table has no PRIMARY constraint or on any error.
+     */
+    protected function detectPrimaryKey(string $tableName): string
+    {
+        try {
+            $database = DB::connection()->getDatabaseName();
+            $pk = DB::selectOne(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+                 ORDER BY ORDINAL_POSITION LIMIT 1",
+                [$database, $tableName]
+            );
+            return $pk ? ($pk->COLUMN_NAME ?? $pk->column_name ?? 'id') : 'id';
+        } catch (\Exception $e) {
+            return 'id';
+        }
+    }
+
     // ─── Relation Enrichment ─────────────────────────────────────────────────
 
     /**
-     * Bulk-enrich a collection of records with belongsTo relation data.
-     * One query per relation field (not N+1).
+     * Bulk-enrich a collection of records with relation data.
+     * One query per relation field (never N+1).
+     * Handles belongsTo, hasMany, and hasOne.
      */
     protected function enrichCollection(Collection $records, SectionEntity $entity): Collection
     {
@@ -465,15 +755,17 @@ class DynamicEntityService
 
         $entity->loadMissing('fields.relatedEntity');
 
-        $belongsToFields = $entity->fields->filter(
-            fn($f) => $f->related_entity_id && $f->relatedEntity && $f->relation_type === 'belongsTo'
+        $relatedFields = $entity->fields->filter(
+            fn($f) => $f->related_entity_id && $f->relatedEntity
         );
 
-        if ($belongsToFields->isEmpty()) {
+        if ($relatedFields->isEmpty()) {
             return $records;
         }
 
-        // Build a lookup map per FK field: [fkValue => relatedRecord]
+        // ── belongsTo: FK is on this table ───────────────────────────────
+        $belongsToFields = $relatedFields->filter(fn($f) => $f->relation_type === 'belongsTo');
+
         $lookup = [];
         foreach ($belongsToFields as $field) {
             $fkValues = $records->pluck($field->column_name)->filter()->unique()->values()->all();
@@ -486,23 +778,104 @@ class DynamicEntityService
                 continue;
             }
 
-            $lookup[$field->column_name] = DB::table($relatedTable)
-                ->whereIn('id', $fkValues)
-                ->get()
-                ->keyBy('id');
+            // Support matching on a custom column (e.g. 'name') instead of always 'id'.
+            // Set relation_display_column on the field to the column name in the related table.
+            $matchColumn = $field->relation_display_column ?: 'id';
+
+            $fetched = DB::table($relatedTable)
+                ->whereIn($matchColumn, $fkValues)
+                ->get();
+
+            // Apply one level of nested enrichment (e.g. accounts → uploads)
+            $fetchedArr  = $fetched->map(fn($r) => (array) $r)->values()->all();
+            $enrichedArr = $this->enrichRelatedRecordsArray($fetchedArr, $field->relatedEntity);
+            $lookup[$field->column_name] = collect($enrichedArr)->keyBy($matchColumn);
         }
 
-        // Attach relation data to each record
-        return $records->map(function ($record) use ($belongsToFields, $lookup) {
+        $records = $records->map(function ($record) use ($belongsToFields, $lookup) {
             foreach ($belongsToFields as $field) {
                 $fkValue = $record->{$field->column_name} ?? null;
                 if ($fkValue !== null && isset($lookup[$field->column_name][$fkValue])) {
-                    $related = (array) $lookup[$field->column_name][$fkValue];
-                    $record->setAttribute($field->column_name . '_relation', $related);
+                    $record->setAttribute(
+                        $field->column_name . '_relation',
+                        (array) $lookup[$field->column_name][$fkValue]
+                    );
                 }
             }
             return $record;
         });
+
+        // ── hasMany / hasOne: FK is on related table ─────────────────────
+        $hasManyFields = $relatedFields->filter(
+            fn($f) => in_array($f->relation_type, ['hasMany', 'hasOne'], true)
+        );
+
+        if ($hasManyFields->isEmpty()) {
+            return $records;
+        }
+
+        // Collect all local keys from the collection (one batch per field)
+        $localKeys = $records->map(fn($r) => $r->getKey())->filter()->unique()->values()->all();
+
+        foreach ($hasManyFields as $field) {
+            $relatedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($relatedTable)) {
+                \Log::warning("enrichCollection: related table [{$relatedTable}] does not exist for field [{$field->column_name}]");
+                continue;
+            }
+
+            $foreignKey = $field->relation_display_column ?: (Str::singular($entity->table_name) . '_id');
+
+            // Guard: skip if FK column doesn't exist in related table
+            if (! Schema::hasColumn($relatedTable, $foreignKey)) {
+                \Log::warning("enrichCollection: FK column [{$foreignKey}] does not exist in [{$relatedTable}] for field [{$field->column_name}]. Set 'Foreign Key Column' in Section Builder.");
+                $records = $records->map(function ($record) use ($field) {
+                    $record->setAttribute($field->column_name, $field->relation_type === 'hasMany' ? [] : null);
+                    return $record;
+                });
+                continue;
+            }
+
+            \Log::info("enrichCollection: loading [{$field->column_name}] via [{$relatedTable}].{$foreignKey} IN (" . implode(',', $localKeys) . ")");
+
+            // Single batch query for all records
+            $allChildren = DB::table($relatedTable)->whereIn($foreignKey, $localKeys)->get();
+
+            \Log::info("enrichCollection: found {$allChildren->count()} children for [{$field->column_name}]");
+
+            // Group by FK value.
+            // Use case-insensitive property lookup because the user may have saved
+            // the FK as "recordnum" while MySQL returns the column as "recordNum".
+            $fkLower = strtolower($foreignKey);
+            $childrenByKey = [];
+            foreach ($allChildren as $child) {
+                $childArr = (array) $child;
+                $fkValue  = null;
+                foreach ($childArr as $col => $val) {
+                    if (strtolower($col) === $fkLower) {
+                        $fkValue = $val;
+                        break;
+                    }
+                }
+                $key = (string) ($fkValue ?? '');
+                $childrenByKey[$key][] = $childArr;
+            }
+
+            $records = $records->map(function ($record) use ($field, $childrenByKey) {
+                $key      = (string) $record->getKey();
+                $children = $childrenByKey[$key] ?? [];
+
+                if ($field->relation_type === 'hasMany') {
+                    $record->setAttribute($field->column_name, array_values($children));
+                } else {
+                    $record->setAttribute($field->column_name, $children[0] ?? null);
+                }
+
+                return $record;
+            });
+        }
+
+        return $records;
     }
 
     /**
@@ -532,11 +905,19 @@ class DynamicEntityService
                     continue;
                 }
 
-                $related = DB::table($relatedTable)->find($fkValue);
-                $record->setAttribute(
-                    $field->column_name . '_relation',
-                    $related ? (array) $related : null
-                );
+                // Support matching on a custom column (e.g. 'name') instead of always 'id'.
+                $matchColumn = $field->relation_display_column ?: 'id';
+                $related = $matchColumn === 'id'
+                    ? DB::table($relatedTable)->find($fkValue)
+                    : DB::table($relatedTable)->where($matchColumn, $fkValue)->first();
+
+                if ($related) {
+                    // Apply one level of nested enrichment (e.g. accounts → uploads)
+                    $enriched = $this->enrichRelatedRecordsArray([(array) $related], $field->relatedEntity);
+                    $record->setAttribute($field->column_name . '_relation', $enriched[0] ?? null);
+                } else {
+                    $record->setAttribute($field->column_name . '_relation', null);
+                }
             }
         }
 
@@ -597,8 +978,9 @@ class DynamicEntityService
                 continue;
             }
 
-            $foreignKey = Str::singular($entity->table_name) . '_id';
-            $localValue = $record->id ?? null;
+            // Use relation_display_column as custom FK if set, otherwise fall back to convention
+            $foreignKey = $field->relation_display_column ?: (Str::singular($entity->table_name) . '_id');
+            $localValue = $record->getKey() ?? null;
             if ($localValue === null) {
                 continue;
             }
@@ -614,6 +996,134 @@ class DynamicEntityService
                 $record->setAttribute($field->column_name, $child ? (array) $child : null);
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Apply one level of enrichment to a plain-array list of related records.
+     *
+     * Used after a belongsTo fetch so that the related record itself gets its
+     * own nested relations attached. Example:
+     *   article.author (text) → accounts (belongsTo by name)
+     *   accounts.id → uploads (hasMany via section_relations, FK=recordNum)
+     *
+     * @param  array[]        $records       Array of plain arrays (from DB::table)
+     * @param  SectionEntity  $relatedEntity The entity that "owns" these records
+     * @return array[]
+     */
+    protected function enrichRelatedRecordsArray(array $records, SectionEntity $relatedEntity): array
+    {
+        if (empty($records)) {
+            return $records;
+        }
+
+        $relatedEntity->loadMissing('fields.relatedEntity');
+
+        // ── belongsTo fields on the related entity ────────────────────────
+        $belongsToFields = $relatedEntity->fields->filter(
+            fn($f) => $f->related_entity_id && $f->relatedEntity && $f->relation_type === 'belongsTo'
+        );
+
+        foreach ($belongsToFields as $field) {
+            $fkValues = collect($records)->pluck($field->column_name)->filter()->unique()->values()->all();
+            if (empty($fkValues)) {
+                continue;
+            }
+
+            $nestedTable = $field->relatedEntity->table_name;
+            if (! Schema::hasTable($nestedTable)) {
+                continue;
+            }
+
+            $matchCol    = $field->relation_display_column ?: 'id';
+            $nestedLookup = DB::table($nestedTable)
+                ->whereIn($matchCol, $fkValues)
+                ->get()
+                ->keyBy($matchCol);
+
+            $records = array_map(function ($record) use ($field, $nestedLookup) {
+                $fkValue = $record[$field->column_name] ?? null;
+                if ($fkValue !== null && isset($nestedLookup[$fkValue])) {
+                    $record[$field->column_name . '_relation'] = (array) $nestedLookup[$fkValue];
+                }
+                return $record;
+            }, $records);
+        }
+
+        // ── hasMany / hasOne via section_relations on the related entity ──
+        $sectionRelations = SectionRelation::where('parent_entity_id', $relatedEntity->id)
+            ->whereIn('relation_type', ['hasMany', 'hasOne'])
+            ->with('childEntity')
+            ->get();
+
+        foreach ($sectionRelations as $rel) {
+            if (! $rel->childEntity) {
+                continue;
+            }
+
+            $childTable = $rel->childEntity->table_name;
+            if (! Schema::hasTable($childTable)) {
+                continue;
+            }
+
+            $foreignKey    = $rel->foreign_key ?: Str::singular($relatedEntity->table_name) . '_id';
+            $localKey      = $rel->local_key   ?: 'id';
+            $localKeyLower = strtolower($localKey);
+
+            $localValues = collect($records)->map(function ($r) use ($localKeyLower) {
+                foreach ($r as $col => $val) {
+                    if (strtolower($col) === $localKeyLower) {
+                        return $val;
+                    }
+                }
+                return null;
+            })->filter()->unique()->values()->all();
+
+            if (empty($localValues)) {
+                continue;
+            }
+
+            $allChildren = DB::table($childTable)->whereIn($foreignKey, $localValues)->get();
+            $fkLower     = strtolower($foreignKey);
+
+            $childrenByKey = [];
+            foreach ($allChildren as $child) {
+                $childArr = (array) $child;
+                $fkValue  = null;
+                foreach ($childArr as $col => $val) {
+                    if (strtolower($col) === $fkLower) {
+                        $fkValue = $val;
+                        break;
+                    }
+                }
+                $childrenByKey[(string) ($fkValue ?? '')][] = $childArr;
+            }
+
+            $attrName = $rel->relation_type === 'hasMany'
+                ? Str::camel($childTable)
+                : Str::camel(Str::singular($childTable));
+
+            $records = array_map(
+                function ($record) use ($rel, $childrenByKey, $localKeyLower, $attrName) {
+                    $localVal = null;
+                    foreach ($record as $col => $val) {
+                        if (strtolower($col) === $localKeyLower) {
+                            $localVal = $val;
+                            break;
+                        }
+                    }
+                    $children = $childrenByKey[(string) ($localVal ?? '')] ?? [];
+                    $record[$attrName] = $rel->relation_type === 'hasMany'
+                        ? array_values($children)
+                        : ($children[0] ?? null);
+                    return $record;
+                },
+                $records
+            );
+        }
+
+        return $records;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

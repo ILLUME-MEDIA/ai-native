@@ -1,6 +1,6 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader,
   Col, Form, Row,
@@ -38,6 +38,7 @@ const CaseStudyCreate = () => {
   });
   const [featuredFile, setFeaturedFile] = useState(null);
   const [featuredPreview, setFeaturedPreview] = useState('');
+  const [featuredIsVideo, setFeaturedIsVideo] = useState(false);
 
   useEffect(() => {
     axios.get('/api/admin/case-study-groups').then((r) => setGroups(r.data ?? [])).catch(() => {});
@@ -79,11 +80,27 @@ const CaseStudyCreate = () => {
         : [...prev.group_ids, id],
     }));
 
+  const fileInputRef = React.useRef(null);
+  const isVideoSrc = (src) => /\.(mp4|webm|ogg|mov|avi|mkv|m4v)(\?.*)?$/i.test(src);
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setFeaturedFile(file);
     setFeaturedPreview(URL.createObjectURL(file));
+    setFeaturedIsVideo(file.type.startsWith('video/'));
+    setForm((prev) => ({ ...prev, featured_image_url: '' }));
+  };
+
+  const handleUrlChange = (e) => {
+    const url = e.target.value;
+    setForm((prev) => ({ ...prev, featured_image_url: url }));
+    setFeaturedIsVideo(isVideoSrc(url));
+    if (featuredFile) {
+      setFeaturedFile(null);
+      setFeaturedPreview('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const submit = async (e) => {
@@ -272,18 +289,40 @@ const CaseStudyCreate = () => {
             <Card className="mb-4">
               <CardHeader className="border-light"><h5 className="mb-0">Featured Image</h5></CardHeader>
               <CardBody>
-                {featuredPreview && (
+                {(featuredPreview || form.featured_image_url) && (
                   <div className="mb-3">
-                    <img src={featuredPreview} alt="Preview" className="img-fluid rounded" style={{ maxHeight: 180 }} />
+                    {featuredIsVideo ? (
+                      <video
+                        src={featuredPreview || form.featured_image_url}
+                        controls
+                        className="rounded"
+                        style={{ maxHeight: 180, width: '100%' }}
+                      />
+                    ) : (
+                      <img
+                        src={featuredPreview || form.featured_image_url}
+                        alt="Preview"
+                        className="img-fluid rounded"
+                        style={{ maxHeight: 180, width: '100%', objectFit: 'cover' }}
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                        onLoad={(e) => { e.target.style.display = ''; }}
+                      />
+                    )}
                   </div>
                 )}
                 <Form.Group className="mb-3">
                   <Form.Label className="fw-semibold">Upload File</Form.Label>
-                  <Form.Control type="file" accept="image/*,video/*" onChange={handleFileChange} />
+                  <Form.Control ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleFileChange} />
                 </Form.Group>
                 <Form.Group>
                   <Form.Label className="fw-semibold">Or paste URL</Form.Label>
-                  <Form.Control name="featured_image_url" value={form.featured_image_url} onChange={handleChange} placeholder="https://..." />
+                  <Form.Control
+                    name="featured_image_url"
+                    value={form.featured_image_url}
+                    onChange={handleUrlChange}
+                    placeholder="https://..."
+                  />
+                  <Form.Text className="text-muted">Paste image/video URL to preview and save.</Form.Text>
                 </Form.Group>
               </CardBody>
             </Card>

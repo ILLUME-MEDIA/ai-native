@@ -47,6 +47,10 @@ export const menuItems = [{
       slug: "pages:apps-ecommerce-muzzhub-categories",
       label: "Seller Categories"
     }, {
+      url: "/apps/ecommerce/cuisines",
+      slug: "pages:apps-ecommerce-cuisines",
+      label: "Cuisines"
+    }, {
       url: "/apps/ecommerce/menu-category-types",
       slug: "pages:apps-ecommerce-menu-category-types",
       label: "Menu Category Types"
@@ -150,6 +154,10 @@ export const menuItems = [{
       url: "/apps/ecommerce/settings",
       slug: "pages:apps-ecommerce-settings",
       label: "Settings"
+    }, {
+      url: "/apps/ecommerce/fee-settings",
+      slug: "pages:apps-ecommerce-fee-settings",
+      label: "Fee & Tip Settings"
     }, {
       url: "/apps/ecommerce/pos",
       slug: "pages:apps-ecommerce-pos",
@@ -496,10 +504,6 @@ export const menuItems = [{
       slug: "pages:apps-issue-tracker",
       label: "Issue Tracker"
     }, {
-      url: "/apps/api-keys",
-      slug: "pages:apps-api-keys",
-      label: "API Keys"
-    }, {
       url: "/apps/manage",
       slug: "pages:apps-manage",
       label: "Manage Apps"
@@ -547,6 +551,16 @@ export const menuItems = [{
     slug: "pages:apps-sections-list",
     label: "Section Builder"
   }, {
+    url: "/apps/api-keys",
+    icon: "key",
+    slug: "pages:apps-api-keys",
+    label: "App Secrets"
+  }, {
+    url: "/settings/design-system",
+    icon: "palette",
+    slug: "pages:settings-design-system",
+    label: "Design System"
+  }, {
     url: "/apps/code-editor",
     icon: "code",
     slug: "pages:apps-code-editor",
@@ -576,6 +590,21 @@ export const menuItems = [{
     url: "/apps/yelp",
     slug: "pages:yelp",
     label: "Yelp Integration"
+  }, {
+    icon: "calendar-event",
+    url: "/apps/cal",
+    slug: "pages:cal",
+    label: "Cal.com Meetings"
+  }, {
+    icon: "layout-kanban",
+    url: "/apps/kanban",
+    slug: "pages:kanban",
+    label: "Kanban Board"
+  }, {
+    icon: "rocket",
+    url: "/apps/deploy",
+    slug: "pages:deploy",
+    label: "Deploy Manager"
   }, {
     icon: "mail-check",
     url: "/apps/otp-auth",

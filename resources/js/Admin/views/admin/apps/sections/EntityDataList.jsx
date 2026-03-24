@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Card, CardHeader, Col, Form, Modal, Row, Table, Badge, Spinner, FormControl } from 'react-bootstrap';
 import { Link, useParams } from 'react-router';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
 
@@ -27,6 +28,17 @@ const EntityDataList = () => {
   const [formData, setFormData] = useState({});
   const [saving, setSaving] = useState(false);
   const [relationOptions, setRelationOptions] = useState({});
+  const [fileInputMode, setFileInputMode] = useState({}); // { [columnName]: 'upload' | 'url' }
+  const [uploadingField, setUploadingField] = useState(null);
+  const fileInputRefs = useRef({});
+  const [toast, setToast] = useState(null); // { type: 'success'|'danger', msg: string }
+  const toastTimer = useRef(null);
+
+  const showToast = (msg, type = 'success') => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
 
   const listVisibleFields = entity?.fields?.filter((f) => f.list_visible !== false) ?? [];
   const detailVisibleFields = entity?.fields?.filter((f) => f.detail_visible !== false) ?? [];
@@ -154,6 +166,28 @@ const EntityDataList = () => {
     setShowForm(true);
   };
 
+  const getFileMode = (columnName) => fileInputMode[columnName] ?? 'upload';
+  const setFileMode = (columnName, mode) =>
+    setFileInputMode((prev) => ({ ...prev, [columnName]: mode }));
+
+  const handleFileUpload = async (columnName, file) => {
+    if (!file) return;
+    setUploadingField(columnName);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('folder', 'sections');
+      const { data } = await axios.post('/api/ecommerce/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setFormData((prev) => ({ ...prev, [columnName]: data.url }));
+    } catch (err) {
+      alert(err.response?.data?.message || 'Upload failed');
+    } finally {
+      setUploadingField(null);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -163,25 +197,52 @@ const EntityDataList = () => {
       } else {
         await axios.post(`/api/entities/${slug}`, formData);
       }
+      const wasEditing = !!editingRecord;
       setShowForm(false);
-      const { data } = await axios.get(`/api/entities/${slug}`, { params: { per_page: 100 } });
-      setRows(data.data ?? []);
+      showToast(wasEditing ? 'Record updated successfully.' : 'Record created successfully.');
+      fetchData(wasEditing ? pagination.page : 1);
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Failed to save');
+      showToast(err.response?.data?.message || 'Failed to save', 'danger');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (record) => {
-    if (!confirm('Delete this record?')) return;
+    const result = await Swal.fire({
+      title: 'Delete this record?',
+      text: 'This action cannot be undone.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete it',
+      cancelButtonText: 'Cancel',
+      buttonsStyling: false,
+      customClass: {
+        confirmButton: 'btn btn-danger me-2',
+        cancelButton: 'btn btn-secondary',
+      },
+    });
+    if (!result.isConfirmed) return;
     try {
       await axios.delete(`/api/entities/${slug}/${record.id}`);
-      // Reload current page after delete to keep pagination accurate
-      fetchData(pagination.page);
+      await fetchData(pagination.page);
+      Swal.fire({
+        title: 'Deleted!',
+        text: 'Record has been deleted.',
+        icon: 'success',
+        timer: 2000,
+        showConfirmButton: false,
+        buttonsStyling: false,
+      });
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to delete');
+      Swal.fire({
+        title: 'Error',
+        text: err.response?.data?.message || 'Failed to delete',
+        icon: 'error',
+        buttonsStyling: false,
+        customClass: { confirmButton: 'btn btn-primary' },
+      });
     }
   };
 
@@ -205,6 +266,19 @@ const EntityDataList = () => {
 
   return (
     <>
+      {toast && (
+        <Alert
+          variant={toast.type}
+          className="position-fixed top-0 end-0 m-3 shadow"
+          style={{ zIndex: 9999, minWidth: 280 }}
+          dismissible
+          onClose={() => setToast(null)}
+        >
+          <Icon icon={toast.type === 'success' ? 'circle-check' : 'alert-circle'} className="me-2" />
+          {toast.msg}
+        </Alert>
+      )}
+
       <PageBreadcrumb
         title={entity.name}
         subtitle="Table data"
@@ -324,9 +398,22 @@ const EntityDataList = () => {
                           display = opt ? getRelationLabel(opt, relField) : val;
                         }
                         if (f.type === 'boolean') display = val ? 'Yes' : 'No';
+                        const isFileField = f.type === 'file';
+                        const isImageUrl = isFileField && val && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(val);
                         return (
                           <td key={f.id}>
-                            {display != null && display !== '' ? String(display) : '—'}
+                            {isImageUrl ? (
+                              <img
+                                src={val}
+                                alt=""
+                                style={{ height: 36, width: 36, objectFit: 'cover', borderRadius: 4, border: '1px solid #dee2e6' }}
+                              />
+                            ) : isFileField && val ? (
+                              <a href={val} target="_blank" rel="noreferrer" className="text-truncate d-inline-block" style={{ maxWidth: 140 }} onClick={(e) => e.stopPropagation()}>
+                                <Icon icon="file" className="me-1" />
+                                {val.split('/').pop()}
+                              </a>
+                            ) : display != null && display !== '' ? String(display) : '—'}
                           </td>
                         );
                       })}
@@ -454,6 +541,95 @@ const EntityDataList = () => {
                         setFormData({ ...formData, [f.column_name]: e.target.value })
                       }
                     />
+                  </Form.Group>
+                );
+              }
+
+              if (f.type === 'file') {
+                const mode = getFileMode(f.column_name);
+                const currentVal = formData[f.column_name] ?? '';
+                const isImage = currentVal && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(currentVal);
+                return (
+                  <Form.Group key={f.id} className="mb-3">
+                    <Form.Label className="d-flex align-items-center gap-2">
+                      {f.label || f.column_name}
+                      <div className="btn-group btn-group-sm">
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${mode === 'upload' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                          onClick={() => setFileMode(f.column_name, 'upload')}
+                        >
+                          <Icon icon="upload" className="me-1" />
+                          Upload
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${mode === 'url' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                          onClick={() => setFileMode(f.column_name, 'url')}
+                        >
+                          <Icon icon="link" className="me-1" />
+                          URL
+                        </button>
+                      </div>
+                    </Form.Label>
+
+                    {mode === 'upload' ? (
+                      <div
+                        className="border rounded p-3 text-center"
+                        style={{ cursor: 'pointer', background: '#f8f9fa' }}
+                        onClick={() => fileInputRefs.current[f.column_name]?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) handleFileUpload(f.column_name, file);
+                        }}
+                      >
+                        <input
+                          type="file"
+                          style={{ display: 'none' }}
+                          ref={(el) => { fileInputRefs.current[f.column_name] = el; }}
+                          onChange={(e) => handleFileUpload(f.column_name, e.target.files?.[0])}
+                        />
+                        {uploadingField === f.column_name ? (
+                          <Spinner size="sm" />
+                        ) : currentVal ? (
+                          <div className="d-flex flex-column align-items-center gap-2">
+                            {isImage && (
+                              <img
+                                src={currentVal}
+                                alt="preview"
+                                style={{ maxHeight: 80, maxWidth: '100%', objectFit: 'contain' }}
+                              />
+                            )}
+                            <small className="text-muted text-truncate" style={{ maxWidth: 300 }}>{currentVal}</small>
+                            <small className="text-primary">Click or drag to replace</small>
+                          </div>
+                        ) : (
+                          <div className="text-muted">
+                            <Icon icon="upload" className="me-1" />
+                            Click or drag & drop to upload
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Form.Control
+                        type="text"
+                        placeholder="https://..."
+                        value={currentVal}
+                        onChange={(e) => setFormData({ ...formData, [f.column_name]: e.target.value })}
+                      />
+                    )}
+
+                    {mode === 'url' && currentVal && isImage && (
+                      <div className="mt-2">
+                        <img
+                          src={currentVal}
+                          alt="preview"
+                          style={{ maxHeight: 80, maxWidth: '100%', objectFit: 'contain', borderRadius: 4 }}
+                        />
+                      </div>
+                    )}
                   </Form.Group>
                 );
               }

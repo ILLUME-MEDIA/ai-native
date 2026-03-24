@@ -22,7 +22,7 @@ class MediaUploadController extends Controller
     {
         $request->validate([
             'file'   => ['required', 'file', 'max:20480'], // 20 MB
-            'folder' => ['sometimes', 'string', 'in:businesses,menu-items,discovery-users,ecommerce'],
+            'folder' => ['sometimes', 'string', 'in:businesses,menu-items,discovery-users,ecommerce,sections,cuisines,menu-category-types'],
         ]);
 
         $file   = $request->file('file');

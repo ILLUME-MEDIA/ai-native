@@ -1,14 +1,11 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { Link, useForm } from '@inertiajs/react';
+import { Link } from '@inertiajs/react';
 
 export default function VerifyEmail({ status }) {
-    const { post, processing } = useForm({});
-
-    const submit = (e) => {
-        e.preventDefault();
-
-        post(route('verification.send'));
-    };
+    const csrfToken =
+        typeof document !== 'undefined'
+            ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
+            : '';
 
     return (
         <AdminAuthLayout
@@ -26,9 +23,10 @@ export default function VerifyEmail({ status }) {
                 </div>
             )}
 
-            <form onSubmit={submit}>
+            <form method="POST" action={route('verification.send')}>
+                {csrfToken && <input type="hidden" name="_token" value={csrfToken} />}
                 <div className="d-flex justify-content-between align-items-center gap-2">
-                    <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
+                    <button className="btn btn-primary fw-semibold py-2">
                         Resend Verification Email
                     </button>
                     <Link

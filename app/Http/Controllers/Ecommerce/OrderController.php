@@ -67,7 +67,30 @@ class OrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
-        return response()->json($order->load(['business', 'items']));
+        $order->load(['business', 'items', 'assignedDriver', 'currentAssignment.driver', 'platformOrder']);
+
+        // Enrich with live DoorDash tracking if available
+        $tracking = null;
+        if ($order->doordash_delivery_id) {
+            $tracking = [
+                'vendor'       => 'doordash',
+                'delivery_id'  => $order->doordash_delivery_id,
+                'status'       => $order->doordash_status,
+                'status_label' => \App\Services\DoorDashService::statusLabel($order->doordash_status ?? ''),
+                'tracking_url' => $order->doordash_tracking_url,
+            ];
+        } elseif ($order->tracking_url) {
+            $tracking = [
+                'vendor'       => $order->delivery_vendor,
+                'tracking_url' => $order->tracking_url,
+                'status'       => $order->driver_status,
+            ];
+        }
+
+        $data = $order->toArray();
+        $data['tracking'] = $tracking;
+
+        return response()->json($data);
     }
 
     public function store(Request $request): JsonResponse
@@ -87,6 +110,16 @@ class OrderController extends Controller
         ]);
 
         $sid       = $this->sessionId($request);
+
+        // DEBUG — remove after confirming cart clear works
+        Log::info('ORDER::store sessionId', [
+            'sid'        => $sid,
+            'header_sid' => $request->header('X-Session-Id'),
+            'auth_header'=> $request->header('Authorization') ? substr($request->header('Authorization'), 0, 20).'...' : null,
+            'business_id'=> $data['business_id'],
+            'all_cart_sids' => CartItem::where('business_id', $data['business_id'])->pluck('session_id')->unique()->values(),
+        ]);
+
         $cartItems = CartItem::where('session_id', $sid)
             ->where('business_id', $data['business_id'])
             ->with('menuItem')
@@ -140,7 +173,13 @@ class OrderController extends Controller
             ]);
         }
 
-        CartItem::where('session_id', $sid)->where('business_id', $data['business_id'])->delete();
+        // Clear cart — also cover guest cart (X-Session-Id) if user checked out with OTP token
+        $sidsToDelete = [$sid];
+        $headerSid = $request->header('X-Session-Id');
+        if ($headerSid && $headerSid !== $sid) {
+            $sidsToDelete[] = $headerSid;
+        }
+        CartItem::whereIn('session_id', $sidsToDelete)->where('business_id', $data['business_id'])->delete();
 
         $order->load('business');
 
@@ -158,6 +197,9 @@ class OrderController extends Controller
                     'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
                     'doordash_status'       => $delivery['delivery_status'] ?? 'created',
                     'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
+                    'tracking_url'          => $delivery['tracking_url'] ?? null,
+                    'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
+                        ? \Illuminate\Support\Carbon::parse($delivery['estimated_delivery_time']) : null,
                 ]);
             } catch (\Throwable $e) {
                 // Don't fail the order — log the error and let admin manually dispatch
@@ -168,12 +210,94 @@ class OrderController extends Controller
         return response()->json($order->fresh()->load(['business', 'items']), 201);
     }
 
+    /**
+     * GET /api/ecommerce/my-orders
+     * Returns paginated orders scoped to the current session.
+     */
+    public function myOrders(Request $request): JsonResponse
+    {
+        $sid = $this->sessionId($request);
+
+        $q = Order::with(['business', 'items'])
+            ->where('session_id', $sid)
+            ->orderByDesc('id');
+
+        if ($request->filled('status')) {
+            $q->where('status', $request->status);
+        }
+
+        return response()->json($q->paginate((int) $request->get('per_page', 20)));
+    }
+
+    /**
+     * GET /api/ecommerce/my-orders/{order}
+     * Returns a single order — only if it belongs to the current session.
+     */
+    public function myOrderShow(Request $request, Order $order): JsonResponse
+    {
+        $sid = $this->sessionId($request);
+
+        if ($order->session_id !== $sid) {
+            return response()->json(['message' => 'Not found.'], 404);
+        }
+
+        $order->load(['business', 'items']);
+
+        $tracking = null;
+        if ($order->doordash_delivery_id) {
+            $tracking = [
+                'vendor'       => 'doordash',
+                'delivery_id'  => $order->doordash_delivery_id,
+                'status'       => $order->doordash_status,
+                'status_label' => \App\Services\DoorDashService::statusLabel($order->doordash_status ?? ''),
+                'tracking_url' => $order->doordash_tracking_url,
+            ];
+        } elseif ($order->tracking_url) {
+            $tracking = [
+                'vendor'       => $order->delivery_vendor,
+                'tracking_url' => $order->tracking_url,
+                'status'       => $order->driver_status,
+            ];
+        }
+
+        $data = $order->toArray();
+        $data['tracking'] = $tracking;
+
+        return response()->json($data);
+    }
+
     public function updateStatus(Request $request, Order $order): JsonResponse
     {
         $data = $request->validate([
             'status' => 'required|in:pending,confirmed,preparing,ready,out_for_delivery,delivered,cancelled',
         ]);
+
+        $previousStatus = $order->status;
         $order->update($data);
-        return response()->json($order->load(['business', 'items']));
+
+        // ── Auto-dispatch DoorDash when order is confirmed ────────────────
+        if (
+            in_array($data['status'], ['confirmed', 'preparing']) &&
+            $previousStatus === 'pending' &&
+            ($order->delivery_vendor === 'doordash' || $order->item_delivery_type === 'delivery') &&
+            $order->delivery_address &&
+            !$order->doordash_delivery_id
+        ) {
+            try {
+                $doorDash = app(\App\Services\DoorDashService::class);
+                $delivery = $doorDash->createDelivery($order->load('business'));
+
+                $order->update([
+                    'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
+                    'doordash_status'       => $delivery['delivery_status'] ?? 'created',
+                    'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
+                    'tracking_url'          => $delivery['tracking_url'] ?? null,
+                ]);
+            } catch (\Throwable $e) {
+                \Log::warning("DoorDash auto-dispatch on confirm failed for {$order->order_number}: {$e->getMessage()}");
+            }
+        }
+
+        return response()->json($order->fresh()->load(['business', 'items', 'assignedDriver']));
     }
 }

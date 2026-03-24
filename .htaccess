@@ -14,6 +14,20 @@
     RewriteCond %{REQUEST_URI} ^/public/ [NC]
     RewriteRule ^ - [L]
 
+    # Preserve non-standard request headers through internal rewrite to public/.
+    # Apache strips them from %{HTTP:header} during internal subrequests, but
+    # HTTP_* env vars survive and PHP reads them as $_SERVER['HTTP_*'].
+    # We ALSO set INERTIA_REQUEST here so public/.htaccess can use it
+    # in Header directives even after the HTTP header is gone.
+    RewriteCond %{HTTP:X-Inertia} .
+    RewriteRule .* - [E=HTTP_X_INERTIA:%{HTTP:X-Inertia},E=INERTIA_REQUEST:1]
+
+    RewriteCond %{HTTP:X-XSRF-TOKEN} .
+    RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-TOKEN}]
+
+    RewriteCond %{HTTP:X-CSRF-TOKEN} .
+    RewriteRule .* - [E=HTTP_X_CSRF_TOKEN:%{HTTP:X-CSRF-TOKEN}]
+
     # Send all other requests to public folder (Laravel entry point)
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d

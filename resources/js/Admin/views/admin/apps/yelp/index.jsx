@@ -51,6 +51,8 @@ function AccountsTab() {
     const [verifying, setVerifying]       = useState(false);
     const [verifyResult, setVerifyResult] = useState(null);
     const [cardVerify, setCardVerify]     = useState({});
+    const [revealing, setRevealing]       = useState(false);
+    const [keyRevealed, setKeyRevealed]   = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -63,11 +65,24 @@ function AccountsTab() {
 
     const openAdd = () => {
         setForm({ name: '', api_key: '', daily_limit: 500, is_active: true });
-        setFormError(''); setVerifyResult(null); setEditTarget(null); setShowModal(true);
+        setFormError(''); setVerifyResult(null); setEditTarget(null); setKeyRevealed(false); setShowModal(true);
     };
     const openEdit = (a) => {
         setForm({ name: a.name, api_key: '', daily_limit: a.daily_limit, is_active: a.is_active });
-        setFormError(''); setVerifyResult(null); setEditTarget(a); setShowModal(true);
+        setFormError(''); setVerifyResult(null); setEditTarget(a); setKeyRevealed(false); setShowModal(true);
+    };
+
+    const revealKey = async () => {
+        setRevealing(true);
+        try {
+            const { data } = await api(`accounts/${editTarget.id}/reveal`, { method: 'post' });
+            setForm(f => ({ ...f, api_key: data.api_key }));
+            setKeyRevealed(true);
+        } catch {
+            setFormError('Could not reveal API key.');
+        } finally {
+            setRevealing(false);
+        }
     };
 
     const save = async (e) => {
@@ -245,18 +260,37 @@ function AccountsTab() {
                         <Form.Group className="mb-3">
                             <Form.Label>
                                 Yelp API Key{' '}
-                                {editTarget && <small className="text-muted fw-normal">(leave blank to keep existing)</small>}
+                                {editTarget && !keyRevealed && <small className="text-muted fw-normal">(leave blank to keep existing)</small>}
                             </Form.Label>
-                            <div className="d-flex gap-2">
-                                <Form.Control className="font-monospace"
-                                    value={form.api_key}
-                                    onChange={e => { setForm(f => ({ ...f, api_key: e.target.value })); setVerifyResult(null); }}
-                                    placeholder="Bearer token from Yelp Fusion" />
-                                <button type="button" className="btn btn-soft-info btn-sm text-nowrap"
-                                    onClick={verifyForm} disabled={verifying || !form.api_key}>
-                                    {verifying ? <Spinner animation="border" size="sm" /> : <><Icon icon="circle-check" className="me-1" />Test Key</>}
-                                </button>
-                            </div>
+                            {editTarget && !keyRevealed ? (
+                                <div className="d-flex gap-2">
+                                    <div className="form-control font-monospace bg-light text-muted" style={{ letterSpacing: '0.15em' }}>
+                                        ••••••••••••••••••••••••••••••
+                                    </div>
+                                    <button type="button" className="btn btn-soft-warning btn-sm text-nowrap"
+                                        onClick={revealKey} disabled={revealing}>
+                                        {revealing ? <Spinner animation="border" size="sm" /> : <><Icon icon="eye" className="me-1" />Reveal</>}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="d-flex gap-2">
+                                    <Form.Control className="font-monospace"
+                                        value={form.api_key}
+                                        onChange={e => { setForm(f => ({ ...f, api_key: e.target.value })); setVerifyResult(null); }}
+                                        placeholder="Bearer token from Yelp Fusion"
+                                        autoFocus={keyRevealed} />
+                                    <button type="button" className="btn btn-soft-info btn-sm text-nowrap"
+                                        onClick={verifyForm} disabled={verifying || !form.api_key}>
+                                        {verifying ? <Spinner animation="border" size="sm" /> : <><Icon icon="circle-check" className="me-1" />Test Key</>}
+                                    </button>
+                                    {editTarget && keyRevealed && (
+                                        <button type="button" className="btn btn-light btn-sm text-nowrap"
+                                            onClick={() => { setKeyRevealed(false); setForm(f => ({ ...f, api_key: '' })); setVerifyResult(null); }}>
+                                            <Icon icon="eye-off" className="me-1" />Hide
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                             {verifyResult && (
                                 <Alert variant={verifyResult.ok ? 'success' : 'danger'} className="mt-2 py-2 mb-0 fs-sm">
                                     {verifyResult.ok ? '✓ ' : '✗ '}{verifyResult.msg}
@@ -301,8 +335,8 @@ function JobsTab() {
 
     const emptyForm = {
         name: '', entity_id: '', mode: 'smart', schedule: 'daily',
-        custom_cron: '', is_active: true, max_calls_per_run: 0,
-        search_columns: { term: '', address: '', city: '', state: '', zip: '' },
+        custom_cron: '', is_active: true, auto_merge: false, max_calls_per_run: 0,
+        search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
         column_mapping: {},
     };
     const [form, setForm] = useState(emptyForm);
@@ -312,9 +346,19 @@ function JobsTab() {
         setLoading(true);
         try {
             const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
-            setJobs(j.data ?? []);
+            const jobs = j.data ?? [];
+            setJobs(jobs);
             setEntities(e.data ?? []);
             setYelpFields(yf.data ?? {});
+
+            // Resume polling for any jobs already running (e.g. after page refresh)
+            jobs.forEach(job => {
+                const log = job.latest_log?.[0];
+                if (log && ['running', 'pending'].includes(log.status)) {
+                    setActiveLogs(prev => ({ ...prev, [job.id]: log }));
+                    startPolling(job.id, log.id);
+                }
+            });
         } catch (err) {
             console.error('Yelp page load error:', err);
         } finally {
@@ -351,11 +395,12 @@ function JobsTab() {
     };
 
     const stopJob = async (job) => {
-        const log = activeLogs[job.id];
+        const log = activeLogs[job.id] ?? job.latest_log?.[0];
         if (!log) return;
         try {
             await api(`logs/${log.id}/stop`, { method: 'post' });
-            setActiveLogs(prev => ({ ...prev, [job.id]: { ...prev[job.id], status: 'stop_requested' } }));
+            setActiveLogs(prev => ({ ...prev, [job.id]: { ...(prev[job.id] ?? log), status: 'paused' } }));
+            load();
         } catch (e) { alert(e.response?.data?.error || 'Stop failed.'); }
     };
 
@@ -369,8 +414,17 @@ function JobsTab() {
             schedule: isCustom ? 'custom' : job.schedule,
             custom_cron: isCustom ? job.schedule : '',
             is_active: job.is_active,
+            auto_merge: !!job.auto_merge,
             max_calls_per_run: job.max_calls_per_run ?? 0,
-            search_columns: { term: sc.term||'', address: sc.address||'', city: sc.city||'', state: sc.state||'', zip: sc.zip||'' },
+            search_columns: {
+                term: sc.term || '',
+                address: sc.address || '',
+                city: sc.city || '',
+                state: sc.state || '',
+                zip: sc.zip || '',
+                country: sc.country || '',
+                country_value: sc.country_value || 'us',
+            },
             column_mapping: { ...(job.column_mapping || {}) },
         });
         setFormError(''); setEditTarget(job); setShowModal(true);
@@ -385,6 +439,7 @@ function JobsTab() {
                 search_columns: form.search_columns, column_mapping: form.column_mapping,
                 schedule: form.schedule === 'custom' ? form.custom_cron : form.schedule,
                 is_active: form.is_active,
+                auto_merge: !!form.auto_merge,
                 max_calls_per_run: parseInt(form.max_calls_per_run) || 0,
             };
             if (!editTarget) { await api('jobs', { method: 'post', data: payload }); }
@@ -585,7 +640,18 @@ function JobsTab() {
                                 <Form.Group>
                                     <Form.Label>Table (Entity) <span className="text-danger">*</span></Form.Label>
                                     <Form.Select value={form.entity_id}
-                                        onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, search_columns: { term:'',address:'',city:'',state:'',zip:'' }, column_mapping: {} }))}>
+                                        onChange={e => {
+                                            const next = e.target.value;
+                                            setForm(f => ({
+                                                ...f,
+                                                entity_id: next,
+                                                // Only reset mappings when the entity actually changes
+                                                ...(next !== f.entity_id ? {
+                                                    search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
+                                                    column_mapping: {},
+                                                } : {}),
+                                            }));
+                                        }}>
                                         <option value="">— Select a table —</option>
                                         {entities.map(e => <option key={e.id} value={e.id}>{e.name} ({e.table_name})</option>)}
                                     </Form.Select>
@@ -617,6 +683,9 @@ function JobsTab() {
                                 <Form.Check type="switch" id="jobActive" className="mt-2" label="Enable auto-schedule"
                                     checked={form.is_active}
                                     onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+                                <Form.Check type="switch" id="jobAutoMerge" className="mt-2" label="Auto merge matched Yelp data"
+                                    checked={!!form.auto_merge}
+                                    onChange={e => setForm(f => ({ ...f, auto_merge: e.target.checked }))} />
 
                                 {/* Per-run call limit */}
                                 <hr className="my-2" />
@@ -633,27 +702,57 @@ function JobsTab() {
                                 <Col xs={12}><hr className="my-1" /></Col>
                                 <Col xs={12}>
                                     <Form.Label className="fw-semibold">Search Columns</Form.Label>
-                                    <p className="text-muted fs-sm mb-2">Map your table columns to Yelp search. Business Name is required.</p>
+                                    <p className="text-muted fs-sm mb-2">
+                                        Map your table columns to Yelp search fields.{' '}
+                                        <strong className="text-danger">Business Name is required</strong> — rows without it will be skipped.
+                                    </p>
                                     <Row className="g-2">
                                         {[
-                                            { key: 'term',    label: 'Business Name *' },
-                                            { key: 'address', label: 'Street Address' },
-                                            { key: 'city',    label: 'City' },
-                                            { key: 'state',   label: 'State / Province' },
-                                            { key: 'zip',     label: 'Zip Code' },
-                                        ].map(({ key, label }) => (
+                                            { key: 'term',    label: 'Business Name', required: true },
+                                            { key: 'address', label: 'Street Address', required: false },
+                                            { key: 'city',    label: 'City', required: false },
+                                            { key: 'state',   label: 'State / Province', required: false },
+                                            { key: 'zip',     label: 'Zip Code', required: false },
+                                            { key: 'country', label: 'Country Column', required: false },
+                                        ].map(({ key, label, required }) => (
                                             <Col key={key} md={4}>
-                                                <Form.Label className="fs-sm mb-1">{label}</Form.Label>
+                                                <Form.Label className="fs-sm mb-1">
+                                                    {label}{required && <span className="text-danger ms-1">*</span>}
+                                                </Form.Label>
                                                 <Form.Select size="sm"
                                                     value={form.search_columns[key] || ''}
+                                                    isInvalid={required && !form.search_columns[key]}
                                                     onChange={e => setForm(f => ({ ...f, search_columns: { ...f.search_columns, [key]: e.target.value } }))}>
                                                     <option value="">— none —</option>
                                                     {selEnt.fields?.map(f => (
-                                                        <option key={f.id} value={f.column_name}>{f.label} ({f.column_name})</option>
+                                                        <option key={f.column_name} value={f.column_name}>{f.label} ({f.column_name})</option>
                                                     ))}
                                                 </Form.Select>
+                                                {required && !form.search_columns[key] && (
+                                                    <Form.Control.Feedback type="invalid">Required for Yelp search</Form.Control.Feedback>
+                                                )}
                                             </Col>
                                         ))}
+                                        <Col md={4}>
+                                            <Form.Label className="fs-sm mb-1">
+                                                Country Value (manual)
+                                            </Form.Label>
+                                            <Form.Control
+                                                size="sm"
+                                                value={form.search_columns.country_value || ''}
+                                                onChange={e => setForm(f => ({
+                                                    ...f,
+                                                    search_columns: { ...f.search_columns, country_value: e.target.value },
+                                                }))}
+                                                placeholder="us / usa / united states"
+                                                disabled={!!form.search_columns.country}
+                                            />
+                                            <Form.Text className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                                {form.search_columns.country
+                                                    ? 'Ignored — Country Column is mapped (column takes priority)'
+                                                    : 'Used when no Country Column is selected. Default: us'}
+                                            </Form.Text>
+                                        </Col>
                                     </Row>
                                 </Col>
                                 <Col xs={12}><hr className="my-1" /></Col>
@@ -700,13 +799,203 @@ function JobsTab() {
                     <ModalFooter>
                         <button type="button" className="btn btn-light" onClick={() => setShowModal(false)}>Cancel</button>
                         <button type="submit" className="btn btn-primary"
-                            disabled={saving || !form.name || !form.entity_id || Object.keys(form.column_mapping).length === 0}>
+                            disabled={saving || !form.name || !form.entity_id || !form.search_columns?.term || Object.keys(form.column_mapping).length === 0}>
                             {saving ? <><Spinner animation="border" size="sm" className="me-1" />Saving…</> : 'Save Job'}
                         </button>
                     </ModalFooter>
                 </Form>
             </Modal>
         </>
+    );
+}
+
+// ─── ROW DETAIL MODAL ─────────────────────────────────────────────────────────
+function RowDetailModal({ logId, rowId, onClose }) {
+    const [detail, setDetail] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        setLoading(true);
+        api(`logs/${logId}/rows/${rowId}`)
+            .then(r => setDetail(r.data))
+            .catch(() => setDetail(null))
+            .finally(() => setLoading(false));
+    }, [logId, rowId]);
+
+    const rowLog = detail?.row_log;
+    const rs = rowLog ? (ROW_STATUS[rowLog.status] ?? { cls: 'bg-secondary-subtle text-secondary', label: rowLog.status }) : null;
+
+    return (
+        <Modal show onHide={onClose} centered size="xl">
+            <ModalHeader closeButton>
+                <ModalTitle as="h5">
+                    Row Detail — DB Row #{rowId}
+                </ModalTitle>
+            </ModalHeader>
+            <ModalBody style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                {loading ? (
+                    <div className="text-center py-5"><Spinner animation="border" size="sm" /></div>
+                ) : !detail || !rowLog ? (
+                    <div className="text-muted text-center py-5">No detail found for this row.</div>
+                ) : (<>
+                    {/* ── Summary bar ── */}
+                    <div className="d-flex flex-wrap gap-3 mb-4 pb-3 border-bottom align-items-start">
+                        <div>
+                            <small className="text-muted d-block mb-1">Status</small>
+                            <span className={`badge fs-sm ${rs.cls}`}>{rs.label}</span>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Search Term Sent</small>
+                            <strong>{rowLog.search_term || <span className="text-danger">—empty—</span>}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Location Sent</small>
+                            <strong>{rowLog.search_location || <span className="text-warning">—none—</span>}</strong>
+                        </div>
+                        {detail.yelp_business_name && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Yelp Match</small>
+                                <strong>{detail.yelp_business_name}</strong>
+                                {detail.yelp_business_id && (
+                                    <small className="text-muted d-block font-monospace">{detail.yelp_business_id}</small>
+                                )}
+                            </div>
+                        )}
+                        {rowLog.yelp_rating != null && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Yelp Rating</small>
+                                <strong>{'⭐'.repeat(Math.round(rowLog.yelp_rating))} {rowLog.yelp_rating}</strong>
+                            </div>
+                        )}
+                        {detail.merge_status && (
+                            <div>
+                                <small className="text-muted d-block mb-1">Merge Status</small>
+                                <span className={`badge ${detail.merge_status === 'merged' ? 'bg-success-subtle text-success' : detail.merge_status === 'skipped' ? 'bg-warning-subtle text-warning' : 'bg-secondary-subtle text-secondary'}`}>
+                                    {detail.merge_status}
+                                </span>
+                            </div>
+                        )}
+                        {rowLog.error && (
+                            <div className="w-100">
+                                <small className="text-muted d-block mb-1">Error</small>
+                                <span className="text-danger small">{rowLog.error}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="row g-3">
+                        {/* ── DB Source Row ── */}
+                        <div className="col-md-6">
+                            <h6 className="fw-semibold mb-2">
+                                <span className="badge bg-info-subtle text-info me-2">DB</span>
+                                Source Row (your database data)
+                            </h6>
+                            {detail.source_payload ? (
+                                <div className="table-responsive" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Column</th><th>Value</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {Object.entries(detail.source_payload).map(([col, val]) => (
+                                                <tr key={col}>
+                                                    <td className="font-monospace text-muted fw-semibold text-nowrap">{col}</td>
+                                                    <td style={{ wordBreak: 'break-word', maxWidth: 220 }}>
+                                                        {val === null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : val === ''
+                                                            ? <span className="text-muted fst-italic">empty</span>
+                                                            : String(val)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="text-muted small">No source data found for this row.</p>
+                            )}
+                        </div>
+
+                        {/* ── Field Comparison ── */}
+                        <div className="col-md-6">
+                            <h6 className="fw-semibold mb-2">
+                                <span className="badge bg-primary-subtle text-primary me-2">DIFF</span>
+                                Field Comparison (DB vs Yelp)
+                            </h6>
+                            {detail.field_diffs?.length > 0 ? (
+                                <div className="table-responsive" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Yelp Field</th><th>DB Column</th><th>Your Value</th><th>Yelp Value</th><th>Changed</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {detail.field_diffs.map((d, i) => (
+                                                <tr key={i} className={d.changed ? 'table-warning' : ''}>
+                                                    <td className="font-monospace text-muted text-nowrap">{d.yelp_field}</td>
+                                                    <td className="font-monospace text-nowrap">{d.db_column}</td>
+                                                    <td style={{ maxWidth: 120, wordBreak: 'break-word' }}>
+                                                        {d.local_value == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : String(d.local_value)}
+                                                    </td>
+                                                    <td style={{ maxWidth: 120, wordBreak: 'break-word' }} className={d.changed ? 'text-success fw-semibold' : ''}>
+                                                        {d.yelp_value == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : String(d.yelp_value)}
+                                                    </td>
+                                                    <td className="text-center">
+                                                        {d.changed
+                                                            ? <span className="badge bg-warning-subtle text-warning">Yes</span>
+                                                            : <span className="badge bg-success-subtle text-success">Same</span>}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="text-muted small">No field comparison data (row was skipped, not found, or verify-only mode).</p>
+                            )}
+                        </div>
+
+                        {/* ── Yelp Raw Response ── */}
+                        {detail.yelp_payload && (
+                            <div className="col-12">
+                                <h6 className="fw-semibold mb-2">
+                                    <span className="badge bg-danger-subtle text-danger me-2">YELP</span>
+                                    Yelp API Response (extracted fields)
+                                </h6>
+                                <div className="table-responsive" style={{ maxHeight: 280, overflowY: 'auto' }}>
+                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: 12 }}>
+                                        <thead className="table-light">
+                                            <tr><th>Yelp Field</th><th>Value</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {Object.entries(detail.yelp_payload).map(([k, v]) => (
+                                                <tr key={k}>
+                                                    <td className="font-monospace text-muted text-nowrap">{k}</td>
+                                                    <td style={{ wordBreak: 'break-word', maxWidth: 400 }}>
+                                                        {v == null
+                                                            ? <span className="text-muted fst-italic">null</span>
+                                                            : typeof v === 'object'
+                                                            ? <code style={{ fontSize: 11 }}>{JSON.stringify(v)}</code>
+                                                            : String(v)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>)}
+            </ModalBody>
+            <ModalFooter>
+                <button className="btn btn-light" onClick={onClose}>Close</button>
+            </ModalFooter>
+        </Modal>
     );
 }
 
@@ -730,6 +1019,7 @@ function LogDetailModal({ log, onClose }) {
     const [rowPage, setRowPage]     = useState(1);
     const [rowMeta, setRowMeta]     = useState(null);
     const [rowStatusFilter, setRowStatusFilter] = useState('');
+    const [detailRow, setDetailRow] = useState(null);
     const pollRef                   = useRef(null);
 
     // If log is still running, poll for live updates
@@ -788,7 +1078,7 @@ function LogDetailModal({ log, onClose }) {
         { label: 'Total Rows',    value: total,                       cls: 'fw-semibold',   icon: '#', key: ''          },
     ];
 
-    return (
+    return (<>
         <Modal show onHide={onClose} centered size="xl">
             <ModalHeader closeButton>
                 <ModalTitle as="h5">
@@ -925,6 +1215,7 @@ function LogDetailModal({ log, onClose }) {
                                         <th>Yelp Result</th>
                                         <th>Rating</th>
                                         <th>Note</th>
+                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -957,6 +1248,15 @@ function LogDetailModal({ log, onClose }) {
                                                     {r.error && <small className="text-danger">{r.error}</small>}
                                                     {r.yelp_is_closed && <span className="badge bg-danger-subtle text-danger">Perm. Closed</span>}
                                                 </td>
+                                                <td>
+                                                    <button
+                                                        className="btn btn-soft-primary btn-sm btn-icon"
+                                                        title="View row detail"
+                                                        onClick={() => setDetailRow(r)}
+                                                    >
+                                                        <Icon icon="eye" className="fs-lg" />
+                                                    </button>
+                                                </td>
                                             </tr>
                                         );
                                     })}
@@ -983,7 +1283,15 @@ function LogDetailModal({ log, onClose }) {
                 <button className="btn btn-light" onClick={onClose}>Close</button>
             </ModalFooter>
         </Modal>
-    );
+
+        {detailRow && (
+            <RowDetailModal
+                logId={log.id}
+                rowId={detailRow.row_id}
+                onClose={() => setDetailRow(null)}
+            />
+        )}
+    </>);
 }
 
 // ─── LOGS TAB ─────────────────────────────────────────────────────────────────

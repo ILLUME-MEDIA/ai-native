@@ -1,23 +1,45 @@
 import AdminAuthLayout from './AdminAuthLayout';
 import { Link, usePage } from '@inertiajs/react';
 import { Button, Col, Row } from 'react-bootstrap';
-import { useRef, useState } from 'react';
+import { useState, useRef } from 'react';
 
-export default function Login({ status, canResetPassword, csrf_token: csrfToken = '' }) {
-    const formRef = useRef(null);
+export default function Login({ status, canResetPassword }) {
     const [processing, setProcessing] = useState(false);
     const [formData, setFormData] = useState({ email: '', password: '', remember: false });
     const { props: pageProps } = usePage();
     const errors = pageProps.errors || {};
+    const formRef = useRef(null);
 
     const submit = (e) => {
         e.preventDefault();
         setProcessing(true);
-        // Native form submit = full page POST → server 302 → full page redirect.
-        // Inertia will not intercept, so URL will update to /admin/dashboard/ecommerce.
-        const form = formRef.current;
-        if (form) form.submit();
-        else setProcessing(false);
+
+        // Use a native browser form submit instead of Inertia XHR / axios.
+        // On cPanel/Apache, XHR-based POST responses sometimes lose the session
+        // cookie before window.location fires, causing a redirect loop back to login.
+        // Native form POST → server 302 → browser follows with all cookies intact.
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/login';
+
+        const addField = (name, value) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value ?? '';
+            form.appendChild(input);
+        };
+
+        // CSRF token (from meta tag — exempted from validation but good practice)
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        if (csrfMeta) addField('_token', csrfMeta.getAttribute('content'));
+
+        addField('email', formData.email);
+        addField('password', formData.password);
+        if (formData.remember) addField('remember', '1');
+
+        document.body.appendChild(form);
+        form.submit();
     };
 
     const socialContent = (
@@ -48,7 +70,7 @@ export default function Login({ status, canResetPassword, csrf_token: csrfToken 
         <AdminAuthLayout
             pageTitle="Log in"
             heading="Great to see you here 👋"
-            subheading="Let’s get you signed in. Enter your email and password to continue."
+            subheading="Let's get you signed in. Enter your email and password to continue."
             showSocial
             socialContent={socialContent}
             footer={
@@ -69,13 +91,7 @@ export default function Login({ status, canResetPassword, csrf_token: csrfToken 
                 </div>
             )}
 
-            <form
-                ref={formRef}
-                action={route('login')}
-                method="POST"
-                onSubmit={submit}
-            >
-                <input type="hidden" name="_token" value={csrfToken || (typeof document !== 'undefined' ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') : '') || ''} />
+            <form ref={formRef} onSubmit={submit}>
                 <div className="mb-3">
                     <label htmlFor="email" className="form-label">
                         Email address <span className="text-danger">*</span>
@@ -138,7 +154,7 @@ export default function Login({ status, canResetPassword, csrf_token: csrfToken 
 
                 <div className="d-grid">
                     <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
-                        Sign In
+                        {processing ? 'Signing in…' : 'Sign In'}
                     </button>
                 </div>
             </form>

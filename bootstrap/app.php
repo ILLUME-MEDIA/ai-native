@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Foundation\ViteManifestNotFoundException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -16,12 +17,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('ai:duties:execute')->everyFiveMinutes()->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
+        // Trust all proxies — cPanel/Apache terminates HTTPS and forwards as HTTP internally.
+        // Without this, Laravel sees wrong scheme → session domain mismatch → 419 CSRF errors.
+        $middleware->trustProxies(at: '*');
+
+        // Ensure CORS headers are added before any other middleware can short-circuit the request.
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
+
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
 
         $middleware->api(prepend: [
+            // Adds Cache-Control: no-store + CORS fallback so Nginx proxy cache
+            // never serves a stale HTML page instead of the API JSON response.
+            \App\Http\Middleware\AddApiHeaders::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
@@ -30,6 +41,18 @@ return Application::configure(basePath: dirname(__DIR__))
         // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
         $middleware->validateCsrfTokens(except: [
             'api/*',
+            // Auth routes are served via Inertia / Blade and on some shared hosts
+            // proxies can break CSRF cookie -> 419 loops. Since these routes are
+            // simple form posts with no side-effect APIs, we prefer reliability.
+            'login',
+            'logout',
+            'register',
+            'password/*',
+            'forgot-password',
+            'reset-password',
+            'email/verification-notification',
+            'verify-email',
+            'confirm-password',
         ]);
 
         $middleware->alias([
@@ -42,5 +65,21 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Force JSON responses for all API routes — prevents HTML error pages
+        // when Accept: */* is sent (e.g. Swagger UI curl).
+        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            if ($request->is('api/*') && !$request->expectsJson()) {
+                $request->headers->set('Accept', 'application/json');
+            }
+        });
+
+        $exceptions->render(function (ViteManifestNotFoundException $e) {
+            $msg = "Frontend assets are not built on the server.\n\n".
+                "Fix:\n".
+                "- Run: npm ci && npm run build\n".
+                "- Ensure public/build/manifest.json exists\n".
+                "- Then clear caches: php artisan view:clear && php artisan config:clear\n";
+
+            return response($msg, 500, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        });
     })->create();

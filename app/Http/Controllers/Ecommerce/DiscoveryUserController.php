@@ -14,37 +14,58 @@ class DiscoveryUserController extends Controller
 
     /**
      * Resolve a DiscoveryUser from an OTP Bearer token.
-     * Returns null if token is missing, invalid, expired, or not from discovery_users table.
+     * Returns [user|null, error_code|null] tuple for specific failure reasons.
      */
-    protected function resolveOtpUser(Request $request): ?DiscoveryUser
+    protected function resolveOtpUser(Request $request): array
     {
         $auth = $request->header('Authorization', '');
         if (! str_starts_with($auth, 'Bearer ')) {
-            return null;
+            return [null, 'no_token'];
         }
         $token = substr($auth, 7);
         try {
             $payload = decrypt($token);
-            if (
-                isset($payload['type'], $payload['id'], $payload['exp'], $payload['table']) &&
-                $payload['type'] === 'otp_auth' &&
-                $payload['table'] === 'discovery_users' &&
-                ! Carbon::createFromTimestamp($payload['exp'])->isPast()
-            ) {
-                return DiscoveryUser::find((int) $payload['id']);
+
+            if (! isset($payload['type'], $payload['id'], $payload['exp'], $payload['table'])) {
+                return [null, 'invalid_token'];
             }
-        } catch (\Throwable) {}
-        return null;
+            if ($payload['type'] !== 'otp_auth') {
+                return [null, 'invalid_token_type'];  // e.g. otp_session token used by mistake
+            }
+            if ($payload['table'] !== 'discovery_users') {
+                return [null, 'wrong_table'];          // token was issued for a different table
+            }
+            if (Carbon::createFromTimestamp($payload['exp'])->isPast()) {
+                return [null, 'token_expired'];
+            }
+
+            $user = DiscoveryUser::find((int) $payload['id']);
+            return $user ? [$user, null] : [null, 'user_not_found'];
+
+        } catch (\Throwable) {
+            return [null, 'decrypt_failed'];           // wrong APP_KEY or tampered token
+        }
     }
 
     private function otpRequired(Request $request): DiscoveryUser|JsonResponse
     {
-        $user = $this->resolveOtpUser($request);
+        [$user, $errorCode] = $this->resolveOtpUser($request);
+
         if (! $user) {
+            $messages = [
+                'no_token'          => 'No Bearer token provided.',
+                'invalid_token'     => 'Bearer token is malformed.',
+                'invalid_token_type'=> 'Token type invalid. Use the "token" from POST /otp-auth/verify (not otp_session).',
+                'wrong_table'       => 'Token was issued for a different table. Re-verify with table=discovery_users.',
+                'token_expired'     => 'OTP token expired. Re-verify via POST /otp-auth/verify.',
+                'user_not_found'    => 'User not found. Account may have been deleted.',
+                'decrypt_failed'    => 'Token decryption failed. Check APP_KEY or re-verify.',
+            ];
             return response()->json([
                 'success' => false,
-                'message' => 'OTP Bearer token required. Send Authorization: Bearer <otp-token> from POST /otp-auth/verify with table=discovery_users.',
-                'code'    => 'otp_required',
+                'message' => $messages[$errorCode] ?? 'OTP Bearer token required.',
+                'hint'    => 'POST /otp-auth/verify with { email, otp, table: "discovery_users" } → use the returned "token" field.',
+                'code'    => $errorCode ?? 'otp_required',
             ], 401);
         }
         return $user;
@@ -103,7 +124,7 @@ class DiscoveryUserController extends Controller
         );
 
         $status = $location->wasRecentlyCreated ? 201 : 200;
-        return response()->json(['success' => true, 'location' => $location], $status);
+        return response()->json(['success' => true, 'location' => $location->fresh()], $status);
     }
 
     public function locationDestroy(Request $request): JsonResponse

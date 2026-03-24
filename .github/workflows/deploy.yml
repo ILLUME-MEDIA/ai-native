@@ -61,7 +61,7 @@ jobs:
             **/storage/logs/**
             **/public/uploads/**
 
-      # 5️⃣ Run migrations & storage:link on the live server
-      - name: Run migrations & storage:link
+      # 5️⃣ Run migrations, clear OPcache & caches on the live server
+      - name: Run migrations & clear caches
         run: |
           curl -sf "${{ secrets.APP_URL }}/run-migrations" | jq . || echo "Post-deploy hook failed (non-fatal)"

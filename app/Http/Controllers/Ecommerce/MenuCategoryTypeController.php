@@ -31,6 +31,8 @@ class MenuCategoryTypeController extends Controller
             'name'        => 'required|string|max:100',
             'slug'        => 'nullable|string|max:120|unique:menu_category_types,slug',
             'description' => 'nullable|string|max:300',
+            'icon'        => 'nullable|string|max:500',
+            'hover_icon'  => 'nullable|string|max:500',
             'sort_order'  => 'integer|min:0',
             'is_active'   => 'boolean',
         ]);
@@ -45,6 +47,8 @@ class MenuCategoryTypeController extends Controller
             'name'        => 'sometimes|string|max:100',
             'slug'        => 'nullable|string|max:120|unique:menu_category_types,slug,' . $menuCategoryType->id,
             'description' => 'nullable|string|max:300',
+            'icon'        => 'nullable|string|max:500',
+            'hover_icon'  => 'nullable|string|max:500',
             'sort_order'  => 'integer|min:0',
             'is_active'   => 'boolean',
         ]);

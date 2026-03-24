@@ -42,7 +42,8 @@ const emptyForm = {
   catering: false, delivery: false, wheelchair_access: false, wifi: false,
   cash_only: false, pork: false, featured: false, sponsored: false,
   enable_order: false, enable_order_print: false, enable_stripe: false,
-  adjust_platform_fee: false, is_online: false, restrict_checkin: false,
+  adjust_platform_fee: false, platform_fee_override: 'inherit', platform_fee_value: '',
+  is_online: false, restrict_checkin: false,
   created_app_user: false, auto_accept: false,
   // Text features
   shisha: '', drive_thru: '', reservations: '', outdoor_seating: '',
@@ -111,8 +112,11 @@ export default function SellersPage() {
   const navigate                    = useNavigate();
   const [sorting, setSorting]       = useState([]);
   const [activeTab, setActiveTab]   = useState('basic');
-  const [categories, setCategories] = useState([]);
-  const [perPage, setPerPage]       = useState(25);
+  const [categories, setCategories]     = useState([]);
+  const [cuisinesList, setCuisinesList] = useState([]);
+  const [selectedCuisines, setSelectedCuisines] = useState([]);
+  const [perPage, setPerPage]           = useState(25);
+  const [creatingBiz, setCreatingBiz]   = useState(false);
 
   const toSlug = (str) => str.toLowerCase().trim()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -122,6 +126,18 @@ export default function SellersPage() {
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const createAndLinkBusiness = () => {
+    if (!form.name) { showToast('Enter a Business Name first', 'warning'); return; }
+    setCreatingBiz(true);
+    axios.post('/api/ecommerce/businesses', { name: form.name })
+      .then(r => {
+        set('business_id', r.data.id);
+        showToast(`Business #${r.data.id} created & linked!`);
+      })
+      .catch(e => showToast(e.response?.data?.message || 'Failed to create business', 'danger'))
+      .finally(() => setCreatingBiz(false));
   };
 
   const load = useCallback(() => {
@@ -138,13 +154,22 @@ export default function SellersPage() {
   useEffect(() => {
     axios.get('/api/ecommerce/muzzhub-categories?all=1&active_only=1')
       .then(r => setCategories(Array.isArray(r.data) ? r.data : (r.data.data || [])));
+    axios.get('/api/ecommerce/cuisines')
+      .then(r => setCuisinesList(Array.isArray(r.data) ? r.data : (r.data.data || [])));
   }, []);
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
+  const toggleCuisine = (id) => {
+    setSelectedCuisines(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
   const openAdd = () => {
     setEditBiz(null);
     setForm(emptyForm);
+    setSelectedCuisines([]);
     setSlugLocked(false);
     setActiveTab('basic');
     setShowModal(true);
@@ -152,11 +177,20 @@ export default function SellersPage() {
 
   const openEdit = (biz) => {
     setEditBiz(biz);
+    // Date fields with MySQL zero-date should become empty string
+    const zeroDate = /^0000-00-00/;
+    const dateFields = ['checkin_start', 'checkin_end', 'start_date', 'end_date', 'closedDate'];
     const f = {};
     Object.keys(emptyForm).forEach(k => {
-      f[k] = biz[k] !== undefined && biz[k] !== null ? biz[k] : emptyForm[k];
+      // Skip computed accessor (amenities is built server-side from other fields)
+      if (k === 'amenities') { f[k] = ''; return; }
+      let val = biz[k] !== undefined && biz[k] !== null ? biz[k] : emptyForm[k];
+      // Nullify zero-dates so datetime-local input doesn't get invalid value
+      if (dateFields.includes(k) && typeof val === 'string' && zeroDate.test(val)) val = '';
+      f[k] = val;
     });
     setForm(f);
+    setSelectedCuisines(Array.isArray(biz.cuisines) ? biz.cuisines.map(c => c.id) : []);
     setSlugLocked(true);
     setActiveTab('basic');
     setShowModal(true);
@@ -164,12 +198,26 @@ export default function SellersPage() {
 
   const handleSave = () => {
     setSaving(true);
+    const payload = { ...form, cuisine_ids: selectedCuisines };
     const req = editBiz
-      ? axios.patch(`/api/ecommerce/muzzhub/${editBiz.id}`, form)
-      : axios.post('/api/ecommerce/muzzhub', form);
-    req.then(() => { showToast(editBiz ? 'Updated!' : 'Created!'); setShowModal(false); load(); })
-       .catch(e => showToast(e.response?.data?.message || 'Error saving', 'danger'))
-       .finally(() => setSaving(false));
+      ? axios.patch(`/api/ecommerce/muzzhub/${editBiz.id}`, payload)
+      : axios.post('/api/ecommerce/muzzhub', payload);
+    req
+      .then(() => {
+        showToast(editBiz ? 'Updated successfully!' : 'Created successfully!');
+        setShowModal(false);
+        load();
+      })
+      .catch(e => {
+        const data = e.response?.data;
+        if (data?.errors) {
+          const msgs = Object.values(data.errors).flat().join(' • ');
+          showToast(msgs, 'danger');
+        } else {
+          showToast(data?.message || 'Error saving. Please try again.', 'danger');
+        }
+      })
+      .finally(() => setSaving(false));
   };
 
   const handleDelete = () => {
@@ -404,13 +452,26 @@ export default function SellersPage() {
                       Linked Business ID
                       <small className="text-muted ms-1">(for menu &amp; orders)</small>
                     </FormLabel>
-                    <FormControl
-                      type="number"
-                      min="1"
-                      value={form.business_id}
-                      onChange={e => set('business_id', e.target.value)}
-                      placeholder="e.g. 3"
-                    />
+                    <div className="d-flex gap-2">
+                      <FormControl
+                        type="number"
+                        min="1"
+                        value={form.business_id}
+                        onChange={e => set('business_id', e.target.value)}
+                        placeholder="e.g. 3"
+                      />
+                      {!form.business_id && (
+                        <Button
+                          variant="outline-primary"
+                          size="sm"
+                          style={{ whiteSpace: 'nowrap' }}
+                          disabled={creatingBiz}
+                          onClick={createAndLinkBusiness}
+                        >
+                          {creatingBiz ? <Spinner size="sm" /> : <><Icon icon="plus" size={13} className="me-1" />Create</>}
+                        </Button>
+                      )}
+                    </div>
                     <small className="text-muted">Link to a Business record to enable menu and order flow.</small>
                   </Col>
 
@@ -448,9 +509,36 @@ export default function SellersPage() {
                     <FormControl value={form.type} onChange={e => set('type', e.target.value)} placeholder="e.g. restaurant, store, service" />
                   </Col>
 
-                  <Col md={4}>
-                    <FormLabel>Cuisine / Specialty</FormLabel>
-                    <FormControl value={form.cuisine} onChange={e => set('cuisine', e.target.value)} placeholder="e.g. Pakistani, Indian, Halal..." />
+                  <Col md={12}>
+                    <FormLabel>
+                      Cuisines
+                      {selectedCuisines.length > 0 && (
+                        <span className="badge bg-primary ms-2">{selectedCuisines.length} selected</span>
+                      )}
+                    </FormLabel>
+                    {cuisinesList.length === 0 ? (
+                      <small className="text-muted d-block">
+                        No cuisines found.{' '}
+                        <a href="/admin/apps/ecommerce/cuisines" target="_blank" rel="noreferrer">Add cuisines first →</a>
+                      </small>
+                    ) : (
+                      <div className="d-flex flex-wrap gap-2">
+                        {cuisinesList.map(c => {
+                          const active = selectedCuisines.includes(c.id);
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => toggleCuisine(c.id)}
+                              className={`btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}`}
+                              style={{ borderRadius: 20, fontSize: 12 }}
+                            >
+                              {c.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </Col>
 
                   <Col md={2}>
@@ -678,6 +766,53 @@ export default function SellersPage() {
                         />
                       ))}
                     </div>
+                  </Col>
+
+                  <Col xs={12}><hr className="my-1" /></Col>
+
+                  {/* ── Platform Fee Override ── */}
+                  <Col xs={12}>
+                    <FormLabel className="fw-semibold">Platform Fee Override</FormLabel>
+                    <p className="text-muted fs-sm mb-2">
+                      Override the global platform fee for this seller. "Inherit" uses the global setting.
+                    </p>
+                    <div className="d-flex flex-wrap gap-3 mb-2">
+                      {[
+                        { v: 'inherit',    l: 'Inherit Global' },
+                        { v: 'none',       l: 'No Fee' },
+                        { v: 'percentage', l: '% Percentage' },
+                        { v: 'fixed',      l: '$ Fixed' },
+                      ].map(opt => (
+                        <Form.Check
+                          key={opt.v}
+                          type="radio"
+                          id={`pf-${opt.v}`}
+                          name="platform_fee_override"
+                          label={opt.l}
+                          value={opt.v}
+                          checked={form.platform_fee_override === opt.v}
+                          onChange={e => set('platform_fee_override', e.target.value)}
+                        />
+                      ))}
+                    </div>
+                    {['percentage', 'fixed'].includes(form.platform_fee_override) && (
+                      <div className="input-group" style={{ maxWidth: 200 }}>
+                        {form.platform_fee_override === 'fixed' && (
+                          <span className="input-group-text">$</span>
+                        )}
+                        <FormControl
+                          type="number"
+                          min="0"
+                          step={form.platform_fee_override === 'percentage' ? '0.5' : '0.01'}
+                          placeholder={form.platform_fee_override === 'percentage' ? 'e.g. 5' : 'e.g. 1.99'}
+                          value={form.platform_fee_value}
+                          onChange={e => set('platform_fee_value', e.target.value)}
+                        />
+                        {form.platform_fee_override === 'percentage' && (
+                          <span className="input-group-text">%</span>
+                        )}
+                      </div>
+                    )}
                   </Col>
 
                   <Col xs={12}><hr className="my-1" /></Col>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal as TerminalIcon, X, Trash2, Plus, Columns2 } from 'lucide-react';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 let tabCounter = 0;
 function makeTabMeta() {
@@ -283,6 +284,7 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
 // ─── Multi-tab Terminal container ────────────────────────────────────────────
 
 export default function Terminal({ workspace, onClose, onTerminalApi }) {
+    const { isDark, tokens: t } = useCodeEditorTheme();
     const [tabs, setTabs] = useState(() => [makeTabMeta()]);
     const [activeId, setActiveId] = useState(() => tabs[0].id);
     const [splitId, setSplitId] = useState(null); // B-13: split terminal pane
@@ -410,9 +412,9 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                                     fontSize: '11px',
                                     whiteSpace: 'nowrap',
                                     background: isActive ? 'rgba(255,107,53,0.08)' : 'transparent',
-                                    color: isActive ? '#c9d1d9' : '#8b949e',
+                                    color: isActive ? (isDark ? '#c9d1d9' : '#24292f') : (isDark ? '#8b949e' : '#57606a'),
                                     borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
-                                    borderRight: '1px solid #1c2128',
+                                    borderRight: `1px solid ${isDark ? '#1c2128' : '#d0d7de'}`,
                                     userSelect: 'none',
                                     flexShrink: 0,
                                 }}
@@ -426,7 +428,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                                             background: 'none',
                                             border: 'none',
                                             cursor: 'pointer',
-                                            color: '#8b949e',
+                                            color: t.text3,
                                             padding: '0 1px',
                                             display: 'flex',
                                             alignItems: 'center',
@@ -450,7 +452,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                             background: 'none',
                             border: 'none',
                             cursor: 'pointer',
-                            color: '#8b949e',
+                            color: t.text3,
                             padding: '0 8px',
                             display: 'flex',
                             alignItems: 'center',
@@ -468,7 +470,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                         className="btn-icon"
                         onClick={splitId ? closeSplit : splitTerminal}
                         title={splitId ? 'Close split terminal' : 'Split terminal'}
-                        style={{ color: splitId ? '#ff6b35' : '#8b949e' }}
+                        style={{ color: splitId ? '#ff6b35' : t.text3 }}
                     >
                         <Columns2 size={13} />
                     </button>
@@ -500,7 +502,7 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                     </div>
                     {/* Drag handle */}
                     <div
-                        style={{ width: '3px', background: '#1c2128', cursor: 'col-resize', flexShrink: 0, transition: 'background 0.15s' }}
+                        style={{ width: '3px', background: t.border, cursor: 'col-resize', flexShrink: 0, transition: 'background 0.15s' }}
                         onMouseDown={(e) => {
                             e.preventDefault();
                             splitResizingRef.current = true;
@@ -508,10 +510,10 @@ export default function Terminal({ workspace, onClose, onTerminalApi }) {
                             document.body.style.userSelect = 'none';
                         }}
                         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.4)'; }}
-                        onMouseLeave={e => { if (!splitResizingRef.current) e.currentTarget.style.background = '#1c2128'; }}
+                        onMouseLeave={e => { if (!splitResizingRef.current) e.currentTarget.style.background = t.border; }}
                     />
                     {/* Right pane */}
-                    <div style={{ flex: 100 - splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid #1c2128' }}>
+                    <div style={{ flex: 100 - splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: `1px solid ${t.border}` }}>
                         {tabs.filter(t => t.id === splitId).map(tab => (
                             <TerminalInstance
                                 key={tab.id}

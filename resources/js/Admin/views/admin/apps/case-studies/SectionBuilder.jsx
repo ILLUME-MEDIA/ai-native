@@ -1,6 +1,7 @@
 import Icon from '@admin/components/wrappers/Icon';
-import { useState } from 'react';
-import { Badge, Button, Card, CardBody, CardHeader, Col, Form, Row } from 'react-bootstrap';
+import { useRef, useState } from 'react';
+import { Badge, Button, Card, CardBody, CardHeader, Col, Form, InputGroup, Row, Spinner } from 'react-bootstrap';
+import axios from 'axios';
 import { Editor } from '@tinymce/tinymce-react';
 
 // ─── Section type config (Tabler icons) ─────────────────────────────────
@@ -15,6 +16,57 @@ const SECTION_TYPES = {
 
 // ─── Deep clone helper ───────────────────────────────────────────────────
 const clone = (obj) => JSON.parse(JSON.stringify(obj));
+
+// ─── Media Upload Input ──────────────────────────────────────────────────
+// Combined URL input + upload button for image/video fields
+function MediaUploadInput({ value, onChange, accept = 'image/*,video/*', placeholder = 'https://...', size = 'sm' }) {
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await axios.post('/api/admin/case-studies/upload-media', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onChange(res.data.url);
+    } catch (err) {
+      alert('Upload failed: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <>
+      <input ref={fileRef} type="file" accept={accept} className="d-none" onChange={handleFile} />
+      <InputGroup size={size}>
+        <Form.Control
+          size={size}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+        />
+        <Button
+          variant="outline-secondary"
+          size={size}
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          title="Upload file"
+        >
+          {uploading
+            ? <Spinner animation="border" size="sm" />
+            : <Icon icon="upload" />}
+        </Button>
+      </InputGroup>
+    </>
+  );
+}
 
 // ─── Normalize content from DB to expected React structure ───────────────
 export function normalizeSection(section) {
@@ -149,7 +201,7 @@ function TextEditor({ content, onChange }) {
           </Form.Group>
           <Form.Group>
             <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Media URL (optional)</Form.Label>
-            <Form.Control size="sm" value={item.media_url ?? ''} onChange={(e) => update(idx, 'media_url', e.target.value)} placeholder="https://..." />
+            <MediaUploadInput value={item.media_url ?? ''} onChange={(v) => update(idx, 'media_url', v)} placeholder="https://... or upload" />
             {item.media_url && (
               <div className="mt-2">
                 <small className="text-muted d-block mb-1">Preview</small>
@@ -201,7 +253,7 @@ function TextWithMediaEditor({ content, onChange }) {
       </Form.Group>
       <Form.Group>
         <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Media URL</Form.Label>
-        <Form.Control size="sm" value={content.media_url ?? ''} onChange={(e) => onChange({ ...content, media_url: e.target.value })} placeholder="Video/image URL or path..." />
+        <MediaUploadInput value={content.media_url ?? ''} onChange={(v) => onChange({ ...content, media_url: v })} placeholder="Video/image URL or upload..." />
         {content.media_url && (
           <div className="mt-2">
             <small className="text-muted d-block mb-1">Preview</small>
@@ -223,7 +275,7 @@ function VideoEditor({ content, onChange }) {
   return (
     <Form.Group>
       <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Video URL / Path</Form.Label>
-      <Form.Control value={content.video_url ?? ''} onChange={(e) => onChange({ ...content, video_url: e.target.value })} placeholder="YouTube, Vimeo or local path..." />
+      <MediaUploadInput value={content.video_url ?? ''} onChange={(v) => onChange({ ...content, video_url: v })} accept="video/*" placeholder="YouTube, Vimeo, local path or upload..." size="md" />
       {content.video_url && (
         <div className="mt-2">
           <small className="text-muted d-block mb-1">Preview</small>
@@ -267,7 +319,11 @@ function CarouselEditor({ content, onChange }) {
           <Row className="g-2 align-items-start">
             <Col xs={3}>
               <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Type</Form.Label>
-              <Form.Select size="sm" value={slide.type ?? 'image'} onChange={(e) => update(idx, 'type', e.target.value)}>
+              <Form.Select size="sm" value={slide.type ?? 'image'} onChange={(e) => {
+                const next = clone(slides);
+                next[idx] = { type: e.target.value, image: '', video: '', text: next[idx].text ?? '' };
+                onChange({ ...content, slides: next });
+              }}>
                 <option value="image">Image</option>
                 <option value="video">Video</option>
                 <option value="text">Text</option>
@@ -277,7 +333,7 @@ function CarouselEditor({ content, onChange }) {
               {(slide.type ?? 'image') === 'image' && (
                 <Form.Group>
                   <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Image URL</Form.Label>
-                  <Form.Control size="sm" value={slide.image ?? ''} onChange={(e) => update(idx, 'image', e.target.value)} placeholder="Image URL or path..." />
+                  <MediaUploadInput value={slide.image ?? ''} onChange={(v) => update(idx, 'image', v)} accept="image/*" placeholder="Image URL or upload..." />
                   {slide.image && (
                     <div className="mt-2">
                       <small className="text-muted d-block mb-1">Preview</small>
@@ -295,7 +351,7 @@ function CarouselEditor({ content, onChange }) {
               {slide.type === 'video' && (
                 <Form.Group>
                   <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Video URL</Form.Label>
-                  <Form.Control size="sm" value={slide.video ?? ''} onChange={(e) => update(idx, 'video', e.target.value)} placeholder="Video URL..." />
+                  <MediaUploadInput value={slide.video ?? ''} onChange={(v) => update(idx, 'video', v)} accept="video/*" placeholder="Video URL or upload..." />
                   {slide.video && (
                     <div className="mt-2">
                       <small className="text-muted d-block mb-1">Preview</small>

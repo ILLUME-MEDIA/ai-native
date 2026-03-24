@@ -1,18 +1,18 @@
 import AdminAuthLayout from './AdminAuthLayout';
-import { useForm } from '@inertiajs/react';
+import { usePage } from '@inertiajs/react';
+import { useState } from 'react';
 
 export default function ConfirmPassword() {
-    const { data, setData, post, processing, errors, reset } = useForm({
-        password: '',
-    });
+    const {
+        props: { errors = {} },
+    } = usePage();
 
-    const submit = (e) => {
-        e.preventDefault();
+    const [password, setPassword] = useState('');
 
-        post(route('password.confirm'), {
-            onFinish: () => reset('password'),
-        });
-    };
+    const csrfToken =
+        typeof document !== 'undefined'
+            ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''
+            : '';
 
     return (
         <AdminAuthLayout
@@ -20,7 +20,8 @@ export default function ConfirmPassword() {
             heading="Confirm your password"
             subheading="This is a secure area. Please confirm your password to continue."
         >
-            <form onSubmit={submit}>
+            <form method="POST" action={route('password.confirm')}>
+                {csrfToken && <input type="hidden" name="_token" value={csrfToken} />}
                 <div className="mb-3">
                     <label htmlFor="password" className="form-label">
                         Password <span className="text-danger">*</span>
@@ -30,8 +31,8 @@ export default function ConfirmPassword() {
                         type="password"
                         name="password"
                         className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-                        value={data.password}
-                        onChange={(e) => setData('password', e.target.value)}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
                         required
                         autoFocus
                     />
@@ -39,7 +40,7 @@ export default function ConfirmPassword() {
                 </div>
 
                 <div className="d-grid">
-                    <button className="btn btn-primary fw-semibold py-2" disabled={processing}>
+                    <button className="btn btn-primary fw-semibold py-2">
                         Confirm
                     </button>
                 </div>

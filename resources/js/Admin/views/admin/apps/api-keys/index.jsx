@@ -1,14 +1,18 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import { Col, Row } from 'react-bootstrap';
-import ApiKeyTable from './components/ApiKeyTable';
+import AppSecretsTable from './components/AppSecretsTable';
+
 const Page = () => {
-  return <>
-      <PageBreadcrumb title="API Keys" subtitle="Apps" />
+  return (
+    <>
+      <PageBreadcrumb title="App Secrets" subtitle="Apps" />
       <Row>
         <Col xs={12}>
-          <ApiKeyTable />
+          <AppSecretsTable />
         </Col>
       </Row>
-    </>;
+    </>
+  );
 };
+
 export default Page;

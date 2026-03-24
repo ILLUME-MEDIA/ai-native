@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Muzzhub extends Model
 {
@@ -34,6 +35,7 @@ class Muzzhub extends Model
         'comments', 'ownedBy', 'related', 'associated_listings',
         'featured_heading', 'featured_tiles',
         'enable_order', 'enable_order_print', 'enable_stripe', 'adjust_platform_fee',
+        'platform_fee_override', 'platform_fee_value',
         'is_online', 'booking', 'booking_slot_value', 'platforms',
         'order_online_link', 'delivery_fee_discount', 'offline_record_time',
         'capacity', 'to_go', 'demographics', 'kitchen',
@@ -60,8 +62,9 @@ class Muzzhub extends Model
         'enable_order'      => 'boolean',
         'enable_order_print'=> 'boolean',
         'enable_stripe'     => 'boolean',
-        'adjust_platform_fee'=> 'boolean',
-        'is_online'         => 'boolean',
+        'adjust_platform_fee'  => 'boolean',
+        'platform_fee_value'   => 'decimal:2',
+        'is_online'            => 'boolean',
         'restrict_checkin'  => 'boolean',
         'created_app_user'  => 'boolean',
         'auto_accept'       => 'boolean',
@@ -144,5 +147,10 @@ class Muzzhub extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function cuisines(): BelongsToMany
+    {
+        return $this->belongsToMany(Cuisine::class, 'muzzhub_cuisine', 'muzzhub_id', 'cuisine_id');
     }
 }

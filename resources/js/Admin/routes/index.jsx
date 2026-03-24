@@ -18,6 +18,12 @@ export const routes = [
   }, {
   element: <MainLayout />,
   children: [{
+    path: '/settings/design-system',
+    Component: lazy(() => import('@admin/views/admin/apps/design-system'))
+  }, {
+    path: '/apps/design-system-manager',
+    Component: lazy(() => import('@admin/views/admin/apps/design-system/DesignSystemManager'))
+  }, {
     path: '/apps/api-keys',
     Component: lazy(() => import('@admin/views/admin/apps/api-keys'))
   }, {
@@ -177,11 +183,17 @@ export const routes = [
     path: '/apps/ecommerce/muzzhub-categories',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/muzzhub-categories'))
   }, {
+    path: '/apps/ecommerce/cuisines',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/cuisines'))
+  }, {
     path: '/apps/ecommerce/deliveries',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/deliveries'))
   }, {
     path: '/apps/ecommerce/settings',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/settings'))
+  }, {
+    path: '/apps/ecommerce/fee-settings',
+    Component: lazy(() => import('@admin/views/admin/ecommerce/FeeSettings'))
   }, {
     path: '/apps/ecommerce/pos',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/pos'))
@@ -330,6 +342,15 @@ export const routes = [
     path: '/apps/yelp',
     Component: lazy(() => import('@admin/views/admin/apps/yelp'))
   }, {
+    path: '/apps/cal',
+    Component: lazy(() => import('@admin/views/admin/apps/cal'))
+  }, {
+    path: '/apps/deploy',
+    Component: lazy(() => import('@admin/views/admin/apps/deploy/Index'))
+  }, {
+    path: '/apps/kanban',
+    Component: lazy(() => import('@admin/views/admin/apps/kanban'))
+  }, {
     path: '/apps/otp-auth',
     Component: lazy(() => import('@admin/views/admin/apps/otp-auth'))
   }, {
@@ -341,6 +362,9 @@ export const routes = [
   }, {
     path: '/ai/platforms',
     Component: lazy(() => import('@admin/views/admin/ai-agent/Platforms'))
+  }, {
+    path: '/ai/platform-genres',
+    Component: lazy(() => import('@admin/views/admin/ai-agent/PlatformGenres'))
   }, {
     path: '/ai/chat',
     Component: lazy(() => import('@admin/views/admin/ai-agent/Chat'))

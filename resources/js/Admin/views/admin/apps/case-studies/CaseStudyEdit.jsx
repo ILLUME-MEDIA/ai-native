@@ -1,6 +1,6 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader,
   Col, Form, Row, Spinner,
@@ -38,9 +38,11 @@ const CaseStudyEdit = () => {
     featured_image_url: '',
     group_ids: [],
   });
-  const [currentFeaturedImage, setCurrentFeaturedImage] = useState('');
   const [featuredFile, setFeaturedFile] = useState(null);
   const [featuredPreview, setFeaturedPreview] = useState('');
+  const [featuredIsVideo, setFeaturedIsVideo] = useState(false);
+  const fileInputRef = useRef(null);
+  const isVideoSrc = (src) => /\.(mp4|webm|ogg|mov|avi|mkv|m4v)(\?.*)?$/i.test(src);
 
   useEffect(() => {
     axios.get('/api/admin/case-study-groups').then((r) => setGroups(r.data ?? [])).catch(() => {});
@@ -73,11 +75,10 @@ const CaseStudyEdit = () => {
           project_link:       item.project_link ?? '',
           status:             String(item.status ?? 1),
           tags,
-          featured_image_url: '',
+          featured_image_url: item.featured_image ?? '',
           group_ids:          (item.groups ?? []).map((g) => g.id),
         });
-
-        setCurrentFeaturedImage(item.featured_image ?? '');
+        setFeaturedIsVideo(isVideoSrc(item.featured_image ?? ''));
 
         // Normalize sections (convert DB content to React format)
         const rawSections = item.sections ?? [];
@@ -140,6 +141,19 @@ const CaseStudyEdit = () => {
     if (!file) return;
     setFeaturedFile(file);
     setFeaturedPreview(URL.createObjectURL(file));
+    setFeaturedIsVideo(file.type.startsWith('video/'));
+    setForm((prev) => ({ ...prev, featured_image_url: '' }));
+  };
+
+  const handleUrlChange = (e) => {
+    const url = e.target.value;
+    setForm((prev) => ({ ...prev, featured_image_url: url }));
+    setFeaturedIsVideo(isVideoSrc(url));
+    if (featuredFile) {
+      setFeaturedFile(null);
+      setFeaturedPreview('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const submit = async (e) => {
@@ -339,23 +353,41 @@ const CaseStudyEdit = () => {
             <Card className="mb-4">
               <CardHeader className="border-light"><h5 className="mb-0">Featured Image</h5></CardHeader>
               <CardBody>
-                {(featuredPreview || currentFeaturedImage) && (
+                {(featuredPreview || form.featured_image_url) && (
                   <div className="mb-3">
-                    <img
-                      src={featuredPreview || currentFeaturedImage}
-                      alt="Preview"
-                      className="img-fluid rounded"
-                      style={{ maxHeight: 180, width: '100%', objectFit: 'cover' }}
-                    />
+                    {featuredIsVideo ? (
+                      <video
+                        src={featuredPreview || form.featured_image_url}
+                        controls
+                        className="rounded"
+                        style={{ maxHeight: 180, width: '100%' }}
+                      />
+                    ) : (
+                      <img
+                        src={featuredPreview || form.featured_image_url}
+                        alt="Preview"
+                        className="img-fluid rounded"
+                        style={{ maxHeight: 180, width: '100%', objectFit: 'cover' }}
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                        onLoad={(e) => { e.target.style.display = ''; }}
+                      />
+                    )}
                   </div>
                 )}
                 <Form.Group className="mb-3">
-                  <Form.Label className="fw-semibold">Replace with Upload</Form.Label>
-                  <Form.Control type="file" accept="image/*,video/*" onChange={handleFileChange} />
+                  <Form.Label className="fw-semibold">Upload New File</Form.Label>
+                  <Form.Control ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleFileChange} />
+                  <Form.Text className="text-muted">Uploading a file will replace the current image/URL.</Form.Text>
                 </Form.Group>
                 <Form.Group>
-                  <Form.Label className="fw-semibold">Or replace with URL</Form.Label>
-                  <Form.Control name="featured_image_url" value={form.featured_image_url} onChange={handleChange} placeholder="https://..." />
+                  <Form.Label className="fw-semibold">Image / Video URL</Form.Label>
+                  <Form.Control
+                    name="featured_image_url"
+                    value={form.featured_image_url}
+                    onChange={handleUrlChange}
+                    placeholder="https://..."
+                  />
+                  <Form.Text className="text-muted">Current URL shown above. Edit or clear to change.</Form.Text>
                 </Form.Group>
               </CardBody>
             </Card>

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus, History } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
+    const { isDark, tokens: t } = useCodeEditorTheme();
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -19,8 +21,17 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [selectedModel, setSelectedModel] = useState('AUTO');
     const [isAuto, setIsAuto] = useState(true);
     const [uiTarget, setUiTarget] = useState(() => localStorage.getItem('codeEditor.uiTarget') || 'ask');
-    const [pendingClarification, setPendingClarification] = useState(null); // { questions: [...] }
-    const [activePlanTasks, setActivePlanTasks] = useState(null); // { task_list_id, tasks: [...] }
+    const [pendingClarification, setPendingClarification] = useState(null);
+    const [activePlanTasks, setActivePlanTasks] = useState(null);
+    const [hoveredTabId, setHoveredTabId] = useState(null);
+    const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
+    // Image attachments
+    const [attachedImages, setAttachedImages] = useState([]); // [{dataUrl, name}]
+    const fileInputRef = useRef(null);
+    const historyDropdownRef = useRef(null);
+    // Voice input
+    const [isListening, setIsListening] = useState(false);
+    const recognitionRef = useRef(null);
     const messagesEndRef = useRef(null);
     const eventSourceRef = useRef(null);
     const abortRef = useRef(null);
@@ -119,6 +130,18 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         return () => clearInterval(t);
     }, [loading, streamSeconds]);
 
+    // Close history dropdown when clicking outside
+    useEffect(() => {
+        if (!showHistoryDropdown) return;
+        function onClickOutside(e) {
+            if (historyDropdownRef.current && !historyDropdownRef.current.contains(e.target)) {
+                setShowHistoryDropdown(false);
+            }
+        }
+        document.addEventListener('mousedown', onClickOutside);
+        return () => document.removeEventListener('mousedown', onClickOutside);
+    }, [showHistoryDropdown]);
+
     async function loadEndpoints() {
         try {
             const response = await axios.get('/api/ai/endpoints');
@@ -152,6 +175,19 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             }
         } catch (e) {
             console.error('Failed to load conversations', e);
+        }
+    }
+
+    // Only refresh the list without auto-selecting (safe to call anytime)
+    async function refreshConversationList() {
+        if (!workspace?.id) return;
+        try {
+            const resp = await axios.get(`/api/workspaces/${workspace.id}/ai/conversations`, {
+                params: { limit: 20 },
+            });
+            setConversations(resp.data?.conversations || []);
+        } catch (e) {
+            console.error('Failed to refresh conversation list', e);
         }
     }
 
@@ -226,8 +262,73 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         }
     }
 
+    // ── Image helpers ──────────────────────────────────────────────────────────
+    function addImageFile(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            setAttachedImages(prev => [...prev, { dataUrl: e.target.result, name: file.name || 'image.png' }]);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function handlePaste(e) {
+        const items = e.clipboardData?.items || [];
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                addImageFile(item.getAsFile());
+                return;
+            }
+        }
+    }
+
+    function handleFileInput(e) {
+        Array.from(e.target.files || []).forEach(addImageFile);
+        e.target.value = '';
+    }
+
+    function removeImage(idx) {
+        setAttachedImages(prev => prev.filter((_, i) => i !== idx));
+    }
+
+    // ── Voice input ────────────────────────────────────────────────────────────
+    function toggleVoice() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            toast.error('Voice input is not supported in this browser. Use Chrome or Edge.');
+            return;
+        }
+
+        if (isListening) {
+            recognitionRef.current?.stop();
+            setIsListening(false);
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = false;
+        recognitionRef.current = recognition;
+
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend   = () => setIsListening(false);
+        recognition.onerror = () => { setIsListening(false); toast.error('Voice recognition failed.'); };
+
+        recognition.onresult = (event) => {
+            const transcript = Array.from(event.results)
+                .map(r => r[0].transcript)
+                .join('');
+            setInput(prev => prev + transcript);
+        };
+
+        recognition.start();
+    }
+
+    // ── Send ───────────────────────────────────────────────────────────────────
     async function handleSend() {
-        if (!input.trim() || loading) return;
+        if ((!input.trim() && attachedImages.length === 0) || loading) return;
 
         if (!workspace?.id) {
             toast.error('No workspace selected. Please open or create a workspace first.');
@@ -249,12 +350,15 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         const userMessage = {
             role: 'user',
             content: input,
+            images: attachedImages.map(i => i.dataUrl),
             timestamp: new Date()
         };
 
         setMessages(prev => [...prev, userMessage]);
         const userInput = input;
+        const userImages = [...attachedImages];
         setInput('');
+        setAttachedImages([]);
         setLoading(true);
         setStreamingMessage('');
         setStreamingStatus('Connecting...');
@@ -274,8 +378,18 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             const url = `/api/workspaces/${workspace.id}/ai/chat-stream`;
 
             // Create FormData for POST request
+            // Build message — append image descriptions when images are attached
+            let fullMessage = userInput;
+            if (userImages.length > 0) {
+                fullMessage += `\n\n[User attached ${userImages.length} image(s). Treat them as visual context for this request.]`;
+            }
+
             const formData = new FormData();
-            formData.append('message', userInput);
+            formData.append('message', fullMessage);
+            // Attach images as base64 for vision-capable models
+            userImages.forEach((img, i) => {
+                formData.append(`images[${i}]`, img.dataUrl);
+            });
             formData.append('endpoint_id', selectedEndpoint);
             formData.append('model_id', isAuto ? 'AUTO' : selectedModel);
             formData.append('ui_target', uiTarget || 'ask');
@@ -566,16 +680,221 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 </button>
             </div>
 
+            {/* ── Conversation Tabs ─────────────────────────────────── */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'stretch',
+                borderBottom: `1px solid ${t.border}`,
+                background: t.bgTab,
+                flexShrink: 0,
+                minHeight: '32px',
+            }}>
+                {/* Scrollable tabs area */}
+                <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', overflowX: 'auto', scrollbarWidth: 'none' }}>
+                    {/* Existing conversation tabs */}
+                    {conversations.map(c => {
+                        const isActive = conversationId === c.id;
+                        const isHovered = hoveredTabId === c.id;
+                        const label = c.title ? c.title.slice(0, 14) : `Chat #${c.id}`;
+                        return (
+                            <div
+                                key={c.id}
+                                onMouseEnter={() => setHoveredTabId(c.id)}
+                                onMouseLeave={() => setHoveredTabId(null)}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '0 8px 0 12px',
+                                    background: isActive ? t.bg2 : isHovered ? (isDark ? '#0a0c0f' : t.bg4) : 'transparent',
+                                    borderRight: `1px solid ${t.border}`,
+                                    borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    flexShrink: 0,
+                                    transition: 'background 0.1s',
+                                }}
+                            >
+                                {/* Tab label */}
+                                <span
+                                    onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
+                                    title={c.title || `Chat #${c.id}`}
+                                    style={{
+                                        color: isActive ? t.text2 : isHovered ? t.text2 : t.text3,
+                                        fontSize: '11px',
+                                        whiteSpace: 'nowrap',
+                                        maxWidth: '110px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        userSelect: 'none',
+                                    }}
+                                >
+                                    {label}
+                                </span>
+                                {/* × close button — visible on hover */}
+                                <span
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (loading) return;
+                                        try {
+                                            await axios.delete(`/api/workspaces/${workspace.id}/ai/conversations/${c.id}`);
+                                        } catch (_) { /* ignore */ }
+                                        setConversations(prev => prev.filter(x => x.id !== c.id));
+                                        if (conversationId === c.id) {
+                                            setConversationId(null);
+                                            setMessages([]);
+                                        }
+                                    }}
+                                    title="Close conversation"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '14px',
+                                        height: '14px',
+                                        borderRadius: '3px',
+                                        color: isHovered || isActive ? '#6e7681' : 'transparent',
+                                        cursor: 'pointer',
+                                        fontSize: '10px',
+                                        flexShrink: 0,
+                                        transition: 'color 0.1s, background 0.1s',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; e.currentTarget.style.background = 'rgba(248,81,73,0.15)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.color = isHovered || isActive ? '#6e7681' : 'transparent'; e.currentTarget.style.background = 'transparent'; }}
+                                >
+                                    <X size={10} />
+                                </span>
+                            </div>
+                        );
+                    })}
+
+                    {/* "New chat" tab — active when no conversation selected */}
+                    {!conversationId && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 12px',
+                            background: t.bg2,
+                            borderRight: `1px solid ${t.border}`,
+                            borderBottom: '2px solid #ff6b35',
+                            color: t.text2,
+                            fontSize: '11px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                        }}>
+                            New chat
+                        </div>
+                    )}
+
+                    {/* "+" new chat button */}
+                    <button
+                        onClick={() => { setConversationId(null); setMessages([]); }}
+                        disabled={loading}
+                        title="New chat"
+                        style={{
+                            padding: '0 10px',
+                            background: 'transparent',
+                            border: 'none',
+                            borderBottom: '2px solid transparent',
+                            color: t.text4,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; }}
+                    >
+                        <Plus size={14} />
+                    </button>
+                </div>
+
+                {/* Right-fixed area: History + Idle */}
+                <div style={{ display: 'flex', alignItems: 'center', borderLeft: `1px solid ${t.border}`, flexShrink: 0 }}>
+                    {/* History dropdown */}
+                    <div ref={historyDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <button
+                            onClick={() => { const next = !showHistoryDropdown; setShowHistoryDropdown(next); if (next) refreshConversationList(); }}
+                            title="Chat history"
+                            style={{
+                                padding: '0 9px',
+                                height: '100%',
+                                background: showHistoryDropdown ? 'rgba(255,107,53,0.1)' : 'transparent',
+                                border: 'none',
+                                color: showHistoryDropdown ? '#ff6b35' : t.text4,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                            }}
+                            onMouseEnter={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; } }}
+                            onMouseLeave={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; } }}
+                        >
+                            <History size={13} />
+                        </button>
+
+                        {showHistoryDropdown && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '100%',
+                                right: 0,
+                                zIndex: 999,
+                                background: t.bg3,
+                                border: `1px solid ${t.scrollbar}`,
+                                borderRadius: '6px',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                                minWidth: '220px',
+                                maxHeight: '260px',
+                                overflowY: 'auto',
+                                scrollbarWidth: 'thin',
+                            }}>
+                                <div style={{ padding: '6px 12px', fontSize: '10px', color: t.text4, borderBottom: `1px solid ${t.border}`, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                                    Conversation History
+                                </div>
+                                {conversations.length === 0 && (
+                                    <div style={{ padding: '10px 12px', color: t.text3, fontSize: '12px' }}>No conversations yet</div>
+                                )}
+                                {conversations.map(c => (
+                                    <div
+                                        key={c.id}
+                                        onClick={async () => {
+                                            setConversationId(c.id);
+                                            await loadConversation(c.id);
+                                            setShowHistoryDropdown(false);
+                                        }}
+                                        style={{
+                                            padding: '7px 12px',
+                                            cursor: 'pointer',
+                                            color: conversationId === c.id ? '#ff6b35' : t.text2,
+                                            fontSize: '12px',
+                                            background: conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent',
+                                            borderBottom: `1px solid ${t.border}`,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.1)'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent'; }}
+                                    >
+                                        <span style={{ opacity: 0.5, fontSize: '10px', flexShrink: 0 }}>#{c.id}</span>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title || `Chat #${c.id}`}</span>
+                                        {conversationId === c.id && <Check size={11} style={{ marginLeft: 'auto', flexShrink: 0 }} />}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Idle/timer */}
+                    <span style={{ padding: '0 10px', fontSize: '10px', color: t.text4, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+                        {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
+                    </span>
+                </div>
+            </div>
+
             <div className="chat-controls chat-controls-compact">
                 <div className="chat-controls-bar">
-                    <div className="chat-controls-summary">
-                        <span className="badge bg-secondary">
-                            Chat {conversationId ? `#${conversationId}` : 'New'}
-                        </span>
-                        <span className="text-muted small">
-                            {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
-                        </span>
-                    </div>
                     <button
                         type="button"
                         className="btn btn-sm btn-outline-secondary chat-settings-toggle"
@@ -584,7 +903,8 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                         title={settingsOpen ? 'Hide settings' : 'Show settings'}
                     >
                         <SlidersHorizontal size={14} className="me-1" />
-                        {settingsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        <span style={{ fontSize: '11px' }}>Settings</span>
+                        {settingsOpen ? <ChevronUp size={12} className="ms-1" /> : <ChevronDown size={12} className="ms-1" />}
                     </button>
                 </div>
 
@@ -610,44 +930,27 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                             </div>
 
                             <div className="col-12">
-                                <label className="form-label mb-1">Conversation</label>
-                                <select
-                                    className="form-select form-select-sm"
-                                    value={conversationId || ''}
-                                    onChange={async (e) => {
-                                        const id = e.target.value ? Number(e.target.value) : null;
-                                        setConversationId(id);
-                                        if (id) {
-                                            await loadConversation(id);
-                                        } else {
-                                            setMessages([]);
-                                        }
-                                    }}
-                                    disabled={loading}
-                                >
-                                    <option value="">New chat (auto)</option>
-                                    {conversations.map(c => (
-                                        <option key={c.id} value={c.id}>
-                                            #{c.id} {c.title ? `- ${c.title}` : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="col-12">
                                 <label className="form-label mb-1">Provider</label>
                                 <select
                                     className="form-select form-select-sm"
                                     value={selectedEndpoint || ''}
                                     onChange={(e) => setSelectedEndpoint(Number(e.target.value))}
-                                    disabled={loading}
+                                    disabled={loading || endpoints.length === 0}
                                 >
-                                    {endpoints.map(ep => (
-                                        <option key={ep.id} value={ep.id}>
-                                            {ep.name} ({ep.provider})
-                                        </option>
-                                    ))}
+                                    {endpoints.length === 0
+                                        ? <option value="">— No providers configured —</option>
+                                        : endpoints.map(ep => (
+                                            <option key={ep.id} value={ep.id}>
+                                                {ep.name} ({ep.provider})
+                                            </option>
+                                        ))
+                                    }
                                 </select>
+                                {endpoints.length === 0 && (
+                                    <div className="form-text text-warning" style={{ fontSize: '10px' }}>
+                                        No active AI providers found. Go to <strong>Settings → AI Endpoints</strong> to add one.
+                                    </div>
+                                )}
                             </div>
 
                             <div className="col-12">
@@ -709,25 +1012,23 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 {renderGroupedMessages(messages, handleApply)}
 
                 {loading && (
-                    <div className="chat-message assistant streaming">
-                        <div className="message-header">
-                            <strong>AI</strong>
-                            <span className="badge bg-info">
-                                <Loader size={12} className="me-1 spinning" />
-                                Streaming
-                            </span>
-                        </div>
-                        {streamingStatus && (
-                            <div className="streaming-status">
-                                <small className="text-muted">
-                                    <Loader size={12} className="me-1 spinning" />
-                                    {streamingStatus}
-                                </small>
+                    <div className="chat-msg-row chat-msg-row--ai">
+                        <div className="chat-avatar chat-avatar--ai pulse">AI</div>
+                        <div className="chat-bubble-wrap">
+                            <div className="chat-bubble chat-bubble--ai streaming">
+                                {streamingStatus && (
+                                    <div className="streaming-status">
+                                        <small className="text-muted">
+                                            <Loader size={12} className="me-1 spinning" />
+                                            {streamingStatus}
+                                        </small>
+                                    </div>
+                                )}
+                                <div className="message-content streaming-content">
+                                    {streamingMessage || 'Waiting for response...'}
+                                    <span className="streaming-cursor">▋</span>
+                                </div>
                             </div>
-                        )}
-                        <div className="message-content streaming-content">
-                            {streamingMessage || 'Waiting for response...'}
-                            <span className="streaming-cursor">▋</span>
                         </div>
                     </div>
                 )}
@@ -770,38 +1071,166 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 </div>
             )}
 
-            <div className="chat-input">
+            {/* ── Chat Input ─────────────────────────────────────────────── */}
+            <div style={{
+                borderTop: `1px solid ${t.border}`,
+                background: t.bg2,
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+            }}>
                 {!workspace?.id && (
-                    <div className="alert alert-warning py-2 px-3 mb-2 small mb-0">
+                    <div style={{ fontSize: '11px', color: '#f85149', padding: '4px 6px', background: 'rgba(248,81,73,0.1)', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.2)' }}>
                         Select a workspace first to use AI chat.
                     </div>
                 )}
+
+                {/* Image previews */}
+                {attachedImages.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {attachedImages.map((img, i) => (
+                            <div key={i} style={{ position: 'relative', width: '56px', height: '56px' }}>
+                                <img
+                                    src={img.dataUrl}
+                                    alt={img.name}
+                                    style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '4px', border: `1px solid ${t.scrollbar}` }}
+                                />
+                                <button
+                                    onClick={() => removeImage(i)}
+                                    style={{
+                                        position: 'absolute', top: '-4px', right: '-4px',
+                                        background: '#f85149', border: 'none', borderRadius: '50%',
+                                        width: '16px', height: '16px', cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        padding: 0, color: '#fff',
+                                    }}
+                                >
+                                    <X size={9} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Textarea */}
                 <textarea
-                    className="form-control"
-                    placeholder={workspace?.id ? "Ask AI to help with your code..." : "No workspace selected..."}
+                    placeholder={workspace?.id ? "Ask AI… (Enter to send, Shift+Enter = new line)" : "No workspace selected…"}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onPaste={handlePaste}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSend();
-                        }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
                     }}
                     rows={3}
                     disabled={loading || !workspace?.id}
+                    style={{
+                        width: '100%',
+                        background: isDark ? '#0a0c0f' : t.bg3,
+                        color: t.text2,
+                        border: `1px solid ${t.scrollbar}`,
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '12px',
+                        fontFamily: 'inherit',
+                        resize: 'none',
+                        outline: 'none',
+                        lineHeight: '1.5',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(255,107,53,0.5)'; }}
+                    onBlur={e => { e.target.style.borderColor = t.scrollbar; }}
                 />
-                <div className="d-flex gap-2">
-                    {loading ? (
-                        <button className="btn btn-outline-secondary" onClick={handleCancel} title="Cancel">
-                            <X size={18} />
-                        </button>
-                    ) : null}
+
+                {/* Action buttons row */}
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={handleFileInput}
+                    />
+
+                    {/* Attach image button */}
                     <button
-                        className="btn btn-primary"
-                        onClick={handleSend}
-                        disabled={loading || !input.trim() || !workspace?.id}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={loading || !workspace?.id}
+                        title="Attach image (or paste from clipboard)"
+                        style={{
+                            background: 'none', border: `1px solid ${t.scrollbar}`, borderRadius: '4px',
+                            color: t.text3, cursor: 'pointer', padding: '4px 7px',
+                            display: 'flex', alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; }}
                     >
-                        {loading ? <Loader size={18} className="spinning" /> : <Send size={18} />}
+                        <Paperclip size={14} />
+                    </button>
+
+                    {/* Voice input button */}
+                    <button
+                        onClick={toggleVoice}
+                        disabled={loading || !workspace?.id}
+                        title={isListening ? 'Stop recording' : 'Start voice input'}
+                        style={{
+                            background: isListening ? 'rgba(248,81,73,0.15)' : 'none',
+                            border: `1px solid ${isListening ? 'rgba(248,81,73,0.5)' : t.scrollbar}`,
+                            borderRadius: '4px',
+                            color: isListening ? '#f85149' : t.text3,
+                            cursor: 'pointer', padding: '4px 7px',
+                            display: 'flex', alignItems: 'center',
+                        }}
+                        onMouseEnter={e => { if (!isListening) { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; } }}
+                        onMouseLeave={e => { if (!isListening) { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; } }}
+                    >
+                        {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+                    </button>
+
+                    {isListening && (
+                        <span style={{ fontSize: '10px', color: '#f85149', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f85149', animation: 'pulse 1s infinite' }} />
+                            Listening…
+                        </span>
+                    )}
+
+                    <div style={{ flex: 1 }} />
+
+                    {/* Cancel button */}
+                    {loading && (
+                        <button
+                            onClick={handleCancel}
+                            title="Cancel"
+                            style={{
+                                background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                                borderRadius: '4px', color: '#f85149', cursor: 'pointer',
+                                padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px',
+                            }}
+                        >
+                            <X size={13} /> Cancel
+                        </button>
+                    )}
+
+                    {/* Send button */}
+                    <button
+                        onClick={handleSend}
+                        disabled={loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id}
+                        title="Send (Enter)"
+                        style={{
+                            background: 'rgba(255,107,53,0.15)',
+                            border: '1px solid rgba(255,107,53,0.4)',
+                            borderRadius: '4px',
+                            color: '#ff6b35',
+                            cursor: 'pointer',
+                            padding: '4px 12px',
+                            fontSize: '11px',
+                            display: 'flex', alignItems: 'center', gap: '5px',
+                            opacity: (loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id) ? 0.4 : 1,
+                        }}
+                    >
+                        {loading ? <Loader size={13} className="spinning" /> : <Send size={13} />}
+                        Send
                     </button>
                 </div>
             </div>
@@ -859,59 +1288,69 @@ function renderGroupedMessages(messages, handleApply) {
             continue;
         }
 
+        const isUser = msg.role === 'user';
         out.push(
-            <div key={idx} className={`chat-message ${msg.role} ${msg.isError ? 'error' : ''}`}>
-                <div className="message-header">
-                    <strong>{msg.role === 'user' ? 'You' : 'AI'}</strong>
-                    {msg.model_used && (
-                        <span className="badge bg-primary">{msg.model_used}</span>
-                    )}
-                    <span className="message-time">
-                        {msg.timestamp.toLocaleTimeString()}
-                    </span>
-                </div>
-                <div className="message-content">
-                    {msg.content}
-                </div>
+            <div key={idx} className={`chat-msg-row ${isUser ? 'chat-msg-row--user' : 'chat-msg-row--ai'} ${msg.isError ? 'error' : ''}`}>
+                {/* AI avatar (left) */}
+                {!isUser && (
+                    <div className="chat-avatar chat-avatar--ai">AI</div>
+                )}
 
-                {msg.tool_calls && msg.tool_calls.length > 0 && (
-                    <div className="tool-calls mt-2">
-                        <div className="small text-muted mb-1">Tools</div>
-                        {msg.tool_calls.map((tool, toolIdx) => (
-                            <div key={toolIdx} className="tool-call-item mb-1">
-                                <span className={`badge ${tool.result?.success ? 'bg-success' : 'bg-danger'}`}>
-                                    {tool.name}
-                                </span>
-                                {tool.result?.path && (
-                                    <span className="ms-2 small text-muted">{tool.result.path}</span>
-                                )}
-                                {tool.result?.message && (
-                                    <span className="ms-2 small text-muted">— {tool.result.message}</span>
-                                )}
-                                {tool.result?.requires_approval && (
-                                    <span className="ms-2 small text-warning">Pending Approval</span>
-                                )}
+                <div className="chat-bubble-wrap">
+                    <div className={`chat-bubble ${isUser ? 'chat-bubble--user' : 'chat-bubble--ai'}`}>
+                        <div className="message-content">
+                            {msg.content}
+                            {msg.images?.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                                    {msg.images.map((src, i) => (
+                                        <img key={i} src={src} alt={`attachment ${i + 1}`} style={{ maxWidth: '120px', maxHeight: '80px', borderRadius: '4px', objectFit: 'cover' }} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {msg.tool_calls && msg.tool_calls.length > 0 && (
+                            <div className="tool-calls mt-2">
+                                <div className="small text-muted mb-1">Tools used</div>
+                                {msg.tool_calls.map((tool, toolIdx) => (
+                                    <div key={toolIdx} className="tool-call-item mb-1">
+                                        <span className={`badge ${tool.result?.success ? 'bg-success' : 'bg-danger'}`}>{tool.name}</span>
+                                        {tool.result?.path && <span className="ms-2 small text-muted">{tool.result.path}</span>}
+                                        {tool.result?.message && <span className="ms-2 small text-muted">— {tool.result.message}</span>}
+                                        {tool.result?.requires_approval && <span className="ms-2 small text-warning">Pending Approval</span>}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                )}
+                        )}
 
-                {msg.requires_approval && (
-                    <div className="alert alert-warning mt-2 mb-0 small">
-                        ⚠️ This action requires approval. Check the Approvals panel.
-                    </div>
-                )}
+                        {msg.requires_approval && (
+                            <div className="alert alert-warning mt-2 mb-0 small">
+                                ⚠️ This action requires approval. Check the Approvals panel.
+                            </div>
+                        )}
 
-                {msg.code_changes && msg.code_changes.length > 0 && !msg.requires_approval && (
-                    <div className="message-actions mt-2">
-                        <button
-                            className="btn btn-sm btn-primary"
-                            onClick={() => handleApply(msg.code_changes)}
-                        >
-                            <Check size={14} className="me-1" />
-                            Apply Changes ({msg.code_changes.length})
-                        </button>
+                        {msg.code_changes && msg.code_changes.length > 0 && !msg.requires_approval && (
+                            <div className="message-actions mt-2">
+                                <button className="btn btn-sm btn-primary" onClick={() => handleApply(msg.code_changes)}>
+                                    <Check size={14} className="me-1" />
+                                    Apply Changes ({msg.code_changes.length})
+                                </button>
+                            </div>
+                        )}
                     </div>
+
+                    {/* Meta: time + model */}
+                    <div className={`chat-bubble-meta ${isUser ? 'chat-bubble-meta--right' : ''}`}>
+                        {msg.model_used && !isUser && (
+                            <span className="badge bg-primary me-2" style={{ fontSize: '9px' }}>{msg.model_used}</span>
+                        )}
+                        <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                </div>
+
+                {/* User avatar (right) */}
+                {isUser && (
+                    <div className="chat-avatar chat-avatar--me">Me</div>
                 )}
             </div>
         );

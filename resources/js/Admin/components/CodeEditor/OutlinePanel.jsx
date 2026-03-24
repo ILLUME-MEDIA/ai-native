@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, AlignLeft } from 'lucide-react';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 // ── Symbol kind metadata ─────────────────────────────────────────────────────
 const KIND_META = {
@@ -111,9 +112,7 @@ async function getMonacoSymbols(editor) {
         const providers = registry.ordered ? registry.ordered(model) : [];
         if (!providers || providers.length === 0) return null;
 
-        const CancellationTokenSource = monaco.CancellationTokenSource;
-        if (!CancellationTokenSource) return null;
-        const token = new CancellationTokenSource().token;
+        const token = monaco.CancellationTokenSource ? new monaco.CancellationTokenSource().token : null;
         if (!token) return null;
 
         const result = await providers[0].provideDocumentSymbols(model, token);
@@ -144,6 +143,7 @@ async function getMonacoSymbols(editor) {
 
 // ── Symbol row ───────────────────────────────────────────────────────────────
 function SymbolRow({ symbol, isActive, onClick }) {
+    const { isDark, tokens: t } = useCodeEditorTheme();
     const meta = KIND_META[symbol.kind] || KIND_META['?'];
     return (
         <div
@@ -159,7 +159,7 @@ function SymbolRow({ symbol, isActive, onClick }) {
                 fontSize: '11px',
                 fontFamily: "'JetBrains Mono', Consolas, monospace",
             }}
-            onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+            onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)'; }}
             onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
         >
             {/* Kind badge */}
@@ -180,7 +180,7 @@ function SymbolRow({ symbol, isActive, onClick }) {
             {/* Name */}
             <span style={{
                 flex: 1,
-                color: '#c9d1d9',
+                color: t.text2,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -189,7 +189,7 @@ function SymbolRow({ symbol, isActive, onClick }) {
             </span>
 
             {/* Line number */}
-            <span style={{ color: '#484f58', fontSize: '10px', flexShrink: 0 }}>
+            <span style={{ color: t.text4, fontSize: '10px', flexShrink: 0 }}>
                 {symbol.line}
             </span>
         </div>
@@ -197,7 +197,9 @@ function SymbolRow({ symbol, isActive, onClick }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function OutlinePanel({ monacoEditorRef, activeFile, onJumpToLine }) {
+export default function OutlinePanel({ monacoEditorRef, activeFile, onJumpToLine, isDark: _isDark }) {
+    const { isDark: ctxDark, tokens: t } = useCodeEditorTheme();
+    const isDark = _isDark !== undefined ? _isDark : ctxDark;
     const [symbols, setSymbols] = useState([]);
     const [loading, setLoading] = useState(false);
     const [activeLine, setActiveLine] = useState(null);
@@ -271,21 +273,21 @@ export default function OutlinePanel({ monacoEditorRef, activeFile, onJumpToLine
     })();
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', background: '#0d0f14' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', background: t.bg1 }}>
             {/* Header */}
             <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '8px 12px',
-                borderBottom: '1px solid #1c2128',
+                borderBottom: `1px solid ${t.border}`,
                 flexShrink: 0,
             }}>
                 <div style={{
                     fontSize: '10px',
                     fontWeight: '600',
                     letterSpacing: '0.08em',
-                    color: '#8b949e',
+                    color: t.text3,
                     textTransform: 'uppercase',
                     display: 'flex',
                     alignItems: 'center',
@@ -301,7 +303,7 @@ export default function OutlinePanel({ monacoEditorRef, activeFile, onJumpToLine
                     style={{
                         background: 'none',
                         border: 'none',
-                        color: loading ? '#484f58' : '#8b949e',
+                        color: loading ? t.text4 : t.text3,
                         cursor: loading ? 'default' : 'pointer',
                         padding: '2px',
                         display: 'flex',
@@ -318,15 +320,15 @@ export default function OutlinePanel({ monacoEditorRef, activeFile, onJumpToLine
             {/* Symbol list */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
                 {!activeFile ? (
-                    <div style={{ padding: '20px 12px', color: '#484f58', fontSize: '11px', textAlign: 'center' }}>
+                    <div style={{ padding: '20px 12px', color: t.text4, fontSize: '11px', textAlign: 'center' }}>
                         Open a file to see its outline
                     </div>
                 ) : loading ? (
-                    <div style={{ padding: '20px 12px', color: '#484f58', fontSize: '11px', textAlign: 'center' }}>
+                    <div style={{ padding: '20px 12px', color: t.text4, fontSize: '11px', textAlign: 'center' }}>
                         Loading…
                     </div>
                 ) : symbols.length === 0 ? (
-                    <div style={{ padding: '20px 12px', color: '#484f58', fontSize: '11px', textAlign: 'center' }}>
+                    <div style={{ padding: '20px 12px', color: t.text4, fontSize: '11px', textAlign: 'center' }}>
                         No symbols found
                     </div>
                 ) : (

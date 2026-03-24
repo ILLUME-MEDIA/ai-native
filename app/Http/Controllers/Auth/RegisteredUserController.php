@@ -46,6 +46,16 @@ class RegisteredUserController extends Controller
 
         Auth::login($user);
 
+        $request->session()->regenerate();
+
+        // Explicitly flush the session to the store before sending the redirect.
+        // On cPanel/Apache, the response can be sent before PHP's shutdown handlers
+        // write the session, so the next request sees no authenticated session.
+        $request->session()->save();
+
+        // Debug logging
+        \Log::info('User registered and logged in: ' . $user->id . ', Session ID: ' . $request->session()->getId() . ', Auth check: ' . (Auth::check() ? 'true' : 'false'));
+
         return redirect(route('dashboard', absolute: false));
     }
 }

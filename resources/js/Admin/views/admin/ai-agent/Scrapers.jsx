@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Row, Col, Card, Button, Table, Modal, Form, Badge, Spinner, InputGroup, Tabs, Tab, ListGroup } from 'react-bootstrap';
+import { useNavigate } from 'react-router';
 import axios from 'axios';
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
 import Icon from '@admin/components/wrappers/Icon';
@@ -10,6 +11,7 @@ const TAG_CATEGORIES = {
     focusTypes: ['Tutorial', 'Review', 'Gameplay', 'Interview', 'Recipe', 'Workout', 'Makeup', 'Crafting', 'Analysis', 'Guide', 'Tips', 'Vlog', 'News'],
     summaryWords: ['entertainment', 'educational', 'interactive', 'informative', 'creative', 'competitive', 'relaxing', 'inspiring', 'practical', 'engaging']
 };
+
 
 /* ─── Number formatter (1200 → "1.2K", 1500000 → "1.5M") ─── */
 const fmtNum = (n) => {
@@ -110,14 +112,16 @@ const VideoThumb = ({ video }) => {
 };
 
 const Scrapers = () => {
+    const navigate = useNavigate();
     /* ─── Playlists & Platforms state ─── */
     const [playlists, setPlaylists] = useState([]);
     const [platforms, setPlatforms] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [syncing, setSyncing] = useState(false);
-    const [enriching, setEnriching] = useState(false);
-    const [enrichingIds, setEnrichingIds] = useState(new Set()); // tracks which playlist IDs are enriching
-    const [resetting, setResetting] = useState(false);
+    const [addingSyncing, setAddingSyncing] = useState(false);  // add playlist form submit
+    const [syncingIds, setSyncingIds] = useState(new Set());    // per-playlist sync loading
+    const [enrichingIds, setEnrichingIds] = useState(new Set()); // per-playlist enrich HTTP call (clears fast)
+    const [pollingIds, setPollingIds] = useState(new Set());     // per-playlist background poll indicator
+    const [resettingIds, setResettingIds] = useState(new Set()); // per-playlist delete loading
     const enrichPollRef = useRef(null);
 
     /* ─── Videos DataTable state ─── */
@@ -164,6 +168,13 @@ const Scrapers = () => {
     const [selectedGenres, setSelectedGenres] = useState([]);
     const [platformGenres, setPlatformGenres] = useState({});
 
+    /* ─── Add Playlist modal — quick metadata setup ─── */
+    const [addPlatform, setAddPlatform] = useState('');
+    const [addGenres, setAddGenres] = useState([]);
+
+    /* ─── Manual Selector tags tab — platform for tag suggestions ─── */
+    const [tagsPlatform, setTagsPlatform] = useState('');
+
     /* ─── YouTube Search modal state ─── */
     const [showYtSearchModal, setShowYtSearchModal] = useState(false);
     const [ytSearchQuery, setYtSearchQuery] = useState('');
@@ -191,6 +202,8 @@ const Scrapers = () => {
     /* ─── Load playlists + platforms once ─── */
     useEffect(() => {
         loadInitial();
+        // Cleanup polling on unmount
+        return () => { if (enrichPollRef.current) clearInterval(enrichPollRef.current); };
     }, []);
 
     /* ─── Reload videos when filters/sort change ─── */
@@ -263,13 +276,7 @@ const Scrapers = () => {
         }
     }, [rowsPerPage, sortBy, sortDir, search, filterPlaylist, filterStatus, filterTag, filterGenre]);
 
-    /* ─── Auto-load all remaining pages (no scroll needed) ─── */
-    useEffect(() => {
-        if (!videosLoading && !loadingMore && pagination.current_page < pagination.last_page) {
-            loadVideos(pagination.current_page + 1, true);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videosLoading, loadingMore]);
+    /* ─── More pages load on scroll (handleTableScroll) ─── */
 
     /* ─── Collect unique tag/genre options from loaded videos ─── */
     useEffect(() => {
@@ -288,24 +295,23 @@ const Scrapers = () => {
         loadVideos(1);
     };
 
-    /* ─── Start polling to refresh videos while enrichment is in background ─── */
+    /* ─── Start background polling after enrich job is queued ─── */
     const startEnrichPolling = (playlistId) => {
-        setEnrichingIds(prev => new Set([...prev, playlistId]));
+        // pollingIds = visual indicator only (spinner next to playlist name), does NOT disable button
+        setPollingIds(prev => new Set([...prev, playlistId]));
 
-        // Clear any existing poll
         if (enrichPollRef.current) clearInterval(enrichPollRef.current);
 
         let ticks = 0;
         enrichPollRef.current = setInterval(async () => {
             ticks++;
-            loadVideos(1); // refresh video list to show updated stats/tags
+            loadVideos(1);
 
-            // Stop polling after 3 minutes (18 × 10s) regardless
             if (ticks >= 18) {
                 clearInterval(enrichPollRef.current);
-                setEnrichingIds(prev => { const n = new Set(prev); n.delete(playlistId); return n; });
+                setPollingIds(prev => { const n = new Set(prev); n.delete(playlistId); return n; });
             }
-        }, 10000); // poll every 10 seconds
+        }, 10000);
     };
 
     /* ─── Search with debounce ─── */
@@ -359,9 +365,24 @@ const Scrapers = () => {
     };
 
     /* ─── Playlist actions ─── */
+    const handleOpenAddModal = async () => {
+        setAddPlatform('');
+        setAddGenres([]);
+        setShowModal(true);
+        // Pre-load platform genres if not already loaded
+        if (Object.keys(platformGenres).length === 0) {
+            try {
+                const response = await axios.get('/api/ai/scrapers/platform-genres');
+                setPlatformGenres(response.data.genres);
+            } catch (error) {
+                console.error('Error loading platform genres:', error);
+            }
+        }
+    };
+
     const handleAddPlaylist = async (e) => {
         e.preventDefault();
-        setSyncing(true);
+        setAddingSyncing(true);
         try {
             const payload = { playlist_url: playlistUrl };
             const parsedMax = parseInt(maxResults, 10);
@@ -373,63 +394,69 @@ const Scrapers = () => {
             setMaxResults('');
             setShowModal(false);
 
-            // Add playlist to list immediately — no need to wait for enrichment
+            // Enrichment already ran synchronously — reload everything
             if (response.data.playlist) {
                 setPlaylists(prev => [response.data.playlist, ...prev]);
-                // Start background polling so stats/tags appear as they arrive
-                if (response.data.enriching) {
-                    startEnrichPolling(response.data.playlist.playlist_id);
+
+                // Apply genres if user selected a platform in quick setup
+                if (addGenres.length > 0) {
+                    const bulkPayload = { replace: true, genres: addGenres };
+                    try {
+                        await axios.post(`/api/ai/scrapers/${response.data.playlist.id}/bulk-update`, bulkPayload);
+                    } catch (bulkErr) {
+                        console.error('Failed to apply quick genres/tags:', bulkErr);
+                    }
                 }
+
+                loadVideos(1);
             } else {
                 refreshAll();
             }
+
+            // Reset quick metadata selections
+            setAddPlatform('');
+            setAddGenres([]);
 
             alert(response.data.message || 'Playlist added successfully!');
         } catch (error) {
             alert('Failed to add playlist: ' + (error.response?.data?.error || error.message));
         } finally {
-            setSyncing(false);
+            setAddingSyncing(false);
         }
     };
 
     const handleSync = async (id) => {
-        setSyncing(true);
+        setSyncingIds(prev => new Set([...prev, id]));
         try {
-            const pl = playlists.find(p => p.id === id);
             const res = await axios.post(`/api/ai/scrapers/${id}/sync`);
+            // Sync + enrichment now run synchronously — reload everything immediately
             refreshAll();
-            // Start polling so enriched data populates in background
-            if (res.data.enriching && pl?.playlist_id) {
-                startEnrichPolling(pl.playlist_id);
-            }
-            alert(res.data.message || 'Sync complete. Enrichment is running in background.');
+            alert(res.data.message || 'Sync & enrichment complete.');
         } catch (error) {
             alert('Sync failed: ' + (error.response?.data?.error || error.message));
         } finally {
-            setSyncing(false);
+            setSyncingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
         }
     };
 
     const handleEnrich = async (id) => {
         const pl = playlists.find(p => p.id === id);
-        setEnriching(true);
+        setEnrichingIds(prev => new Set([...prev, id]));
         try {
             const res = await axios.post(`/api/ai/scrapers/${id}/enrich`);
-            // Job is queued — start polling so UI updates as data arrives
-            if (pl?.playlist_id) {
-                startEnrichPolling(pl.playlist_id);
-            }
-            alert(res.data.message || 'Enrichment queued! Stats & tags will update in background.');
+            // Enrich now runs synchronously — reload videos immediately to show new tags/genres
+            loadVideos(1);
+            alert(res.data.message || 'Enrichment complete! Tags & genres have been updated.');
         } catch (error) {
             alert('Enrich failed: ' + (error.response?.data?.error || error.message));
         } finally {
-            setEnriching(false);
+            setEnrichingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
         }
     };
 
     const handleReset = async (pl) => {
         if (!window.confirm(`Remove playlist "${pl.title || pl.playlist_id}" and all its videos? This cannot be undone.`)) return;
-        setResetting(true);
+        setResettingIds(prev => new Set([...prev, pl.id]));
         try {
             await axios.delete(`/api/ai/scrapers/${pl.id}`);
             alert('Playlist removed.');
@@ -437,7 +464,7 @@ const Scrapers = () => {
         } catch (error) {
             alert('Failed to remove: ' + (error.response?.data?.error || error.message));
         } finally {
-            setResetting(false);
+            setResettingIds(prev => { const n = new Set(prev); n.delete(pl.id); return n; });
         }
     };
 
@@ -488,7 +515,7 @@ const Scrapers = () => {
             alert(response.data.message || `Push complete: ${details.success || 0} succeeded, ${details.failed || 0} failed.`);
             setShowPushModal(false);
             setSelectedVideoIds(new Set());
-            loadVideos();
+            refreshAll();
         } catch (error) {
             alert('Push failed: ' + (error.response?.data?.error || error.message));
         } finally {
@@ -644,6 +671,7 @@ const Scrapers = () => {
             setSelectedTags([]);
             setSelectedGenres([]);
             setSelectedPlatform('');
+            setTagsPlatform('');
             setShowManualSelectorModal(false);
             setShowMetadataModal(true); // Reopen metadata modal
 
@@ -656,6 +684,7 @@ const Scrapers = () => {
     };
 
     const handleCloseManualSelector = () => {
+        setTagsPlatform('');
         setShowManualSelectorModal(false);
         setShowMetadataModal(true); // Reopen metadata modal
     };
@@ -687,62 +716,47 @@ const Scrapers = () => {
             return;
         }
 
-        // Confirm before starting
-        if (!confirm(`AI will analyze ${allPlaylistVideos.length} videos and assign appropriate genres from ${selectedPlatform} platform. Continue?`)) {
+        if (!confirm(`AI will read each video title and pick the best matching genres from the ${selectedPlatform} genre list.\n\nVideos: ${allPlaylistVideos.length}\nAvailable genres: ${availableGenres.length}\n\nContinue?`)) {
             return;
         }
 
         // Close manual selector and show progress
         setShowManualSelectorModal(false);
         setGenerating(true);
+        cancelGenerationRef.current = false;
         setGenerationProgress({ current: 0, total: allPlaylistVideos.length });
 
         try {
             let updated = 0;
             for (let i = 0; i < allPlaylistVideos.length; i++) {
+                if (cancelGenerationRef.current) break;
+
                 const video = allPlaylistVideos[i];
                 setGenerationProgress({ current: i + 1, total: allPlaylistVideos.length });
 
-                // Smart genre matching based on title and description
-                const videoText = `${video.title} ${video.description || ''}`.toLowerCase();
-                const matchedGenres = availableGenres
-                    .filter(genre => {
-                        const genreWords = genre.toLowerCase().split(/[\s&\/]+/);
-                        return genreWords.some(word => videoText.includes(word.toLowerCase()));
-                    })
-                    .slice(0, 3); // Max 3 genres per video
-
-                // If no matches, pick 1-2 random genres
-                if (matchedGenres.length === 0) {
-                    const randomCount = Math.min(2, availableGenres.length);
-                    const shuffled = [...availableGenres].sort(() => 0.5 - Math.random());
-                    matchedGenres.push(...shuffled.slice(0, randomCount));
+                try {
+                    // Send title + available genre list to backend — AI picks the best matches
+                    await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`, {
+                        available_genres: availableGenres,
+                    });
+                    updated++;
+                } catch (error) {
+                    console.error(`Error updating video ${video.video_id}:`, error);
                 }
-
-                // Update video with genres
-                if (matchedGenres.length > 0) {
-                    try {
-                        await axios.post(`/api/ai/scrapers/videos/${video.video_id}/generate-metadata`, {
-                            platform: selectedPlatform,
-                            genres: matchedGenres
-                        });
-                        updated++;
-                    } catch (error) {
-                        console.error(`Error updating video ${video.video_id}:`, error);
-                    }
-                }
-
-                // Small delay to prevent overwhelming the server
-                await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            alert(`✅ AI Genre Assignment Complete!\n\nUpdated ${updated} out of ${allPlaylistVideos.length} videos with ${selectedPlatform} genres.`);
+            const cancelled = cancelGenerationRef.current;
+            alert(cancelled
+                ? `AI genre assignment cancelled after ${updated} videos.`
+                : `✅ AI Genre Assignment Complete!\n\nUpdated ${updated} of ${allPlaylistVideos.length} videos with ${selectedPlatform} genres.`
+            );
             loadVideos();
         } catch (error) {
             console.error('Error in AI genre assignment:', error);
             alert('Failed to assign genres: ' + (error.response?.data?.error || error.message));
         } finally {
             setGenerating(false);
+            cancelGenerationRef.current = false;
             setGenerationProgress({ current: 0, total: 0 });
             setShowMetadataModal(true);
         }
@@ -979,6 +993,7 @@ const Scrapers = () => {
     return (
         <>
             <PageBreadcrumb title="YouTube Scrapers" subtitle="Global AI System" />
+
             <Row>
                 {/* ─── Playlists Card ─── */}
                 <Col md={12}>
@@ -986,10 +1001,13 @@ const Scrapers = () => {
                         <Card.Header className="d-flex justify-content-between align-items-center">
                             <Card.Title as="h5">Monitored Playlists</Card.Title>
                             <div className="d-flex gap-2">
+                                <Button variant="soft-secondary" size="sm" onClick={() => navigate('/ai/platform-genres')}>
+                                    <Icon icon="tags" className="icon-xs me-1" /> Platform Genres
+                                </Button>
                                 <Button variant="soft-danger" size="sm" onClick={() => { setYtSearchQuery(''); setYtSearchResults([]); setSelectedYtItems(new Set()); setShowYtSearchModal(true); }}>
                                     <Icon icon="search" className="icon-xs me-1" /> YouTube Search
                                 </Button>
-                                <Button variant="primary" size="sm" onClick={() => setShowModal(true)}>
+                                <Button variant="primary" size="sm" onClick={handleOpenAddModal}>
                                     Add Playlist
                                 </Button>
                             </div>
@@ -1063,11 +1081,25 @@ const Scrapers = () => {
                                                 <td>{pl.last_fetched_at ? new Date(pl.last_fetched_at).toLocaleString() : 'Never'}</td>
                                                 <td>
                                                     <div className="d-flex flex-wrap gap-1">
-                                                        <Button variant="soft-success" size="sm" onClick={(e) => { e.stopPropagation(); handleEnrich(pl.id); }} disabled={enriching || enrichingIds.has(pl.playlist_id)}
+                                                        {/* Sync button — per-playlist loading */}
+                                                        <Button variant="soft-warning" size="sm" onClick={(e) => { e.stopPropagation(); handleSync(pl.id); }} disabled={syncingIds.has(pl.id)}
+                                                            title="Re-fetch playlist from YouTube">
+                                                            {syncingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <Icon icon="refresh-cw" className="icon-xs" />}
+                                                        </Button>
+                                                        {/* Enrich button — disabled only during HTTP call, NOT during background polling */}
+                                                        <Button variant="soft-success" size="sm" onClick={(e) => { e.stopPropagation(); handleEnrich(pl.id); }} disabled={enrichingIds.has(pl.id)}
                                                             title="Fetch views, likes, comments from YouTube API">
-                                                            {enrichingIds.has(pl.playlist_id)
-                                                                ? <><Spinner size="sm" className="me-1" />...</>
-                                                                : <><Icon icon="bar-chart" className="icon-xs" /> Enrich</>}
+                                                            {enrichingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <>
+                                                                    <Icon icon="bar-chart" className="icon-xs" /> Enrich
+                                                                    {pollingIds.has(pl.playlist_id) && (
+                                                                        <Spinner animation="border" size="sm" style={{width:'8px',height:'8px',marginLeft:'4px'}} title="Enrichment running in background..." />
+                                                                    )}
+                                                                  </>
+                                                            }
                                                         </Button>
                                                         <Button variant="soft-secondary" size="sm"
                                                             onClick={(e) => { e.stopPropagation(); setSelectedPlaylist(pl); setShowMetadataModal(true); }}>
@@ -1081,8 +1113,10 @@ const Scrapers = () => {
                                                         <Button variant="soft-info" size="sm" onClick={(e) => { e.stopPropagation(); openPushModal(pl); }} disabled={pushing}>
                                                             <Icon icon="send" className="icon-xs" /> Push
                                                         </Button>
-                                                        <Button variant="soft-danger" size="sm" onClick={(e) => { e.stopPropagation(); handleReset(pl); }} disabled={resetting} title="Remove playlist">
-                                                            <Icon icon="trash" className="icon-xs" />
+                                                        <Button variant="soft-danger" size="sm" onClick={(e) => { e.stopPropagation(); handleReset(pl); }} disabled={resettingIds.has(pl.id)} title="Remove playlist">
+                                                            {resettingIds.has(pl.id)
+                                                                ? <Spinner animation="border" size="sm" style={{width:'10px',height:'10px'}} />
+                                                                : <Icon icon="trash" className="icon-xs" />}
                                                         </Button>
                                                     </div>
                                                 </td>
@@ -1308,7 +1342,7 @@ const Scrapers = () => {
             </Row>
 
             {/* ─── Add Playlist Modal ─── */}
-            <Modal show={showModal} onHide={() => setShowModal(false)}>
+            <Modal show={showModal} onHide={() => { setShowModal(false); setAddPlatform(''); setAddGenres([]); }}>
                 <Modal.Header closeButton>
                     <Modal.Title>Add YouTube Playlist</Modal.Title>
                 </Modal.Header>
@@ -1333,10 +1367,37 @@ const Scrapers = () => {
                                 Leave empty for default (up to 5000). Set higher only if your API quota allows it.
                             </Form.Text>
                         </Form.Group>
+
+                        {/* ─── Platform (auto-applies genres + tags silently) ─── */}
+                        <hr />
+                        <Form.Group className="mb-3">
+                            <Form.Label className="small fw-semibold">
+                                Platform <span className="text-muted fw-normal">(Optional)</span>
+                            </Form.Label>
+                            <Form.Select
+                                value={addPlatform}
+                                onChange={(e) => {
+                                    const plat = e.target.value;
+                                    setAddPlatform(plat);
+                                    setAddGenres(plat ? (platformGenres[plat] || []).slice(0, 5) : []);
+                                }}
+                            >
+                                <option value="">No platform</option>
+                                {Object.keys(platformGenres).map((p) => (
+                                    <option key={p} value={p}>{p}</option>
+                                ))}
+                            </Form.Select>
+                            {addPlatform && (
+                                <Form.Text className="text-success">
+                                    5 genres will be auto-applied after import. Tags will be AI-generated during enrichment.
+                                </Form.Text>
+                            )}
+                        </Form.Group>
+
                         <div className="text-end">
                             <Button variant="secondary" className="me-1" onClick={() => setShowModal(false)}>Cancel</Button>
-                            <Button variant="primary" type="submit" disabled={syncing}>
-                                {syncing ? 'Fetching...' : 'Add & Sync'}
+                            <Button variant="primary" type="submit" disabled={addingSyncing}>
+                                {addingSyncing ? <><Spinner animation="border" size="sm" className="me-1" style={{width:'12px',height:'12px'}} />Fetching...</> : 'Add & Sync'}
                             </Button>
                         </div>
                     </Form>
@@ -1483,6 +1544,7 @@ const Scrapers = () => {
                                 )}
 
                                 <hr />
+
 
                                 {/* Content Types */}
                                 <div className="mb-3">

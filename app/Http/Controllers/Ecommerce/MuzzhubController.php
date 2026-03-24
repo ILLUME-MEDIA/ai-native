@@ -13,9 +13,50 @@ class MuzzhubController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug'])->orderBy('name');
+        $request->validate([
+            'lat'    => 'nullable|numeric|between:-90,90',
+            'lng'    => 'nullable|numeric|between:-180,180',
+            'radius' => 'nullable|numeric|min:0.1|max:5000',
+        ]);
 
-        if ($request->filled('search'))        $q->where('name', 'like', '%' . $request->search . '%');
+        $lat    = $request->filled('lat')    ? (float) $request->lat    : null;
+        $lng    = $request->filled('lng')    ? (float) $request->lng    : null;
+        $radius = $request->filled('radius') ? (float) $request->radius : 100;
+
+        $useLocation = $lat !== null && $lng !== null;
+
+        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon']);
+
+        if ($useLocation) {
+            // Haversine formula — distance in miles
+            $haversineExpr = "( 3959 * acos( LEAST(1, cos(radians({$lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians({$lng})) + sin(radians({$lat})) * sin(radians(latitude)) ) ) )";
+
+            $q->selectRaw("*, {$haversineExpr} AS distance_miles")
+              ->whereNotNull('latitude')
+              ->whereNotNull('longitude')
+              ->whereRaw("{$haversineExpr} <= ?", [$radius])
+              ->orderByRaw("{$haversineExpr} ASC");
+        } else {
+            $q->orderBy('name');
+        }
+
+        if ($request->filled('search')) {
+            $term = '%' . $request->search . '%';
+            $q->where(function ($sub) use ($term) {
+                $sub->where('name',        'like', $term)
+                    ->orWhere('description','like', $term)
+                    ->orWhere('address',    'like', $term)
+                    ->orWhere('address_2',  'like', $term)
+                    ->orWhere('city',       'like', $term)
+                    ->orWhere('state',      'like', $term)
+                    ->orWhere('zip',        'like', $term)
+                    ->orWhere('country',    'like', $term)
+                    ->orWhere('type',       'like', $term)
+                    ->orWhere('cuisine',    'like', $term)
+                    ->orWhere('phone',      'like', $term)
+                    ->orWhere('email',      'like', $term);
+            });
+        }
         if ($request->boolean('active_only'))  $q->where('is_active', true);
         if ($request->filled('type'))          $q->where('type', $request->type);
         if ($request->filled('city'))          $q->where('city', 'like', '%' . $request->city . '%');
@@ -24,12 +65,47 @@ class MuzzhubController extends Controller
         if ($request->boolean('featured'))     $q->where('featured', true);
         if ($request->filled('category_id'))   $q->where('category_id', $request->category_id);
 
-        return response()->json($q->paginate($request->input('per_page', 15)));
+        // cuisine filter — supports cuisine_id (single or CSV/array) or legacy cuisine name string
+        if ($request->filled('cuisine_id')) {
+            $ids = is_array($request->cuisine_id)
+                ? $request->cuisine_id
+                : array_map('trim', explode(',', $request->cuisine_id));
+            $ids = array_filter($ids);
+            if (!empty($ids)) {
+                $q->whereHas('cuisines', fn($sub) => $sub->whereIn('cuisines.id', $ids));
+            }
+        } elseif ($request->filled('cuisine')) {
+            // Legacy text filter (backwards-compatible)
+            $cuisines = is_array($request->cuisine)
+                ? $request->cuisine
+                : array_map('trim', explode(',', $request->cuisine));
+            $cuisines = array_filter($cuisines);
+            if (!empty($cuisines)) {
+                $q->whereHas('cuisines', function ($sub) use ($cuisines) {
+                    $sub->where(function ($inner) use ($cuisines) {
+                        foreach ($cuisines as $c) {
+                            $inner->orWhere('cuisines.name', 'like', '%' . $c . '%');
+                        }
+                    });
+                });
+            }
+        }
+
+        $paginated = $q->paginate($request->input('per_page', 15));
+
+        if ($useLocation) {
+            $paginated->getCollection()->transform(function ($item) {
+                $item->distance_miles = $item->distance_miles !== null ? round((float) $item->distance_miles, 2) : null;
+                return $item;
+            });
+        }
+
+        return response()->json($paginated);
     }
 
     public function show(Muzzhub $muzzhub): JsonResponse
     {
-        return response()->json($muzzhub->load(['category:id,name,slug,color,icon', 'business']));
+        return response()->json($muzzhub->load(['category:id,name,slug,color,icon', 'business', 'cuisines:id,name,slug,icon']));
     }
 
     public function store(Request $request): JsonResponse
@@ -37,8 +113,11 @@ class MuzzhubController extends Controller
         $data = $request->validate($this->rules());
         $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name']);
         $record = Muzzhub::create($data);
+        if ($request->has('cuisine_ids')) {
+            $record->cuisines()->sync(array_filter((array) $request->cuisine_ids));
+        }
         $this->syncAutoAcceptToBusiness($record);
-        return response()->json($record, 201);
+        return response()->json($record->load('cuisines:id,name,slug,icon'), 201);
     }
 
     public function update(Request $request, Muzzhub $muzzhub): JsonResponse
@@ -48,8 +127,11 @@ class MuzzhubController extends Controller
             $data['slug'] = $this->resolveSlug($request->input('slug'), $data['name'] ?? $muzzhub->name, $muzzhub->id);
         }
         $muzzhub->update($data);
+        if ($request->has('cuisine_ids')) {
+            $muzzhub->cuisines()->sync(array_filter((array) $request->cuisine_ids));
+        }
         $this->syncAutoAcceptToBusiness($muzzhub->fresh());
-        return response()->json($muzzhub);
+        return response()->json($muzzhub->load('cuisines:id,name,slug,icon'));
     }
 
     /**
@@ -143,8 +225,10 @@ class MuzzhubController extends Controller
             'enable_order'       => 'boolean',
             'enable_order_print' => 'boolean',
             'enable_stripe'      => 'boolean',
-            'adjust_platform_fee'=> 'boolean',
-            'is_online'          => 'boolean',
+            'adjust_platform_fee'    => 'boolean',
+            'platform_fee_override'  => 'nullable|in:inherit,none,percentage,fixed',
+            'platform_fee_value'     => 'nullable|numeric|min:0',
+            'is_online'              => 'boolean',
             'restrict_checkin'   => 'boolean',
             'created_app_user'   => 'boolean',
             'auto_accept'        => 'boolean',

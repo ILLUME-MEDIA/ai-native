@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Ecommerce;
 
+use App\Exceptions\DoorDashApiException;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\DoorDashService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 
 class DoorDashController extends Controller
 {
@@ -25,6 +27,8 @@ class DoorDashController extends Controller
             'pickup_address'  => 'required|string',
             'dropoff_address' => 'required|string',
             'order_value'     => 'nullable|numeric|min:0',
+            'pickup_phone'    => 'nullable|string|max:30',
+            'dropoff_phone'   => 'nullable|string|max:30',
         ]);
 
         try {
@@ -32,25 +36,47 @@ class DoorDashController extends Controller
                 $data['pickup_address'],
                 $data['dropoff_address'],
                 (int) round(($data['order_value'] ?? 0) * 100), // convert dollars → cents
+                $data['pickup_phone'] ?? null,
+                $data['dropoff_phone'] ?? null,
             );
         } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], 502);
+            $body = ['success' => false, 'message' => $e->getMessage()];
+            if ($e instanceof DoorDashApiException) {
+                $fieldErrors = $e->getFieldErrors();
+                if (! empty($fieldErrors))  $body['field_errors'] = $fieldErrors;
+                if ($e->getDoorDashCode())  $body['error_code']   = $e->getDoorDashCode();
+            }
+            return response()->json($body, 502);
         }
 
-        // Normalize the fee to dollars for the response
+        // Normalize fee and tax (both in cents from DoorDash)
         $feeCents = $quote['fee'] ?? $quote['delivery_fee'] ?? null;
+        $taxCents = $quote['tax'] ?? null;
+
+        // ETA: v1/estimates returns delivery_time; v2 returns estimated_delivery_time
+        $etaMinutes = null;
+        foreach (['delivery_time', 'estimated_delivery_time'] as $field) {
+            if (!empty($quote[$field])) {
+                try {
+                    $etaMinutes = max(1, (int) now()->diffInMinutes(Carbon::parse($quote[$field])));
+                    break;
+                } catch (\Throwable) {}
+            }
+        }
 
         return response()->json([
-            'success'          => true,
-            'fee'              => $feeCents !== null ? round($feeCents / 100, 2) : null,
-            'fee_cents'        => $feeCents,
-            'currency'         => $quote['currency'] ?? 'USD',
-            'expires_at'       => $quote['expires_at'] ?? null,
-            'quote_id'         => $quote['external_delivery_id'] ?? null,
-            'raw'              => $quote,
+            'success'           => true,
+            'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
+            'fee_cents'         => $feeCents,
+            'tax'               => $taxCents !== null ? round($taxCents / 100, 2) : null,
+            'tax_cents'         => $taxCents,
+            'currency'          => $quote['currency'] ?? 'USD',
+            'estimated_minutes' => $etaMinutes,
+            'pickup_time'       => $quote['pickup_time'] ?? null,
+            'delivery_time'     => $quote['delivery_time'] ?? $quote['estimated_delivery_time'] ?? null,
+            'expires_at'        => $quote['expires_at'] ?? null,
+            'quote_id'          => isset($quote['id']) ? (string)$quote['id'] : ($quote['external_delivery_id'] ?? null),
+            'raw'               => $quote,
         ]);
     }
 
@@ -191,14 +217,18 @@ class DoorDashController extends Controller
             'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
             'doordash_status'       => $delivery['delivery_status'] ?? 'created',
             'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
+            'tracking_url'          => $delivery['tracking_url'] ?? null,
+            'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
+                ? \Illuminate\Support\Carbon::parse($delivery['estimated_delivery_time']) : null,
         ]);
 
         return response()->json([
-            'success'      => true,
-            'delivery_id'  => $order->doordash_delivery_id,
-            'status'       => $order->doordash_status,
-            'label'        => DoorDashService::statusLabel($order->doordash_status ?? ''),
-            'tracking_url' => $order->doordash_tracking_url,
+            'success'               => true,
+            'delivery_id'           => $order->doordash_delivery_id,
+            'status'                => $order->doordash_status,
+            'label'                 => DoorDashService::statusLabel($order->doordash_status ?? ''),
+            'tracking_url'          => $order->doordash_tracking_url,
+            'estimated_delivery_at' => $order->estimated_delivery_at,
         ], 201);
     }
 
@@ -219,6 +249,10 @@ class DoorDashController extends Controller
 
             if (! empty($data['tracking_url'])) {
                 $updateFields['doordash_tracking_url'] = $data['tracking_url'];
+                $updateFields['tracking_url']           = $data['tracking_url'];
+            }
+            if (! empty($data['estimated_delivery_time'])) {
+                $updateFields['estimated_delivery_at'] = Carbon::parse($data['estimated_delivery_time']);
             }
 
             $orderStatus = match ($ddStatus) {

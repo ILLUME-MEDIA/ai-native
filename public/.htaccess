@@ -13,10 +13,25 @@
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
 
+    # Handle X-CSRF-TOKEN Header (plain token sent by Inertia's router.on('before'))
+    RewriteCond %{HTTP:X-CSRF-TOKEN} .
+    RewriteRule .* - [E=HTTP_X_CSRF_TOKEN:%{HTTP:X-CSRF-TOKEN}]
+
+    # Handle X-Inertia Header — cPanel/Apache can strip non-standard request
+    # headers during internal rewrites. Preserving as HTTP_* env var ensures
+    # PHP sees it as $_SERVER['HTTP_X_INERTIA'] (same as a real HTTP header).
+    RewriteCond %{HTTP:X-Inertia} .
+    RewriteRule .* - [E=HTTP_X_INERTIA:%{HTTP:X-Inertia}]
+
     # Redirect Trailing Slashes If Not A Folder
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} (.+)/$
     RewriteRule ^ %1 [L,R=301]
+
+    # CORS preflight: respond to OPTIONS /api/* with 204 and CORS headers (set below)
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteCond %{REQUEST_URI} ^/api/
+    RewriteRule ^ - [R=204,L]
 
     # Force /storage/* through Laravel (fixes 403 on shared hosting with bad symlink perms)
     RewriteCond %{REQUEST_URI} ^/storage/
@@ -26,6 +41,36 @@
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
+</IfModule>
+
+# Inertia Request Detection
+# SetEnvIf checks HTTP headers which are stripped during the root→public internal
+# rewrite, so we use SetEnvIfExpr to read the INERTIA_REQUEST env var that root
+# .htaccess set via [E=INERTIA_REQUEST:1]. This lets other directives reference it.
+# NOTE: X-Inertia response header is added by PHP (HandleInertiaRequests) only on
+# 2xx responses — no Apache Header directive needed here, which avoids accidentally
+# adding X-Inertia:true to 4xx responses (419, 422) that would break Inertia.js.
+<IfModule mod_headers.c>
+    SetEnvIfExpr "env('INERTIA_REQUEST') != ''" INERTIA_REQUEST=1
+</IfModule>
+
+# CORS — full headers at Apache so preflight (OPTIONS) always gets Access-Control-Allow-Origin
+# even if request never reaches Laravel (e.g. some shared hosts/proxies).
+<IfModule mod_headers.c>
+    SetEnvIf Origin "(https?://localhost(:[0-9]+)?)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://[a-zA-Z0-9-]+\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://development\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://discovery\.illumemedia\.app)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://magazine\.muzzhub\.com)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://javed\.io)" CORS_ALLOW_ORIGIN=$1
+    SetEnvIf Origin "(https://openorg\.us)" CORS_ALLOW_ORIGIN=$1
+
+    Header always set Access-Control-Allow-Origin "%{CORS_ALLOW_ORIGIN}e" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Credentials "true" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-XSRF-TOKEN, X-Session-Id" env=CORS_ALLOW_ORIGIN
+    Header always set Access-Control-Max-Age "7200" env=CORS_ALLOW_ORIGIN
+    Header always set Vary "Origin" env=CORS_ALLOW_ORIGIN
 </IfModule>
 
 # Security Headers

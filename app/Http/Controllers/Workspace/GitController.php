@@ -25,13 +25,51 @@ class GitController extends Controller
     {
         $this->authorize('update', $workspace);
 
-        $result = $this->runGit($workspace, 'init');
+        $result = $this->gitService->init($workspace->full_path);
 
         if ($result['success']) {
             $workspace->update(['git_enabled' => true]);
+            $this->applyGitIdentity($workspace->full_path);
         }
 
         return response()->json($result);
+    }
+
+    /**
+     * Resolve git user.name and user.email with safe fallbacks.
+     *
+     * Priority:
+     *   1. Logged-in user's name/email from the database
+     *   2. If name is empty → derive from email prefix  (e.g. "ahmed" from "ahmed@gmail.com")
+     *   3. If email is empty → fall back to .env GIT_DEFAULT_USER_EMAIL
+     *   4. Last resort → config defaults ("Workspace User" / "workspace@example.com")
+     *
+     * Users can always override locally in the terminal:
+     *   git config user.name  "My GitHub Name"
+     *   git config user.email "mygithub@email.com"
+     */
+    protected function applyGitIdentity(string $workspacePath): void
+    {
+        $user = auth()->user();
+
+        $name  = $user ? trim((string) $user->name)  : '';
+        $email = $user ? trim((string) $user->email) : '';
+
+        // Derive name from email prefix if name is empty
+        if ($name === '' && $email !== '') {
+            $name = explode('@', $email)[0];   // "ahmed@gmail.com" → "ahmed"
+        }
+
+        // Final fallback to .env / config defaults
+        if ($name === '') {
+            $name = config('git.default_user_name', 'Workspace User');
+        }
+        if ($email === '') {
+            $email = config('git.default_user_email', 'workspace@example.com');
+        }
+
+        $this->gitService->execute($workspacePath, ['config', 'user.name',  $name]);
+        $this->gitService->execute($workspacePath, ['config', 'user.email', $email]);
     }
 
     public function status(Workspace $workspace)
@@ -94,6 +132,9 @@ class GitController extends Controller
         $this->authorize('update', $workspace);
 
         $request->validate(['message' => 'required|string']);
+
+        // Always sync git identity before committing (handles new users, empty names, etc.)
+        $this->applyGitIdentity($workspace->full_path);
 
         return response()->json($this->runGit($workspace, 'commit', '-m', $request->message));
     }

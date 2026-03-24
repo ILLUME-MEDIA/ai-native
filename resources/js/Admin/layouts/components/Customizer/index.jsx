@@ -2,6 +2,7 @@ import Icon from "@admin/components/wrappers/Icon";
 import { SimpleBar } from "@admin/components/wrappers/SimpleBar";
 import { useLayoutContext } from "@admin/context/useLayoutContext";
 import { Button, Col, Offcanvas, Row } from "react-bootstrap";
+import { Link } from "react-router";
 import userBgPattern from "@admin/assets/images/user-bg-pattern.svg";
 import Orientation from "./components/Orientation";
 import Position from "./components/Position";
@@ -17,8 +18,21 @@ const Customizer = () => {
   const {
     isCustomizerOpen,
     toggleCustomizer,
-    reset
+    reset,
+    settings,
+    updateCustomColors,
   } = useLayoutContext();
+
+  const customColors = settings?.customColors || {};
+
+  const colorTokens = [
+    { key: 'primary',   label: 'Primary',   icon: 'circle' },
+    { key: 'secondary', label: 'Secondary',  icon: 'circle' },
+    { key: 'success',   label: 'Success',    icon: 'circle' },
+    { key: 'danger',    label: 'Danger',     icon: 'circle' },
+    { key: 'warning',   label: 'Warning',    icon: 'circle' },
+    { key: 'info',      label: 'Info',       icon: 'circle' },
+  ];
   return <Offcanvas show={isCustomizerOpen} onHide={toggleCustomizer} placement="end" className="overflow-hidden" tabIndex={-1} id="theme-settings-offcanvas">
     <div className="d-flex justify-content-between text-bg-primary gap-2 p-3" style={{
       backgroundImage: `url(${userBgPattern})`
@@ -57,6 +71,52 @@ const Customizer = () => {
 
       <Position />
       <SidenavUser />
+
+      {/* Design Tokens */}
+      <div className="p-3 border-top">
+        <div className="d-flex align-items-center justify-content-between mb-2">
+          <h6 className="mb-0 fw-semibold text-uppercase fs-sm">Design Tokens</h6>
+          <Link to="/admin/settings/design-system" className="text-primary fs-xs fw-medium" onClick={toggleCustomizer}>
+            Full Editor →
+          </Link>
+        </div>
+        <p className="text-muted fs-xs mb-3">
+          Color changes save to DB and sync across all tabs in real-time.
+        </p>
+        <div className="d-flex flex-wrap gap-2">
+          {colorTokens.map(({ key, label }) => {
+            const current = customColors?.[key] || '';
+            return (
+              <div key={key} className="d-flex flex-column align-items-center gap-1" style={{ width: '48px' }}>
+                <div className="position-relative" style={{ width: 32, height: 32 }}>
+                  <div
+                    className="rounded-circle border shadow-sm w-100 h-100"
+                    style={{ backgroundColor: current || `var(--bs-${key})`, cursor: 'pointer' }}
+                    onClick={() => document.getElementById(`cc-${key}`)?.click()}
+                  />
+                  <input
+                    id={`cc-${key}`}
+                    type="color"
+                    className="position-absolute opacity-0"
+                    style={{ width: 0, height: 0, top: 0, left: 0 }}
+                    value={current || '#ffffff'}
+                    onChange={e => updateCustomColors({ [key]: e.target.value })}
+                  />
+                </div>
+                <span className="text-muted" style={{ fontSize: '10px', lineHeight: 1 }}>{label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <Button
+          size="sm"
+          variant="outline-secondary"
+          className="mt-3 w-100 py-1"
+          onClick={() => updateCustomColors({ primary: '', secondary: '', success: '', danger: '', warning: '', info: '' })}
+        >
+          Reset Colors
+        </Button>
+      </div>
     </SimpleBar>
     <div className="offcanvas-footer border-top p-3 text-center">
       <Row className="justify-content-end">

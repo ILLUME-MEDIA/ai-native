@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\DoorDashApiException;
 use App\Models\Order;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -80,7 +81,7 @@ class DoorDashService
         $response = Http::withHeaders([
             'Authorization' => "Bearer {$jwt}",
             'Content-Type'  => 'application/json',
-        ])->{$method}($this->baseUrl . $path, $data);
+        ])->asJson()->{$method}($this->baseUrl . $path, $data);
 
         if ($response->failed()) {
             $body = $response->body();
@@ -125,51 +126,201 @@ class DoorDashService
     }
 
     /**
-     * Get a delivery fee quote without creating a delivery.
-     * Returns the DoorDash quote object including fee, currency, expiry.
+     * Get a delivery fee estimate using the DoorDash Drive Classic API.
      *
-     * @param  string  $pickupAddress   Full pickup address string
-     * @param  string  $dropoffAddress  Full dropoff address string
-     * @param  int     $orderValue      Order value in cents
+     * Strategy:
+     *  1. POST /drive/v1/estimates — the dedicated Classic Drive estimates endpoint.
+     *     Returns fee, tax, pickup_time, delivery_time without creating a delivery.
+     *  2. Fallback: POST /drive/v2/deliveries/quotes — for accounts on Drive API v2.
+     *  3. Fallback: POST /drive/v2/deliveries + immediate cancel — last resort.
+     *
+     * @param  string       $pickupAddress   Full pickup address string
+     * @param  string       $dropoffAddress  Full dropoff address string
+     * @param  int          $orderValue      Order value in cents
+     * @param  string|null  $pickupPhone     Raw phone for pickup contact (normalized internally)
+     * @param  string|null  $dropoffPhone    Raw phone for dropoff contact (normalized internally)
      */
-    public function getQuote(string $pickupAddress, string $dropoffAddress, int $orderValue = 0): array
-    {
-        // DoorDash quotes endpoint lives in v2 regardless of the configured base URL.
-        // Derive the host from baseUrl and always use the known v2 quotes path.
-        $parsed    = parse_url($this->baseUrl);
-        $host      = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? 'openapi.doordash.com');
-        $quoteUrl  = $host . '/drive/v2/deliveries/quotes';
+    public function getQuote(
+        string $pickupAddress,
+        string $dropoffAddress,
+        int $orderValue = 0,
+        ?string $pickupPhone = null,
+        ?string $dropoffPhone = null
+    ): array {
+        $parsed  = parse_url($this->baseUrl);
+        $host    = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? 'openapi.doordash.com');
 
-        $jwt      = $this->generateJwt();
-        $payload  = [
-            'external_delivery_id' => 'quote-' . uniqid(),
-            'pickup_address'       => $pickupAddress,
-            'dropoff_address'      => $dropoffAddress,
-            'order_value'          => $orderValue,
-            'currency'             => 'USD',
+        $jwt     = $this->generateJwt();
+        $headers = ['Authorization' => "Bearer {$jwt}", 'Content-Type' => 'application/json'];
+
+        // Resolve phone numbers (null = could not be normalized — field will be omitted)
+        $phPickup  = $this->normalizePhone($pickupPhone  ?? '');
+        $phDropoff = $this->normalizePhone($dropoffPhone ?? '');
+
+        // Cross-fallback: if one side has no valid phone, use the other side's number.
+        // For a quote, DoorDash only needs the format to be valid — the number isn't called.
+        $phPickup  = $phPickup  ?? $phDropoff;
+        $phDropoff = $phDropoff ?? $phPickup;
+
+        // ── Attempt 1: Drive v1/estimates (Classic Drive API — proper endpoint) ──
+        // Addresses must be objects; pickup_time or delivery_time is required.
+        $v1Payload = [
+            'pickup_address'  => ['full_address' => $pickupAddress],
+            'dropoff_address' => ['full_address' => $dropoffAddress],
+            'order_value'     => $orderValue,
+            'pickup_time'     => now()->addMinutes(30)->utc()->format('Y-m-d\TH:i:s\Z'),
         ];
 
-        $response = Http::withHeaders([
-            'Authorization' => "Bearer {$jwt}",
-            'Content-Type'  => 'application/json',
-        ])->post($quoteUrl, $payload);
+        Log::info('DoorDash getQuote: trying v1/estimates', [
+            'url'     => "{$host}/drive/v1/estimates",
+            'payload' => $v1Payload,
+        ]);
 
-        if ($response->failed()) {
-            $body = $response->body();
-            $json = json_decode($body, true);
-            // Detect when credentials only allow Classic (v1) — no quote support
-            if (isset($json['code']) && $json['code'] === 'authorization_error') {
-                throw new \RuntimeException(
-                    'Delivery quotes require DoorDash Drive API v2. ' .
-                    'Your current credentials only support Classic API (v1). ' .
-                    'You can still dispatch deliveries; quotes are not available with this plan.'
-                );
-            }
-            Log::error("DoorDash quote API error: {$body}");
-            throw new \RuntimeException($json['message'] ?? $body);
+        $response = Http::withHeaders($headers)
+            ->asJson()
+            ->post("{$host}/drive/v1/estimates", $v1Payload);
+
+        Log::info('DoorDash v1/estimates response', [
+            'status' => $response->status(),
+            'body'   => $response->body(),
+        ]);
+
+        if ($response->successful()) {
+            $result            = $response->json() ?? [];
+            $result['_source'] = 'v1_estimates';
+            return $result;
         }
 
-        return $response->json() ?? [];
+        // Check if v1/estimates endpoint is unavailable for this account
+        $body = $response->body();
+        $json = json_decode($body, true) ?? [];
+        $code = $json['code'] ?? '';
+        $msg  = $json['message'] ?? $body;
+
+        $msgLower = strtolower($msg);
+
+        $isEndpointMissing = in_array($code, ['unknown_path', 'not_found'], true)
+            || str_contains($msgLower, 'unknown path')
+            || str_contains($msgLower, 'drive/v2')
+            || str_contains($msgLower, 'drive api')
+            || str_contains($msgLower, 'request url prefix')
+            || str_contains($msgLower, 'body serialization failed') // sandbox limitation
+            || $response->status() === 404;
+
+        Log::info('DoorDash v1/estimates failed', [
+            'code'               => $code,
+            'msg'                => $msg,
+            'is_endpoint_missing'=> $isEndpointMissing,
+            'http_status'        => $response->status(),
+        ]);
+
+        if (! $isEndpointMissing) {
+            Log::error("DoorDash v1/estimates error [{$response->status()}]: {$body}");
+            throw new DoorDashApiException($msg ?: 'DoorDash quote failed.', $json);
+        }
+
+        Log::info('DoorDash v1/estimates not available. Falling back to v2 quotes.');
+
+        // ── Attempt 2: Drive v2 quotes (newer accounts) ───────────────────────
+        $v2Payload = array_filter([
+            'external_delivery_id'  => 'quote-' . uniqid(),
+            'pickup_address'        => $pickupAddress,
+            'pickup_business_name'  => 'Pickup Location',
+            'pickup_phone_number'   => $phPickup,   // null → field omitted by array_filter
+            'dropoff_address'       => $dropoffAddress,
+            'dropoff_business_name' => 'Dropoff Location',
+            'dropoff_phone_number'  => $phDropoff,
+            'order_value'           => $orderValue,
+            'currency'              => 'USD',
+        ], fn($v) => $v !== null);
+
+        $response = Http::withHeaders($headers)
+            ->asJson()
+            ->post("{$host}/drive/v2/deliveries/quotes", $v2Payload);
+
+        if ($response->successful()) {
+            $result            = $response->json() ?? [];
+            $result['_source'] = 'v2_quotes';
+            return $result;
+        }
+
+        $body = $response->body();
+        $json = json_decode($body, true) ?? [];
+        $code = $json['code'] ?? '';
+        $msg  = $json['message'] ?? $body;
+
+        $isV2QuotesMissing = in_array($code, ['unknown_path', 'not_found', 'authorization_error'], true)
+            || str_contains(strtolower($msg), 'unknown path')
+            || str_contains(strtolower($msg), 'drive (classic)')
+            || str_contains(strtolower($msg), 'drive/v1')
+            || $response->status() === 404
+            || $response->status() === 403;
+
+        if (! $isV2QuotesMissing) {
+            Log::error("DoorDash v2/quotes error [{$response->status()}]: {$body}");
+            throw new DoorDashApiException($msg ?: 'DoorDash quote failed.', $json);
+        }
+
+        Log::info('DoorDash v2/deliveries/quotes not available. Falling back to create+cancel to get fee.');
+
+        // ── Attempt 3: Create a temporary delivery, read its fee, cancel immediately ──
+        // Uses v1 (Classic) or v2 depending on baseUrl config.
+        $tempId = 'fee-check-' . uniqid();
+
+        $createPayload = array_filter([
+            'external_delivery_id'  => $tempId,
+            'pickup_address'        => $pickupAddress,
+            'pickup_business_name'  => 'Pickup Location',
+            'pickup_phone_number'   => $phPickup,
+            'dropoff_address'       => $dropoffAddress,
+            'dropoff_business_name' => 'Dropoff Location',
+            'dropoff_phone_number'  => $phDropoff,
+            'order_value'           => $orderValue ?: null,
+            'currency'              => 'USD',
+        ], fn($v) => $v !== null);
+
+        // Try v1 (Classic) first, fall back to v2 if sandbox limitation
+        foreach (["{$this->baseUrl}/deliveries", "{$host}/drive/v2/deliveries"] as $createUrl) {
+            $createResp = Http::withHeaders($headers)
+                ->asJson()
+                ->post($createUrl, $createPayload);
+
+            if ($createResp->successful()) {
+                $delivery = $createResp->json() ?? [];
+
+                // Cancel immediately — fire and forget (ignore errors)
+                $isV1 = str_contains($createUrl, '/drive/v1/');
+                $cancelUrl = $isV1
+                    ? "{$this->baseUrl}/deliveries/{$tempId}/cancel"
+                    : "{$host}/drive/v2/deliveries/{$tempId}/cancel";
+                try {
+                    Http::withHeaders([
+                        'Authorization' => 'Bearer ' . $this->generateJwt(),
+                        'Content-Type'  => 'application/json',
+                    ])->asJson()->put($cancelUrl);
+                } catch (\Throwable) {}
+
+                $delivery['_source'] = $isV1 ? 'v1_create_cancel' : 'v2_create_cancel';
+                return $delivery;
+            }
+
+            $errBody = $createResp->body();
+            $errMsg  = strtolower($errBody);
+            // If not a sandbox/serialization issue, stop trying
+            if (! str_contains($errMsg, 'serialization failed') && $createResp->status() !== 403) {
+                break;
+            }
+            Log::info("DoorDash create failed at {$createUrl} [{$createResp->status()}], trying next.");
+        }
+
+        $body = $createResp->body();
+        $json = json_decode($body, true) ?? [];
+        $msg  = $json['message'] ?? $body;
+        Log::error("DoorDash create-cancel quote error [{$createResp->status()}]: {$body}");
+        throw new DoorDashApiException(
+            $msg ?: 'DoorDash quote failed. No compatible quote endpoint found for this account.',
+            $json
+        );
     }
 
     /**
@@ -191,13 +342,27 @@ class DoorDashService
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
-     * Ensure phone is E.164 format; fall back to placeholder if blank.
+     * Normalize a phone number to E.164 format.
+     * Returns null when the input is empty, malformed, non-US, or has extra
+     * digits (e.g. extensions) — callers must omit the field in that case.
+     * Never returns a placeholder; DoorDash production validates real numbers.
      */
-    private function normalizePhone(?string $phone): string
+    private function normalizePhone(?string $phone): ?string
     {
-        if (! $phone) return '+10000000000';
+        if (! $phone || trim($phone) === '') return null;
+
+        // Strip everything except digits
         $digits = preg_replace('/\D/', '', $phone);
+
+        // 10-digit US number → prepend country code
         if (strlen($digits) === 10) $digits = '1' . $digits;
+
+        // Valid US/Canada: exactly 11 digits starting with '1'
+        if (strlen($digits) !== 11 || $digits[0] !== '1') {
+            Log::warning("DoorDash: phone '{$phone}' could not be normalized to E.164 — omitting field.");
+            return null;
+        }
+
         return '+' . $digits;
     }
 

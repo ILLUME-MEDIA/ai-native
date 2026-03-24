@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\AI;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\EnrichPlaylistJob;
 use App\Models\AiDuty;
 use App\Models\AiPlatform;
+use App\Models\PlatformGenre;
 use App\Models\YoutubePlaylist;
 use App\Models\YoutubeVideo;
 use App\Models\YoutubePlatformPush;
@@ -53,14 +53,14 @@ class AiScraperController extends Controller
             $playlist = $this->scraperService->syncToDatabase($playlistData);
             $this->ensurePlaylistSyncDutyExists($playlist);
 
-            // Dispatch enrichment in background (YouTube stats + AI tags/genres)
-            EnrichPlaylistJob::dispatch($playlist->playlist_id);
+            // Run enrichment synchronously (YouTube stats + AI tags/genres)
+            $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
 
-            // Return the playlist with all data for immediate display
+            // Return the playlist with all data
             return response()->json([
-                'message' => 'Playlist added and synced! Enrichment (stats, tags, genres) is running in background.',
-                'enriching' => true,
-                'playlist' => $playlist->fresh()->load('videos')->loadCount('videos'),
+                'message' => "Playlist added! {$enrichResult['enriched']} videos enriched with stats, tags & genres.",
+                'enriching' => false,
+                'playlist' => $playlist->fresh()->loadCount('videos'),
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -81,12 +81,12 @@ class AiScraperController extends Controller
             $playlistData = $this->scraperService->fetchPlaylist($playlist->playlist_id, 10000);
             $this->scraperService->syncToDatabase($playlistData);
 
-            // Dispatch enrichment in background instead of blocking the response
-            EnrichPlaylistJob::dispatch($playlist->playlist_id);
+            // Run enrichment synchronously
+            $enrichResult = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
 
             return response()->json([
-                'message' => 'Playlist synced! Enrichment (stats, tags, genres) is running in background.',
-                'enriching' => true,
+                'message' => "Playlist synced! {$enrichResult['enriched']} videos enriched with stats, tags & genres.",
+                'enriching' => false,
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -95,13 +95,19 @@ class AiScraperController extends Controller
 
     public function enrich(YoutubePlaylist $playlist)
     {
-        // Dispatch to background queue — avoids 504 timeout on large playlists
-        EnrichPlaylistJob::dispatch($playlist->playlist_id);
+        set_time_limit(900); // Allow up to 15 minutes for large playlists
 
-        return response()->json([
-            'message' => 'Enrichment queued! YouTube stats, tags & genres will be updated in background.',
-            'enriching' => true,
-        ], 202);
+        try {
+            $result = $this->scraperService->enrichPlaylistVideos($playlist->playlist_id);
+
+            return response()->json([
+                'message' => "Enrichment complete! {$result['enriched']} of {$result['total']} videos updated with stats, tags & genres.",
+                'enriched' => $result['enriched'],
+                'total'    => $result['total'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -744,17 +750,37 @@ IMPORTANT:
     public function generateMetadataForVideo(Request $request, string $videoId)
     {
         try {
+            // If available_genres list provided — AI picks from that list
+            if ($request->filled('available_genres')) {
+                $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+                $genres = $this->scraperService->pickGenresFromList(
+                    $video->title,
+                    $video->description ?? '',
+                    $request->available_genres,
+                    3
+                );
+                $video->update([
+                    'genres' => $genres,
+                    'tags_generated_at' => now(),
+                ]);
+                return response()->json([
+                    'status'  => 'success',
+                    'message' => 'Genres assigned by AI',
+                    'genres'  => $genres,
+                ]);
+            }
+
             // If genres are provided in request, use them directly (manual assignment)
             if ($request->has('genres')) {
-                $video = \App\Models\YoutubeVideo::where('video_id', $videoId)->firstOrFail();
+                $video = YoutubeVideo::where('video_id', $videoId)->firstOrFail();
                 $video->update([
                     'genres' => $request->genres,
                     'tags_generated_at' => now(),
                 ]);
                 return response()->json([
-                    'status' => 'success',
+                    'status'  => 'success',
                     'message' => 'Genres updated',
-                    'genres' => $request->genres
+                    'genres'  => $request->genres,
                 ]);
             }
 
@@ -808,12 +834,13 @@ IMPORTANT:
      */
     public function getPlatformGenres()
     {
-        $platformGenres = config('platform_genres');
+        $rows = PlatformGenre::orderBy('sort_order')->orderBy('platform_name')->get();
+        $platformGenres = $rows->pluck('genres', 'platform_name')->toArray();
 
         return response()->json([
-            'status' => 'success',
+            'status'    => 'success',
             'platforms' => array_keys($platformGenres),
-            'genres' => $platformGenres,
+            'genres'    => $platformGenres,
         ]);
     }
 

@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { GitBranch, GitCommit, RefreshCw, Upload, Download, X, Plus, Check, ChevronDown, AlertCircle, Archive, Trash2 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 export default function GitPanel({ workspace, onClose, onTerminalAppend, embedded = false, onOpenDiff }) {
+    const { isDark, tokens: t } = useCodeEditorTheme();
     const [status, setStatus] = useState(null);
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -312,9 +314,9 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
     }
 
     const S = {
-        section: { padding: '10px 12px', borderBottom: '1px solid #1c2128' },
-        sectionTitle: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.08em', color: '#8b949e', textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-        btn: { background: 'none', border: '1px solid #30363d', borderRadius: '4px', color: '#8b949e', cursor: 'pointer', fontSize: '11px', padding: '3px 8px', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '4px' },
+        section: { padding: '10px 12px', borderBottom: `1px solid ${t.border}` },
+        sectionTitle: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.08em', color: t.text3, textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+        btn: { background: 'none', border: `1px solid ${isDark ? '#30363d' : t.border}`, borderRadius: '4px', color: t.text3, cursor: 'pointer', fontSize: '11px', padding: '3px 8px', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '4px' },
         btnPrimary: { background: 'rgba(255,107,53,0.12)', border: '1px solid rgba(255,107,53,0.3)', borderRadius: '4px', color: '#ff6b35', cursor: 'pointer', fontSize: '11px', padding: '3px 8px', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '4px' },
         btnDanger: { background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)', borderRadius: '4px', color: '#f85149', cursor: 'pointer', fontSize: '11px', padding: '3px 8px', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '4px' },
     };
@@ -396,7 +398,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                     </div>
 
                     {staged.length === 0 ? (
-                        <div style={{ fontSize: '11px', color: '#484f58', fontStyle: 'italic' }}>No staged changes</div>
+                        <div style={{ fontSize: '11px', color: t.text4, fontStyle: 'italic' }}>No staged changes</div>
                     ) : (
                         <div className="ce-change-list">
                             {staged.map((f, i) => (
@@ -447,7 +449,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                     </div>
 
                     {allUnstaged.length === 0 ? (
-                        <div style={{ fontSize: '11px', color: '#484f58', fontStyle: 'italic' }}>No unstaged changes</div>
+                        <div style={{ fontSize: '11px', color: t.text4, fontStyle: 'italic' }}>No unstaged changes</div>
                     ) : (
                         <div className="ce-change-list">
                             {allUnstaged.map((f, i) => (
@@ -533,7 +535,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                         <button
                             onClick={() => { setShowNewBranchForm(v => !v); setNewBranchName(''); }}
                             title="New branch"
-                            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}
+                            style={{ background: 'none', border: 'none', color: t.text3, cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}
                         >
                             <Plus size={12} />
                         </button>
@@ -544,10 +546,10 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                         onClick={() => setBranchesOpen(v => !v)}
                         style={{
                             width: '100%',
-                            background: '#0a0c0f',
-                            border: '1px solid #30363d',
+                            background: isDark ? '#0a0c0f' : t.bg4,
+                            border: `1px solid ${t.scrollbar}`,
                             borderRadius: '4px',
-                            color: '#c9d1d9',
+                            color: t.text2,
                             padding: '4px 8px',
                             fontSize: '11px',
                             fontFamily: 'inherit',
@@ -560,12 +562,12 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                     >
                         <GitBranch size={11} style={{ color: '#ff6b35', flexShrink: 0 }} />
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentBranch || '—'}</span>
-                        <ChevronDown size={11} style={{ flexShrink: 0, color: '#484f58', transform: branchesOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                        <ChevronDown size={11} style={{ flexShrink: 0, color: t.text4, transform: branchesOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                     </button>
 
                     {/* Branch list dropdown */}
                     {branchesOpen && (
-                        <div style={{ marginTop: '4px', background: '#0a0c0f', border: '1px solid #30363d', borderRadius: '4px', overflow: 'hidden', maxHeight: '160px', overflowY: 'auto' }}>
+                        <div style={{ marginTop: '4px', background: isDark ? '#0a0c0f' : t.bg4, border: `1px solid ${t.scrollbar}`, borderRadius: '4px', overflow: 'hidden', maxHeight: '160px', overflowY: 'auto' }}>
                             {localBranches.map(branch => (
                                 <div
                                     key={branch}
@@ -574,11 +576,11 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                         padding: '5px 8px',
                                         cursor: branch === currentBranch ? 'default' : 'pointer',
                                         fontSize: '11px',
-                                        color: branch === currentBranch ? '#ff6b35' : '#c9d1d9',
+                                        color: branch === currentBranch ? '#ff6b35' : t.text2,
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '6px',
-                                        borderBottom: '1px solid rgba(28,33,40,0.4)',
+                                        borderBottom: `1px solid ${t.border}`,
                                     }}
                                     onMouseEnter={e => { if (branch !== currentBranch) e.currentTarget.style.background = 'rgba(255,107,53,0.06)'; }}
                                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
@@ -589,11 +591,11 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                             ))}
                             {remoteBranches.length > 0 && (
                                 <>
-                                    <div style={{ padding: '4px 8px', fontSize: '9px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.08em', borderTop: '1px solid #1c2128' }}>Remote</div>
+                                    <div style={{ padding: '4px 8px', fontSize: '9px', color: t.text4, textTransform: 'uppercase', letterSpacing: '0.08em', borderTop: `1px solid ${t.border}` }}>Remote</div>
                                     {remoteBranches.map(branch => (
                                         <div
                                             key={branch}
-                                            style={{ padding: '4px 8px 4px 18px', fontSize: '11px', color: '#8b949e', borderBottom: '1px solid rgba(28,33,40,0.3)' }}
+                                            style={{ padding: '4px 8px 4px 18px', fontSize: '11px', color: t.text3, borderBottom: `1px solid ${t.border}` }}
                                         >
                                             {branch.replace('remotes/', '')}
                                         </div>
@@ -615,10 +617,10 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                 autoFocus
                                 style={{
                                     flex: 1,
-                                    background: '#0a0c0f',
-                                    border: '1px solid #30363d',
+                                    background: isDark ? '#0a0c0f' : t.bg4,
+                                    border: `1px solid ${t.scrollbar}`,
                                     borderRadius: '4px',
-                                    color: '#c9d1d9',
+                                    color: t.text2,
                                     padding: '3px 6px',
                                     fontSize: '11px',
                                     fontFamily: 'inherit',
@@ -654,7 +656,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                             <Archive size={11} /> Stashes {stashes.length > 0 && <span style={{ color: '#ff6b35' }}>({stashes.length})</span>}
                         </span>
-                        <button onClick={loadStashes} title="Refresh stashes" style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}>
+                        <button onClick={loadStashes} title="Refresh stashes" style={{ background: 'none', border: 'none', color: t.text3, cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}>
                             <RefreshCw size={11} />
                         </button>
                     </div>
@@ -668,8 +670,8 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                             onKeyDown={e => { if (e.key === 'Enter') createStash(); }}
                             placeholder="Stash message (optional)…"
                             style={{
-                                flex: 1, background: '#0a0c0f', border: '1px solid #30363d',
-                                borderRadius: '4px', color: '#c9d1d9', padding: '3px 6px',
+                                flex: 1, background: isDark ? '#0a0c0f' : t.bg4, border: `1px solid ${t.scrollbar}`,
+                                borderRadius: '4px', color: t.text2, padding: '3px 6px',
                                 fontSize: '11px', fontFamily: 'inherit', outline: 'none', minWidth: 0,
                             }}
                         />
@@ -685,7 +687,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
 
                     {/* Stash list */}
                     {stashes.length === 0 ? (
-                        <div style={{ fontSize: '11px', color: '#484f58', fontStyle: 'italic' }}>No stashes</div>
+                        <div style={{ fontSize: '11px', color: t.text4, fontStyle: 'italic' }}>No stashes</div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                             {stashes.map((s, i) => (
@@ -694,13 +696,13 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                     style={{
                                         display: 'flex', alignItems: 'center', gap: '6px',
                                         padding: '4px 6px', borderRadius: '4px',
-                                        background: '#0a0c0f', border: '1px solid #1c2128',
+                                        background: isDark ? '#0a0c0f' : t.bg4, border: `1px solid ${t.border}`,
                                     }}
                                 >
                                     <span style={{ fontSize: '10px', color: '#ff6b35', fontFamily: 'monospace', flexShrink: 0 }}>
                                         {s.ref || `stash@{${i}}`}
                                     </span>
-                                    <span style={{ fontSize: '11px', color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.message}>
+                                    <span style={{ fontSize: '11px', color: t.text2, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.message}>
                                         {s.message || '(no message)'}
                                     </span>
                                     <button
@@ -715,9 +717,9 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                         onClick={() => dropStash(s.ref || `stash@{${i}}`)}
                                         disabled={stashLoading}
                                         title="Drop (delete without applying)"
-                                        style={{ background: 'none', border: 'none', color: '#484f58', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                                        style={{ background: 'none', border: 'none', color: t.text4, cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center', flexShrink: 0 }}
                                         onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.color = '#484f58'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.color = t.text4; }}
                                     >
                                         <Trash2 size={11} />
                                     </button>
@@ -736,14 +738,14 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                         <button
                             onClick={loadGitLogs}
                             title="Refresh history"
-                            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}
+                            style={{ background: 'none', border: 'none', color: t.text3, cursor: 'pointer', padding: '1px', display: 'flex', alignItems: 'center' }}
                         >
                             <RefreshCw size={11} />
                         </button>
                     </div>
 
                     {logs.length === 0 ? (
-                        <div style={{ fontSize: '11px', color: '#484f58', fontStyle: 'italic' }}>No commits yet</div>
+                        <div style={{ fontSize: '11px', color: t.text4, fontStyle: 'italic' }}>No commits yet</div>
                     ) : (
                         <div style={{ overflowY: 'auto', maxHeight: '220px', display: 'flex', flexDirection: 'column', gap: '1px' }}>
                             {logs.map((log, idx) => (
@@ -774,7 +776,7 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                         </code>
                                         <span style={{
                                             fontSize: '11px',
-                                            color: '#c9d1d9',
+                                            color: t.text2,
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             whiteSpace: 'nowrap',
@@ -785,11 +787,11 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
                                         </span>
                                     </div>
                                     {/* Author + date row */}
-                                    <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: '#484f58' }}>
+                                    <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: t.text4 }}>
                                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                             {log.author}
                                         </span>
-                                        <span style={{ flexShrink: 0, color: '#30363d' }}>
+                                        <span style={{ flexShrink: 0, color: t.scrollbar }}>
                                             {formatRelativeTime(log.date)}
                                         </span>
                                     </div>

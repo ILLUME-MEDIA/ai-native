@@ -11,7 +11,7 @@ const SectionApi = () => {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    // Live \"Try it\" state for GET list endpoint
+    // Live "Try it" state for GET list endpoint
     const [listQuery, setListQuery] = useState({
         search: '',
         page: 1,
@@ -20,9 +20,27 @@ const SectionApi = () => {
         direction: 'asc',
     });
     const [listFilters, setListFilters] = useState({});
+    const [locationQuery, setLocationQuery] = useState({
+        lat: '',
+        lng: '',
+        radius: '100',
+        unit: 'miles',
+        lat_field: 'latitude',
+        lng_field: 'longitude',
+    });
+    const [locationEnabled, setLocationEnabled] = useState(false);
     const [listResponse, setListResponse] = useState(null);
     const [listLoading, setListLoading] = useState(false);
     const [listError, setListError] = useState('');
+
+    // Live "Try it" state for GET single endpoint
+    const [singleMode, setSingleMode] = useState('id'); // 'id' | 'field'
+    const [singleId, setSingleId] = useState('1');
+    const [singleField, setSingleField] = useState('');
+    const [singleValue, setSingleValue] = useState('');
+    const [singleResponse, setSingleResponse] = useState(null);
+    const [singleLoading, setSingleLoading] = useState(false);
+    const [singleError, setSingleError] = useState('');
 
     useEffect(() => {
         const load = async () => {
@@ -59,6 +77,17 @@ const SectionApi = () => {
 
                 json.fields = fields;
                 setSection(json);
+
+                // Auto-fetch live list data on mount (5 records preview)
+                const slugOrTable = json.slug || json.table_name;
+                try {
+                    const liveRes = await axios.get(`/api/entities/${slugOrTable}`, {
+                        params: { page: 1, per_page: 5, direction: 'desc' }
+                    });
+                    setListResponse(liveRes.data);
+                } catch (_) {
+                    // silently ignore — mock example will show instead
+                }
             } catch (e) {
                 console.error("Failed to load section", e);
             } finally {
@@ -144,6 +173,16 @@ const SectionApi = () => {
         if (listQuery.sort) params.append('sort', listQuery.sort);
         if (listQuery.direction) params.append('direction', listQuery.direction);
 
+        // Location filter
+        if (locationEnabled && locationQuery.lat && locationQuery.lng) {
+            params.append('lat', locationQuery.lat);
+            params.append('lng', locationQuery.lng);
+            if (locationQuery.radius) params.append('radius', locationQuery.radius);
+            if (locationQuery.unit && locationQuery.unit !== 'miles') params.append('unit', locationQuery.unit);
+            if (locationQuery.lat_field && locationQuery.lat_field !== 'latitude') params.append('lat_field', locationQuery.lat_field);
+            if (locationQuery.lng_field && locationQuery.lng_field !== 'longitude') params.append('lng_field', locationQuery.lng_field);
+        }
+
         // filters[column]=value
         Object.entries(listFilters).forEach(([column, value]) => {
             if (value != null && value !== '') {
@@ -153,6 +192,39 @@ const SectionApi = () => {
 
         const qs = params.toString();
         return qs ? `${baseUrl}?${qs}` : baseUrl;
+    };
+
+    const buildSingleUrl = () => {
+        if (singleMode === 'field' && singleField && singleValue) {
+            return `${baseUrl}/by/${encodeURIComponent(singleField)}/${encodeURIComponent(singleValue)}`;
+        }
+        return `${baseUrl}/${singleId || 1}`;
+    };
+
+    const handleTrySingle = async (e) => {
+        e.preventDefault();
+        setSingleLoading(true);
+        setSingleError('');
+        setSingleResponse(null);
+        try {
+            let url;
+            if (singleMode === 'field') {
+                if (!singleField || !singleValue) {
+                    setSingleError('Please select a field and enter a value.');
+                    setSingleLoading(false);
+                    return;
+                }
+                url = `/api/entities/${slugOrTable}/by/${encodeURIComponent(singleField)}/${encodeURIComponent(singleValue)}`;
+            } else {
+                url = `/api/entities/${slugOrTable}/${singleId || 1}`;
+            }
+            const res = await axios.get(url);
+            setSingleResponse(res.data);
+        } catch (err) {
+            setSingleError(err.response?.data?.message || err.message || 'Request failed');
+        } finally {
+            setSingleLoading(false);
+        }
     };
 
     const handleTryList = async (e) => {
@@ -168,6 +240,14 @@ const SectionApi = () => {
                 sort: listQuery.sort || undefined,
                 direction: listQuery.direction || undefined,
             };
+            if (locationEnabled && locationQuery.lat && locationQuery.lng) {
+                params.lat = locationQuery.lat;
+                params.lng = locationQuery.lng;
+                if (locationQuery.radius) params.radius = locationQuery.radius;
+                if (locationQuery.unit) params.unit = locationQuery.unit;
+                if (locationQuery.lat_field) params.lat_field = locationQuery.lat_field;
+                if (locationQuery.lng_field) params.lng_field = locationQuery.lng_field;
+            }
             Object.entries(listFilters).forEach(([column, value]) => {
                 if (value != null && value !== '') {
                     params[`filters[${column}]`] = value;
@@ -243,7 +323,7 @@ const SectionApi = () => {
                         <CardHeader>
                             <h5 className="mb-0">Available Fields</h5>
                         </CardHeader>
-                        <CardBody>
+                        <CardBody style={{ maxHeight: '280px', overflowY: 'auto' }}>
                             {fields.length === 0 ? (
                                 <p className="text-muted mb-0">No fields defined yet. Add fields in the Section Editor.</p>
                             ) : (
@@ -274,7 +354,7 @@ const SectionApi = () => {
                     </Card>
 
                     <Tab.Container defaultActiveKey="list">
-                        <Card className="mb-4">
+                        <Card className="mb-4" style={{ maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
                             <CardHeader>
                                 <Nav variant="tabs" className="card-header-tabs">
                                     <Nav.Item>
@@ -294,7 +374,7 @@ const SectionApi = () => {
                                     </Nav.Item>
                                 </Nav>
                             </CardHeader>
-                            <CardBody>
+                            <CardBody style={{ overflowY: 'auto', flex: 1 }}>
                                 <Tab.Content>
                                     <Tab.Pane eventKey="list">
                                         <h6 className="mb-3">List All Records</h6>
@@ -312,12 +392,22 @@ const SectionApi = () => {
                                             </div>
                                         </div>
 
-                                        <h6 className="mt-4">Query Parameters (Datatable style)</h6>
+                                        <h6 className="mt-4">Query Parameters</h6>
                                         <ul className="text-muted small mb-3">
                                             <li><code>search</code>: Global search across searchable columns.</li>
                                             <li><code>page</code>, <code>per_page</code>: Pagination.</li>
-                                            <li><code>sort</code>, <code>direction</code>: Column sort (e.g. <code>sort=created_at&direction=desc</code>).</li>
-                                            <li><code>filters[column]</code>: Per-column filter (e.g. <code>filters[name]=John</code>).</li>
+                                            <li><code>sort</code>, <code>direction</code>: e.g. <code>sort=created_at&amp;direction=desc</code></li>
+                                            <li>
+                                                <code>filters[column]=value</code>: Partial match (LIKE) on any column — single value or comma-separated for OR match.
+                                                <br /><span className="text-muted">e.g. <code>filters[category]=208</code> &nbsp;|&nbsp; <code>filters[title]=Nikki,Obama</code> &nbsp;|&nbsp; <code>filters[featured]=1</code></span>
+                                            </li>
+                                            <li className="mt-1">
+                                                <strong>Location filter</strong> — <code>lat</code> + <code>lng</code> (required pair):
+                                                <br /><code>radius</code>: search radius, default <code>100</code>
+                                                <br /><code>unit</code>: <code>miles</code> (default) or <code>km</code>
+                                                <br /><code>lat_field</code> / <code>lng_field</code>: column names in your table (default: <code>latitude</code> / <code>longitude</code>)
+                                                <br /><span className="text-muted">Results sorted nearest-first; each record includes <code>distance_miles</code> or <code>distance_km</code>.</span>
+                                            </li>
                                         </ul>
 
                                         <Form onSubmit={handleTryList} className="border rounded p-3 mb-3 bg-light-subtle">
@@ -396,11 +486,93 @@ const SectionApi = () => {
                                                 </Col>
                                             </Row>
 
+                                            <hr className="my-3" />
+                                            <div className="d-flex align-items-center gap-2 mb-2">
+                                                <Form.Check
+                                                    type="switch"
+                                                    id="location-toggle"
+                                                    label={<span className="small fw-semibold">Location Filter (Proximity Search)</span>}
+                                                    checked={locationEnabled}
+                                                    onChange={(e) => setLocationEnabled(e.target.checked)}
+                                                />
+                                            </div>
+                                            {locationEnabled && (
+                                                <Row className="g-2">
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Latitude <span className="text-danger">*</span></Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. 37.871"
+                                                            value={locationQuery.lat}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lat: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Longitude <span className="text-danger">*</span></Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            step="any"
+                                                            placeholder="e.g. -122.27"
+                                                            value={locationQuery.lng}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lng: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={2}>
+                                                        <Form.Label className="small mb-1">Radius</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            min="0.1"
+                                                            placeholder="100"
+                                                            value={locationQuery.radius}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, radius: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={2}>
+                                                        <Form.Label className="small mb-1">Unit</Form.Label>
+                                                        <Form.Select
+                                                            size="sm"
+                                                            value={locationQuery.unit}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, unit: e.target.value }))}
+                                                        >
+                                                            <option value="miles">miles</option>
+                                                            <option value="km">km</option>
+                                                        </Form.Select>
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Lat Column</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            placeholder="latitude"
+                                                            value={locationQuery.lat_field}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lat_field: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col md={3}>
+                                                        <Form.Label className="small mb-1">Lng Column</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            placeholder="longitude"
+                                                            value={locationQuery.lng_field}
+                                                            onChange={(e) => setLocationQuery(p => ({ ...p, lng_field: e.target.value }))}
+                                                        />
+                                                    </Col>
+                                                    <Col xs={12}>
+                                                        <p className="text-muted small mb-0">
+                                                            Results sorted nearest-first. Response includes <code>distance_{locationQuery.unit === 'km' ? 'km' : 'miles'}</code> on each record.
+                                                        </p>
+                                                    </Col>
+                                                </Row>
+                                            )}
+
                                             {fields.length > 0 && (
                                                 <>
                                                     <hr className="my-3" />
                                                     <Form.Label className="small mb-2">
-                                                        Column Filters (<code>filters[column]</code>)
+                                                        Column Filters <code className="text-muted">filters[column]</code>
                                                     </Form.Label>
                                                     <Row className="g-2">
                                                         {fields.map((f) => (
@@ -439,8 +611,10 @@ const SectionApi = () => {
                                             </div>
                                         </Form>
 
-                                        <h6 className="mt-4">Sample / Live Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <h6 className="mt-4">
+                                            {listResponse ? '✅ Live Response (200 OK)' : 'Sample Response (press "Try request" for live data)'}
+                                        </h6>
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(listResponse ?? listResponseExample, null, 2)}
                                         </pre>
                                         <Button
@@ -458,14 +632,108 @@ const SectionApi = () => {
 
                                     <Tab.Pane eventKey="show">
                                         <h6 className="mb-3">Get Single Record</h6>
+
+                                        {/* Mode toggle */}
+                                        <div className="d-flex gap-2 mb-3">
+                                            <Button
+                                                size="sm"
+                                                variant={singleMode === 'id' ? 'primary' : 'outline-secondary'}
+                                                onClick={() => setSingleMode('id')}
+                                            >
+                                                By ID
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant={singleMode === 'field' ? 'primary' : 'outline-secondary'}
+                                                onClick={() => { setSingleMode('field'); if (!singleField && fields.length > 0) setSingleField(fields[0].slug); }}
+                                            >
+                                                By Any Field
+                                            </Button>
+                                        </div>
+
+                                        {/* URL preview */}
                                         <div className="mb-3">
                                             <Badge bg="success" className="me-2">GET</Badge>
-                                            <code>{baseUrl}/1</code>
+                                            <code className="text-break">{buildSingleUrl()}</code>
+                                            <div className="mt-2">
+                                                <Button size="sm" variant="outline-secondary" onClick={() => handleCopy(buildSingleUrl())}>
+                                                    <Icon icon="copy" className="me-1" /> Copy URL
+                                                </Button>
+                                            </div>
                                         </div>
+
+                                        {singleMode === 'field' && (
+                                            <div className="mb-3 p-2 bg-light-subtle rounded border small text-muted">
+                                                <strong>By Any Field:</strong> Fetch the first record where a specific column matches a value.<br />
+                                                Route: <code>{baseUrl}/by/&#123;field&#125;/&#123;value&#125;</code>
+                                            </div>
+                                        )}
+
+                                        {/* Try it form */}
+                                        <Form onSubmit={handleTrySingle} className="border rounded p-3 mb-3 bg-light-subtle">
+                                            <Row className="g-2 align-items-end">
+                                                {singleMode === 'id' ? (
+                                                    <Col md={4}>
+                                                        <Form.Label className="small mb-1">Record ID</Form.Label>
+                                                        <FormControl
+                                                            size="sm"
+                                                            type="number"
+                                                            min={1}
+                                                            value={singleId}
+                                                            onChange={(e) => setSingleId(e.target.value)}
+                                                            placeholder="e.g. 1"
+                                                        />
+                                                    </Col>
+                                                ) : (
+                                                    <>
+                                                        <Col md={4}>
+                                                            <Form.Label className="small mb-1">Field</Form.Label>
+                                                            <Form.Select
+                                                                size="sm"
+                                                                value={singleField}
+                                                                onChange={(e) => setSingleField(e.target.value)}
+                                                            >
+                                                                <option value="">-- select field --</option>
+                                                                {fields.map((f) => (
+                                                                    <option key={f.slug} value={f.slug}>{f.slug} ({f.type})</option>
+                                                                ))}
+                                                            </Form.Select>
+                                                        </Col>
+                                                        <Col md={4}>
+                                                            <Form.Label className="small mb-1">Value</Form.Label>
+                                                            <FormControl
+                                                                size="sm"
+                                                                value={singleValue}
+                                                                onChange={(e) => setSingleValue(e.target.value)}
+                                                                placeholder="search value"
+                                                            />
+                                                        </Col>
+                                                    </>
+                                                )}
+                                                <Col md={4}>
+                                                    <Button type="submit" size="sm" variant="primary" disabled={singleLoading}>
+                                                        {singleLoading ? 'Sending...' : 'Try request'}
+                                                    </Button>
+                                                </Col>
+                                            </Row>
+                                            {singleError && (
+                                                <div className="mt-2 text-danger small">
+                                                    <Icon icon="alert-triangle" className="me-1" />{singleError}
+                                                </div>
+                                            )}
+                                        </Form>
+
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded">
-                                            {JSON.stringify(responseExample, null, 2)}
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                                            {JSON.stringify(singleResponse ?? responseExample, null, 2)}
                                         </pre>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            onClick={() => handleCopy(JSON.stringify(singleResponse ?? responseExample, null, 2))}
+                                        >
+                                            <Icon icon="copy" className="me-1" /> Copy Response JSON
+                                        </Button>
                                     </Tab.Pane>
 
                                     <Tab.Pane eventKey="create">
@@ -475,7 +743,7 @@ const SectionApi = () => {
                                             <code>{baseUrl}</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
                                         <Button
@@ -487,7 +755,7 @@ const SectionApi = () => {
                                             <Icon icon="copy" className="me-1" /> Copy Request Body
                                         </Button>
                                         <h6 className="mt-4">Response (201 Created)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>
@@ -499,7 +767,7 @@ const SectionApi = () => {
                                             <code>{baseUrl}/1</code>
                                         </div>
                                         <h6 className="mt-4">Request Body</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(requestBodyExample, null, 2)}
                                         </pre>
                                         <Button
@@ -511,7 +779,7 @@ const SectionApi = () => {
                                             <Icon icon="copy" className="me-1" /> Copy Request Body
                                         </Button>
                                         <h6 className="mt-4">Response (200 OK)</h6>
-                                        <pre className="bg-light p-3 rounded small">
+                                        <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                                             {JSON.stringify(responseExample, null, 2)}
                                         </pre>
                                     </Tab.Pane>
@@ -538,9 +806,8 @@ const SectionApi = () => {
                         </CardHeader>
                         <CardBody>
                             <p className="text-muted small">
-                                Kabhi kabhi aapko ek hi request se <strong>do alag tables</strong> ka data chahiye hota hai.
-                                Is project me us ke liye ek generic endpoint hai jo <code>Section Editor</code> ki kisi bhi
-                                2 entities ka data ek JSON response me la sakta hai.
+                                Use this endpoint when you need data from <strong>two different tables</strong> in a single request.
+                                This generic endpoint returns paginated data from any 2 entities registered in the Section Editor.
                             </p>
 
                             <div className="mb-3">
@@ -552,27 +819,25 @@ const SectionApi = () => {
 
                             <ul className="text-muted small mb-3">
                                 <li>
-                                    <code>{'{first}'}</code> aur <code>{'{second}'}</code> dono me aap <strong>entity ka slug</strong> ya
-                                    <strong> table ka naam</strong> de sakte hain (jo Section Editor se auto-sync hota hai).
+                                    Both <code>{'{first}'}</code> and <code>{'{second}'}</code> accept either an <strong>entity slug</strong> or
+                                    a <strong>table name</strong> (auto-synced from the Section Editor).
                                 </li>
                                 <li>
-                                    Example: agar yeh section ka slug <code>{slugOrTable}</code> hai aur doosra section
-                                    <code>categories</code> hai, to URL hoga:&nbsp;
+                                    Example: if this section's slug is <code>{slugOrTable}</code> and the second section is
+                                    <code>categories</code>, the URL would be:&nbsp;
                                     <code>{window.location.origin}/api/section-builder/entities-combined/{slugOrTable}/categories</code>
                                 </li>
                                 <li>
-                                    Query params (e.g. <code>search</code>, <code>page</code>, <code>per_page</code>,{' '}
-                                    <code>sort</code>, <code>direction</code>, <code>filters[column]</code>) dono entities par
-                                    same tarah apply honge.
+                                    Query params (<code>search</code>, <code>page</code>, <code>per_page</code>,{' '}
+                                    <code>sort</code>, <code>direction</code>, <code>filters[column]</code>) are applied to both entities equally.
                                 </li>
                             </ul>
 
                             <h6 className="mt-3">Response Structure</h6>
                             <p className="text-muted small mb-2">
-                                Response me <code>first</code> aur <code>second</code> keys hoti hain, har ek ke andar
-                                entity meta + paginated data hota hai:
+                                The response contains <code>first</code> and <code>second</code> keys, each with entity metadata and paginated data:
                             </p>
-                            <pre className="bg-light p-3 rounded small">
+                            <pre className="bg-light p-3 rounded small" style={{ maxHeight: '280px', overflowY: 'auto' }}>
 {JSON.stringify({
     first: {
         entity: { id: 1, name: 'First Entity', table_name: 'first_table', slug: 'first-entity' },
