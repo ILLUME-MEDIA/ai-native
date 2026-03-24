@@ -19,11 +19,16 @@ class CuisineController extends Controller
     {
         if ($request->boolean('admin')) {
             $q = Cuisine::withCount('muzzs')
+                ->orderByDesc('is_active')   // active first
                 ->orderBy('sort_order')
                 ->orderBy('name');
 
             if ($request->filled('search')) {
                 $q->where('name', 'like', '%' . $request->search . '%');
+            }
+
+            if ($request->filled('status') && $request->status !== '') {
+                $q->where('is_active', (bool) $request->status);
             }
 
             return response()->json($q->paginate($request->input('per_page', 15)));
@@ -89,8 +94,8 @@ class CuisineController extends Controller
     {
         $data = $request->validate([
             'name'       => 'required|string|max:100|unique:cuisines,name',
-            'icon'       => 'nullable|string|max:100',
-            'hover_icon' => 'nullable|string|max:100',
+            'icon'       => 'nullable|string|max:500',
+            'hover_icon' => 'nullable|string|max:500',
             'is_active'  => 'boolean',
             'sort_order' => 'integer',
         ]);
@@ -114,8 +119,8 @@ class CuisineController extends Controller
     {
         $data = $request->validate([
             'name'       => 'sometimes|string|max:100|unique:cuisines,name,' . $cuisine->id,
-            'icon'       => 'nullable|string|max:100',
-            'hover_icon' => 'nullable|string|max:100',
+            'icon'       => 'nullable|string|max:500',
+            'hover_icon' => 'nullable|string|max:500',
             'is_active'  => 'boolean',
             'sort_order' => 'integer',
         ]);

@@ -5,7 +5,9 @@ import TablePagination from '@admin/components/table/TablePagination';
 import DeleteConfirmationModal from '@admin/components/table/DeleteConfirmationModal';
 import axios from 'axios';
 import { useState, useEffect, useRef } from 'react';
-import { createColumnHelper, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  createColumnHelper, getCoreRowModel, getSortedRowModel, useReactTable,
+} from '@tanstack/react-table';
 import {
   Alert, Badge, Button, Card, CardBody, CardFooter, CardHeader,
   Col, Form, FormControl, FormLabel, Modal, Row, Spinner,
@@ -103,6 +105,7 @@ export default function CuisinesPage() {
   const [page, setPage]             = useState(1);
   const [perPage, setPerPage]       = useState(100);
   const [search, setSearch]         = useState('');
+  const [statusFilter, setStatusFilter] = useState('1');
   const [showModal, setShowModal]   = useState(false);
   const [editRow, setEditRow]       = useState(null);
   const [form, setForm]             = useState(emptyForm);
@@ -119,15 +122,16 @@ export default function CuisinesPage() {
 
   const load = () => {
     setLoading(true);
-    const params = new URLSearchParams({ admin: 1, page, per_page: perPage });
-    if (search) params.set('search', search);
-    axios.get(`/api/ecommerce/cuisines?${params}`)
+    const params = { admin: 1, page, per_page: perPage };
+    if (search) params.search = search;
+    if (statusFilter !== '') params.status = statusFilter;
+    axios.get('/api/ecommerce/cuisines', { params })
       .then(r => { setRows(r.data.data || []); setPagination(r.data); })
       .finally(() => setLoading(false));
   };
 
-  // Only reload table when page changes AND modal is closed
-  useEffect(() => { if (!showModal) load(); }, [page, perPage, showModal]);
+  // Only reload table when page/filter changes AND modal is closed
+  useEffect(() => { if (!showModal) load(); }, [page, perPage, statusFilter, showModal]);
 
   const handleActivateAll = () => {
     axios.put('/api/ecommerce/cuisines/activate-all')
@@ -242,7 +246,14 @@ export default function CuisinesPage() {
     },
   ];
 
-  const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel(), manualPagination: true });
+  const table = useReactTable({
+    data: rows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    manualPagination: true,
+    initialState: { sorting: [{ id: 'is_active', desc: true }] },
+  });
 
   const totalPages = pagination.last_page || 1;
   const totalItems = pagination.total || rows.length;
@@ -268,7 +279,13 @@ export default function CuisinesPage() {
               style={{ paddingRight: 36, minWidth: 220 }} />
             <Icon icon="search" size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
           </div>
-          <div className="d-flex gap-2 align-items-center">
+          <div className="d-flex gap-2 align-items-center flex-wrap">
+            <Form.Select size="sm" style={{ width: 'auto' }} value={statusFilter}
+              onChange={e => { setStatusFilter(e.target.value); setPage(1); }}>
+              <option value="">All Status</option>
+              <option value="1">Active</option>
+              <option value="0">Inactive</option>
+            </Form.Select>
             <Form.Select size="sm" style={{ width: 'auto' }} value={perPage}
               onChange={e => { setPage(1); setPerPage(Number(e.target.value)); }}>
               {[50, 100, 200, 500].map(n => <option key={n} value={n}>{n} per page</option>)}
