@@ -419,8 +419,10 @@ export default function DeployManager() {
     e?.stopPropagation();
     clearInterval(liveRef.current);
     setLiveLog(null);
+    // Clear deploying flag immediately so the Stop button disappears right away
+    setDeploying(prev => ({ ...prev, [p.id]: false }));
     await apiFetch(`${API}/projects/${p.id}/stop`, { method: 'POST' });
-    // Refresh immediately
+    // Refresh immediately — stop controller already sets status=idle in DB
     fetchProjects(true);
     if (selected === p.id) fetchLogs(p.id, true);
   };

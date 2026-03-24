@@ -295,9 +295,16 @@ class RunDeployJob implements ShouldQueue
                     : (file_exists('/bin/stdbuf')     ? '/bin/stdbuf' : null);
             $prefix = $stdbuf ? "{$stdbuf} -oL -eL " : '';
 
+            // setsid runs bash in a NEW session so bash becomes its own process-group
+            // leader (PGID = bash PID). This lets killProc send SIGTERM/-SIGKILL to the
+            // entire process group (bash + npm + node children) via posix_kill(-pid, sig).
+            // Without setsid, bash inherits PHP's PGID and posix_kill(-bashPid,…) is a no-op.
+            $setsid = file_exists('/usr/bin/setsid') ? '/usr/bin/setsid '
+                    : (file_exists('/bin/setsid')     ? '/bin/setsid ' : '');
+
             $exitFile = sys_get_temp_dir() . '/dep_exit_' . $this->logId . '_' . getmypid();
             // Subshell so the exit code of CMD is captured even when CMD uses set -e
-            $shell = $prefix . 'bash -c ' . escapeshellarg("({$cmd}); echo \$? > " . escapeshellarg($exitFile));
+            $shell = $setsid . $prefix . 'bash -c ' . escapeshellarg("({$cmd}); echo \$? > " . escapeshellarg($exitFile));
         }
 
         $proc = proc_open($shell, $descriptors, $pipes, $cwd, $procEnv);
