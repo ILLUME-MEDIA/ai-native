@@ -980,6 +980,79 @@ function callDS(path, opts = {}) {
   }).then(r => r.status === 204 ? null : r.json());
 }
 
+// ── module-level sub-components (outside SiteTokenEditor to keep stable identity) ──
+
+const SaveIndicator = ({ name, saving, saved }) => (
+  saving === name
+    ? <div className="spinner-border flex-shrink-0" style={{ width: 10, height: 10, borderWidth: 2, color: 'var(--bs-primary)' }} />
+    : saved === name
+      ? <span className="text-success flex-shrink-0" style={{ fontSize: 10 }}>✓</span>
+      : null
+);
+
+const ColorRow = ({ token, compact, vals, handleChange, setVals, saving, saved }) => {
+  const v   = vals[token.name] || '';
+  const hex = v.startsWith('#') ? v : '#cccccc';
+  const label = token.name.split('.').pop();
+  return (
+    <div className="border rounded p-2" style={{ backgroundColor: '#fff', color: '#212529', marginBottom: compact ? 0 : 8 }}>
+      {!compact && (
+        <div className="d-flex align-items-center gap-2 mb-2">
+          <div className="rounded border flex-shrink-0" style={{ width: 24, height: 24, backgroundColor: hex, transition: 'background .15s' }} />
+          <div className="flex-grow-1">
+            <div className="fw-semibold" style={{ fontSize: 12, color: '#212529' }}>{label.charAt(0).toUpperCase()+label.slice(1)}</div>
+            <div className="font-monospace" style={{ fontSize: 10, color: '#666' }}>{token.name}</div>
+          </div>
+          <SaveIndicator name={token.name} saving={saving} saved={saved} />
+        </div>
+      )}
+      <div className={`input-group input-group-sm ${compact ? 'd-flex align-items-center gap-1' : ''}`}>
+        {compact && <div className="rounded border flex-shrink-0" style={{ width: 20, height: 20, backgroundColor: hex, minWidth: 20 }} />}
+        <input type="color" className="form-control form-control-color border-end-0 flex-shrink-0"
+          style={{ maxWidth: 30, padding: '2px 2px', cursor: 'pointer' }}
+          value={hex}
+          onChange={e => handleChange(token.name, e.target.value)} />
+        <input type="text" className="form-control font-monospace"
+          style={{ fontSize: 10, color: '#212529', backgroundColor: '#fff' }}
+          value={v} maxLength={7} placeholder="#000000"
+          onChange={e => {
+            const x = e.target.value;
+            if (x === '' || /^#[0-9a-fA-F]{0,6}$/.test(x)) {
+              if (x.length === 7) handleChange(token.name, x);
+              else setVals(p => ({ ...p, [token.name]: x }));
+            }
+          }} />
+        {compact && <SaveIndicator name={token.name} saving={saving} saved={saved} />}
+      </div>
+    </div>
+  );
+};
+
+const TextTokenRow = ({ token, label, type = 'text', min, max, step, unit = '', vals, handleChange, saving, saved }) => {
+  const v    = vals[token.name] || '';
+  const numV = parseFloat(v) || 0;
+  return (
+    <div className="border rounded px-3 py-2 d-flex align-items-center gap-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
+      <div className="flex-grow-1" style={{ minWidth: 0 }}>
+        <div className="fw-semibold" style={{ fontSize: 11, color: '#212529' }}>{label || token.name.split('.').pop()}</div>
+        <div className="font-monospace" style={{ fontSize: 9, color: '#666' }}>{token.name}</div>
+      </div>
+      {type === 'range' ? (
+        <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 180 }}>
+          <input type="range" className="form-range flex-grow-1" min={min} max={max} step={step}
+            value={numV} onChange={e => handleChange(token.name, `${parseFloat(e.target.value).toFixed(step < 0.1 ? 3 : 2)}${unit}`)} />
+          <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 44 }}>{v || '—'}</span>
+        </div>
+      ) : (
+        <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
+          style={{ maxWidth: 140, fontSize: 11, color: '#212529', backgroundColor: '#fff' }}
+          value={v} onChange={e => handleChange(token.name, e.target.value)} />
+      )}
+      <SaveIndicator name={token.name} saving={saving} saved={saved} />
+    </div>
+  );
+};
+
 const SiteTokenEditor = ({ site, onClose }) => {
   const [tokens, setTokens]         = useState([]);
   const [vals, setVals]             = useState({});
@@ -1074,75 +1147,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
   const solidBtn  = (name) => { const v = pv(name); return v ? { backgroundColor: v, borderColor: v, color: '#fff' } : {}; };
   const outlineBtn= (name) => { const v = pv(name); return v ? { color: v, borderColor: v, background: 'transparent' } : {}; };
 
-  // ── small sub-components ──────────────────────────────────────────────────
-  const SaveIndicator = ({ name }) => (
-    saving === name
-      ? <div className="spinner-border flex-shrink-0" style={{ width: 10, height: 10, borderWidth: 2, color: 'var(--bs-primary)' }} />
-      : saved === name
-        ? <span className="text-success flex-shrink-0" style={{ fontSize: 10 }}>✓</span>
-        : null
-  );
-
-  const ColorRow = ({ token, compact }) => {
-    const v = vals[token.name] || '';
-    const hex = v.startsWith('#') ? v : '#cccccc';
-    const label = token.name.split('.').pop();
-    return (
-      <div className={`border rounded p-2 ${compact ? '' : 'mb-2'}`}>
-        {!compact && (
-          <div className="d-flex align-items-center gap-2 mb-2">
-            <div className="rounded border flex-shrink-0" style={{ width: 24, height: 24, backgroundColor: hex, transition: 'background .15s' }} />
-            <div className="flex-grow-1">
-              <div className="fw-semibold" style={{ fontSize: 12 }}>{label.charAt(0).toUpperCase()+label.slice(1)}</div>
-              <div className="text-muted" style={{ fontSize: 10 }}>{token.name}</div>
-            </div>
-            <SaveIndicator name={token.name} />
-          </div>
-        )}
-        <div className={`input-group input-group-sm ${compact ? 'd-flex align-items-center gap-1' : ''}`}>
-          {compact && <div className="rounded border flex-shrink-0" style={{ width: 20, height: 20, backgroundColor: hex, minWidth: 20 }} />}
-          <input type="color" className="form-control form-control-color border-end-0 flex-shrink-0"
-            style={{ maxWidth: 30, padding: '2px 2px', cursor: 'pointer' }}
-            value={hex} onChange={e => handleChange(token.name, e.target.value)} />
-          <input type="text" className="form-control font-monospace"
-            style={{ fontSize: 10 }} value={v} maxLength={7} placeholder="#000000"
-            onChange={e => {
-              const x = e.target.value;
-              if (x === '' || /^#[0-9a-fA-F]{0,6}$/.test(x)) {
-                if (x.length === 7) handleChange(token.name, x);
-                else setVals(p => ({ ...p, [token.name]: x }));
-              }
-            }} />
-          {compact && <SaveIndicator name={token.name} />}
-        </div>
-      </div>
-    );
-  };
-
-  const TextTokenRow = ({ token, label, type = 'text', min, max, step, unit = '' }) => {
-    const v = vals[token.name] || '';
-    const numV = parseFloat(v) || 0;
-    return (
-      <div className="border rounded px-3 py-2 d-flex align-items-center gap-2">
-        <div className="flex-grow-1" style={{ minWidth: 0 }}>
-          <div className="fw-semibold" style={{ fontSize: 11 }}>{label || token.name.split('.').pop()}</div>
-          <div className="text-muted font-monospace" style={{ fontSize: 9 }}>{token.name}</div>
-        </div>
-        {type === 'range' ? (
-          <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 180 }}>
-            <input type="range" className="form-range flex-grow-1" min={min} max={max} step={step}
-              value={numV} onChange={e => handleChange(token.name, `${parseFloat(e.target.value).toFixed(step < 0.1 ? 3 : 2)}${unit}`)} />
-            <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 44 }}>{v || '—'}</span>
-          </div>
-        ) : (
-          <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
-            style={{ maxWidth: 140, fontSize: 11 }} value={v}
-            onChange={e => handleChange(token.name, e.target.value)} />
-        )}
-        <SaveIndicator name={token.name} />
-      </div>
-    );
-  };
+  // ── small sub-components (defined at module level to prevent remount on re-render) ──
 
   const TABS = [
     { key: 'colors',    label: 'Colors',       count: colorTokens.length },
@@ -1158,10 +1163,10 @@ const SiteTokenEditor = ({ site, onClose }) => {
   return (
     <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1060 }}>
       <div className="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
-        <div className="modal-content">
+        <div className="modal-content" style={{ backgroundColor: '#fff', color: '#212529' }}>
 
           {/* Header */}
-          <div className="modal-header border-bottom py-2">
+          <div className="modal-header border-bottom py-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
             <div>
               <h5 className="modal-title fw-bold mb-0" style={{ fontSize: 15 }}>
                 Token Editor — {site.name}
@@ -1190,16 +1195,16 @@ const SiteTokenEditor = ({ site, onClose }) => {
             </div>
           ) : (
             <div className="modal-body p-0">
-              <div className="row g-0" style={{ minHeight: 520 }}>
+              <div className="row g-0" style={{ minHeight: 520, backgroundColor: '#fff', color: '#212529' }}>
 
                 {/* LEFT: Tabbed editors */}
-                <div className="col-lg-7 border-end d-flex flex-column">
+                <div className="col-lg-7 border-end d-flex flex-column" style={{ backgroundColor: '#fff' }}>
                   {/* Tab nav */}
-                  <div className="border-bottom px-3 pt-2 d-flex gap-0 overflow-auto" style={{ flexShrink: 0 }}>
+                  <div className="border-bottom px-3 pt-2 d-flex gap-0 overflow-auto" style={{ flexShrink: 0, backgroundColor: '#f8f9fa' }}>
                     {TABS.map(t => (
                       <button key={t.key}
-                        className={`btn btn-sm border-0 border-bottom border-2 rounded-0 me-1 pb-2 ${tab === t.key ? 'border-primary text-primary fw-semibold' : 'border-transparent text-muted'}`}
-                        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                        className={`btn btn-sm border-0 border-bottom border-2 rounded-0 me-1 pb-2 ${tab === t.key ? 'border-primary text-primary fw-semibold' : 'border-transparent'}`}
+                        style={{ fontSize: 12, whiteSpace: 'nowrap', color: tab === t.key ? undefined : '#555' }}
                         onClick={() => setTab(t.key)}>
                         {t.label}
                         <span className="ms-1 badge" style={{ fontSize: 9, backgroundColor: tab === t.key ? 'var(--bs-primary)' : '#dee2e6', color: tab === t.key ? '#fff' : '#666' }}>{t.count}</span>
@@ -1216,7 +1221,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                         <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Semantic Colors</div>
                         <div className="row g-2 mb-4">
                           {semanticColors.map(t => (
-                            <div key={t.id} className="col-6"><ColorRow token={t} /></div>
+                            <div key={t.id} className="col-6"><ColorRow token={t} vals={vals} handleChange={handleChange} setVals={setVals} saving={saving} saved={saved} /></div>
                           ))}
                         </div>
                         {Object.entries(paletteMap).map(([grp, list]) => (
@@ -1266,7 +1271,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                             <div key={group} className="mb-4">
                               <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>{group}</div>
                               <div className="d-flex flex-column gap-1">
-                                {list.map(t => <TextTokenRow key={t.id} token={t} />)}
+                                {list.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                               </div>
                             </div>
                           );
@@ -1289,7 +1294,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                                   <div className="d-flex align-items-center justify-content-between mb-1">
                                     <span className="fw-semibold" style={{ fontSize: 11 }}>{label}</span>
                                     <span className="badge bg-secondary" style={{ fontSize: 9 }}>{v}</span>
-                                    <SaveIndicator name={t.name} />
+                                    <SaveIndicator name={t.name} saving={saving} saved={saved} />
                                   </div>
                                   <input type="range" className="form-range mb-1"
                                     min={0} max={2} step={0.05} value={numV}
@@ -1303,7 +1308,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                         <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Shadows</div>
                         <div className="d-flex flex-column gap-1">
-                          {shadowTokens.map(t => <TextTokenRow key={t.id} token={t} />)}
+                          {shadowTokens.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                         </div>
                       </>
                     )}
@@ -1326,9 +1331,9 @@ const SiteTokenEditor = ({ site, onClose }) => {
                                 <span className="fw-semibold font-monospace text-muted flex-shrink-0" style={{ fontSize: 10, width: 60 }}>{t.name.split('.').slice(1).join('.')}</span>
                                 <div className="bg-primary flex-shrink-0" style={{ height: 14, width: Math.min(pxV * 2, 120), borderRadius: 2, opacity: 0.4, transition: 'width .2s' }} />
                                 <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
-                                  style={{ maxWidth: 90, fontSize: 10 }} value={v}
+                                  style={{ maxWidth: 90, fontSize: 10, color: '#212529', backgroundColor: '#fff' }} value={v}
                                   onChange={e => handleChange(t.name, e.target.value)} />
-                                <SaveIndicator name={t.name} />
+                                <SaveIndicator name={t.name} saving={saving} saved={saved} />
                               </div>
                             );
                           })}
@@ -1341,7 +1346,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                       <>
                         <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Animation Tokens</div>
                         <div className="d-flex flex-column gap-1">
-                          {animTokens.map(t => <TextTokenRow key={t.id} token={t} />)}
+                          {animTokens.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                         </div>
                       </>
                     )}
@@ -1374,11 +1379,11 @@ const SiteTokenEditor = ({ site, onClose }) => {
                                         <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 32 }}>{v}</span>
                                         <div className="rounded" style={{ width: 18, height: 18, backgroundColor: 'var(--bs-primary)', opacity: parseFloat(v) || 1, border: '1px solid #ccc' }} />
                                       </div>
-                                      <SaveIndicator name={t.name} />
+                                      <SaveIndicator name={t.name} saving={saving} saved={saved} />
                                     </div>
                                   );
                                 }
-                                return <TextTokenRow key={t.id} token={t} />;
+                                return <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />;
                               })}
                             </div>
                           </div>
@@ -1389,9 +1394,9 @@ const SiteTokenEditor = ({ site, onClose }) => {
                 </div>
 
                 {/* RIGHT: Live Preview — fully reactive to ALL token changes */}
-                <div className="col-lg-5 d-flex flex-column" style={{ background: '#f3f4f6' }}>
-                  <div className="px-3 pt-2 pb-1 border-bottom d-flex align-items-center justify-content-between" style={{ flexShrink: 0 }}>
-                    <span className="text-uppercase fw-bold text-muted" style={{ fontSize: 10, letterSpacing: 1 }}>Live Preview</span>
+                <div className="col-lg-5 d-flex flex-column" style={{ background: '#f3f4f6', color: '#212529' }}>
+                  <div className="px-3 pt-2 pb-1 border-bottom d-flex align-items-center justify-content-between" style={{ flexShrink: 0, backgroundColor: '#f8f9fa' }}>
+                    <span className="fw-bold" style={{ fontSize: 10, letterSpacing: 1, color: '#555', textTransform: 'uppercase' }}>Live Preview</span>
                     <span className="text-success" style={{ fontSize: 10 }}>
                       <svg width="7" height="7" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
                       {' '}live
@@ -1660,8 +1665,8 @@ const SiteTokenEditor = ({ site, onClose }) => {
             </div>
           )}
 
-          <div className="modal-footer border-top py-2">
-            <span className="text-muted me-auto" style={{ fontSize: 11 }}>
+          <div className="modal-footer border-top py-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
+            <span className="me-auto" style={{ fontSize: 11, color: '#666' }}>
               <svg width="8" height="8" viewBox="0 0 10 10" fill="#0ab39c"><circle cx="5" cy="5" r="5"/></svg>
               {' '}Auto-saves on change · Broadcasts to all connected apps via API
             </span>
