@@ -49,9 +49,11 @@ class DsSite extends Model
         return substr($plain, 0, 6) . str_repeat('*', 30) . substr($plain, -4);
     }
 
-    /** Resolve the effective theme (falls back to default theme) */
+    /** Resolve the effective theme (falls back to default theme, then any theme) */
     public function resolveTheme(): ?DsTheme
     {
-        return $this->theme ?? DsTheme::where('is_default', true)->first();
+        return $this->theme
+            ?? DsTheme::where('is_default', true)->first()
+            ?? DsTheme::first();
     }
 }

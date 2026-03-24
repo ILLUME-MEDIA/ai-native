@@ -264,15 +264,17 @@ Route::get('/design-tokens/theme', function () {
 //   X-DS-Key header also accepted (resolves site by api_key)
 
 $resolveThemeForRequest = function (\Illuminate\Http\Request $request, string $slug) {
-    // Try by slug
-    $site = \App\Models\DesignSystem\DsSite::where('slug', $slug)
-        ->where('is_active', true)->first();
+    // Try by slug (active sites only)
+    $site = \App\Models\DesignSystem\DsSite::with('theme')
+        ->where('slug', $slug)
+        ->where('is_active', true)
+        ->first();
 
     // Try by API key header if slug not found
     if (!$site) {
         $apiKey = $request->header('X-DS-Key');
         if ($apiKey) {
-            $all = \App\Models\DesignSystem\DsSite::where('is_active', true)->get();
+            $all = \App\Models\DesignSystem\DsSite::with('theme')->where('is_active', true)->get();
             foreach ($all as $s) {
                 try {
                     if (decrypt($s->api_key) === $apiKey) { $site = $s; break; }
@@ -281,40 +283,44 @@ $resolveThemeForRequest = function (\Illuminate\Http\Request $request, string $s
         }
     }
 
-    if (!$site) return null;
-    return $site->resolveTheme();
+    if (!$site) return ['site' => null, 'theme' => null];
+    $theme = $site->resolveTheme();
+    return ['site' => $site, 'theme' => $theme];
 };
 
 Route::get('/design-tokens/{slug}', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
-    $theme = $resolveThemeForRequest($request, $slug);
-    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    ['site' => $site, 'theme' => $theme] = $resolveThemeForRequest($request, $slug);
+    if (!$site)  return response()->json(['error' => 'Site not found'],        404)->header('Cache-Control', 'no-store');
+    if (!$theme) return response()->json(['error' => 'No theme configured'],   404)->header('Cache-Control', 'no-store');
     return response()->json($theme->resolveTokenMap())
         ->header('Access-Control-Allow-Origin', '*')
-        ->header('Cache-Control', 'no-store');
+        ->header('Cache-Control', 'no-store, no-cache, must-revalidate');
 })->where('slug', '[a-z0-9-]+');
 
 Route::get('/design-tokens/{slug}/css', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
-    $theme = $resolveThemeForRequest($request, $slug);
-    if (!$theme) return response('/* site not found */', 404, ['Content-Type' => 'text/css']);
+    ['site' => $site, 'theme' => $theme] = $resolveThemeForRequest($request, $slug);
+    if (!$site)  return response('/* site not found */',      404, ['Content-Type' => 'text/css', 'Cache-Control' => 'no-store']);
+    if (!$theme) return response('/* no theme configured */', 404, ['Content-Type' => 'text/css', 'Cache-Control' => 'no-store']);
     $service = app(\App\Services\DesignSystem\DesignTokenService::class);
     $css = $service->generateCss($theme->id);
     return response($css, 200, [
         'Content-Type'                => 'text/css',
         'Access-Control-Allow-Origin' => '*',
-        'Cache-Control'               => 'no-store',
+        'Cache-Control'               => 'no-store, no-cache, must-revalidate',
     ]);
 })->where('slug', '[a-z0-9-]+');
 
 Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
-    $theme = $resolveThemeForRequest($request, $slug);
-    if (!$theme) return response()->json(['error' => 'Site not found'], 404);
+    ['site' => $site, 'theme' => $theme] = $resolveThemeForRequest($request, $slug);
+    if (!$site)  return response()->json(['error' => 'Site not found'],        404)->header('Cache-Control', 'no-store');
+    if (!$theme) return response()->json(['error' => 'No theme configured'],   404)->header('Cache-Control', 'no-store');
     $theme->load('tokens');
     return response()->json([
         'theme'     => ['id' => $theme->id, 'name' => $theme->name, 'slug' => $theme->slug],
         'token_map' => $theme->resolveTokenMap(),
         'tokens'    => $theme->tokens,
     ])->header('Access-Control-Allow-Origin', '*')
-      ->header('Cache-Control', 'no-store');
+      ->header('Cache-Control', 'no-store, no-cache, must-revalidate');
 })->where('slug', '[a-z0-9-]+');
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────

@@ -97,6 +97,15 @@
     AddOutputFilterByType DEFLATE image/svg+xml
 </IfModule>
 
+# Design-token API routes must never be cached (Apache-level override of mod_expires)
+<IfModule mod_headers.c>
+    <If "%{REQUEST_URI} =~ m|^/api/design-tokens|">
+        Header always set Cache-Control "no-store, no-cache, must-revalidate"
+        Header always unset Expires
+        Header always unset Pragma
+    </If>
+</IfModule>
+
 # Browser Caching for Static Assets
 <IfModule mod_expires.c>
     ExpiresActive On
