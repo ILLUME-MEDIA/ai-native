@@ -12,12 +12,10 @@ class DesignSystemSeeder extends Seeder
     public function run(): void
     {
         // ── Default Theme ──────────────────────────────────────────
-        $theme = DsTheme::create([
-            'name'        => 'Default',
-            'slug'        => 'default',
-            'is_default'  => true,
-            'description' => 'Default design system theme',
-        ]);
+        $theme = DsTheme::firstOrCreate(
+            ['slug' => 'default'],
+            ['name' => 'Default', 'is_default' => true, 'description' => 'Default design system theme']
+        );
 
         // ── Tokens ────────────────────────────────────────────────
         $tokens = [
@@ -76,7 +74,10 @@ class DesignSystemSeeder extends Seeder
         ];
 
         foreach ($tokens as $i => $t) {
-            DsToken::create(array_merge($t, ['theme_id' => $theme->id, 'sort_order' => $i]));
+            DsToken::firstOrCreate(
+                ['theme_id' => $theme->id, 'name' => $t['name']],
+                array_merge($t, ['sort_order' => $i])
+            );
         }
 
         // ── Button Component ───────────────────────────────────────

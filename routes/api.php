@@ -326,8 +326,9 @@ Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $re
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
 // ── Artisan Runner (admin only) ────────────────────────────────────────────
 Route::prefix('admin/artisan')->group(function () {
-    Route::post('migrate',          [\App\Http\Controllers\Admin\ArtisanController::class, 'migrate']);
-    Route::post('cuisines-migrate', [\App\Http\Controllers\Admin\ArtisanController::class, 'cuisinesMigrate']);
+    Route::post('migrate',              [\App\Http\Controllers\Admin\ArtisanController::class, 'migrate']);
+    Route::post('cuisines-migrate',     [\App\Http\Controllers\Admin\ArtisanController::class, 'cuisinesMigrate']);
+    Route::post('seed-design-system',   [\App\Http\Controllers\Admin\ArtisanController::class, 'seedDesignSystem']);
 });
 
 // ── Cache Management ────────────────────────────────────────────────────────

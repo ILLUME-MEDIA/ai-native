@@ -29,4 +29,15 @@ class ArtisanController extends Controller
             'output'  => Artisan::output(),
         ]);
     }
+
+    /** POST /api/admin/artisan/seed-design-system */
+    public function seedDesignSystem(): JsonResponse
+    {
+        $exit = Artisan::call('db:seed', ['--class' => 'DesignSystemSeeder', '--force' => true]);
+
+        return response()->json([
+            'success' => $exit === 0,
+            'output'  => Artisan::output(),
+        ]);
+    }
 }
