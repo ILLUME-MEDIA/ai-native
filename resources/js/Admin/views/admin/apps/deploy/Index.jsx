@@ -286,16 +286,16 @@ export default function DeployManager() {
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
-  // Slow background poll: refresh project list + logs while a deploy is active
+  // Background poll — always active: fast when busy, slower when idle
   useEffect(() => {
     clearInterval(pollRef.current);
-    const busy = projects.some(p => p.status === 'deploying') || Object.values(deploying).some(Boolean);
-    if (busy) {
-      pollRef.current = setInterval(async () => {
-        await fetchProjects(true);
-        if (selected && !liveLog) fetchLogs(selected, true); // only if no live polling
-      }, 4000);
-    }
+    const busy = projects.some(p => p.status === 'deploying' || p.status === 'running' || p.status === 'pending')
+      || Object.values(deploying).some(Boolean);
+    const interval = busy ? 2000 : 5000; // 2s when deploying, 5s idle
+    pollRef.current = setInterval(async () => {
+      await fetchProjects(true);
+      if (selected && !liveLog) fetchLogs(selected, true);
+    }, interval);
     return () => clearInterval(pollRef.current);
   }, [projects, deploying, selected, liveLog, fetchProjects, fetchLogs]);
 
@@ -568,7 +568,7 @@ export default function DeployManager() {
                         const isDeploying = deploying[p.id] || p.status === 'deploying';
                         return (
                           <tr key={p.id} style={{ cursor: 'pointer' }}
-                            onClick={() => { setSelected(p.id); setView('detail'); fetchLogs(p.id); }}>
+                            onClick={() => { setSelected(p.id); setView('detail'); }}>
                             <td>
                               <div className="d-flex align-items-center gap-2">
                                 <span className={`bg-${STATUS_COLOR[p.status] || 'secondary'} rounded-circle flex-shrink-0`}
