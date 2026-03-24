@@ -347,15 +347,21 @@ export default function DeployManager() {
     e?.stopPropagation();
     setForm({
       ...BLANK,
-      name: p.name, repo_url: p.repo_url, branch: p.branch,
-      framework: p.framework || '', build_command: p.build_command || '',
-      build_output_dir: p.build_output_dir || '', node_path: p.node_path || '',
+      name:             p.name             || '',
+      repo_url:         p.repo_url         || '',
+      branch:           p.branch           || 'main',
+      framework:        p.framework        || '',
+      build_command:    p.build_command    || '',
+      build_output_dir: p.build_output_dir || '',
+      node_path:        p.node_path        || '',
+      ftp_path:         p.ftp_path         || '/public_html/',
+      ftp_port:         p.ftp_port         || 21,
+      ftp_ssl:          !!p.ftp_ssl,
+      auto_deploy:      !!p.auto_deploy,
+      deploy_mode:      p.deploy_mode      || 'webhook',
+      poll_interval:    p.poll_interval    || 5,
       // Secrets start blank — user clicks "Reveal" to load them
       github_token: '', ftp_host: '', ftp_username: '', ftp_password: '',
-      ftp_path: p.ftp_path || '/public_html/',
-      ftp_port: p.ftp_port || 21, ftp_ssl: p.ftp_ssl,
-      auto_deploy: p.auto_deploy, deploy_mode: p.deploy_mode || 'webhook',
-      poll_interval: p.poll_interval || 5,
     });
     setDetectInfo(null); setEditId(p.id); setFormErr(''); setFormTab('repo');
     setSecretsShown(false); setShowForm(true);
@@ -495,17 +501,11 @@ export default function DeployManager() {
         return;
       }
       setShowForm(false);
-      // Immediately update local state from the API response so the list
-      // reflects the change without waiting for a full refetch
-      if (editId) {
-        setProjects(prev => prev.map(p => p.id === editId ? d : p));
-      } else {
-        setProjects(prev => [d, ...prev]);
-      }
       setView('list');
-      // Delay background refresh so it doesn't race with our optimistic update
-      // and overwrite correct state with a stale server response.
-      setTimeout(() => fetchProjects(true), 3000);
+      // Always fetch fresh from DB — no optimistic state, no delay
+      await fetchProjects(true);
+      // If we just edited the currently-open project, refresh its logs too
+      if (editId && selected === editId) fetchLogs(editId, true);
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
   };
