@@ -1891,9 +1891,9 @@ const SitesTab = () => {
 
                 {/* Endpoints */}
                 <div className="mt-2 d-flex gap-1 flex-wrap">
-                  <a href={site.endpoints.tokens} target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>JSON</a>
-                  <a href={site.endpoints.css}    target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>CSS</a>
-                  <a href={site.endpoints.theme}  target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>Theme</a>
+                  <a href={site.endpoints?.tokens} target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>JSON</a>
+                  <a href={site.endpoints?.css}    target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>CSS</a>
+                  <a href={site.endpoints?.theme}  target="_blank" rel="noreferrer" className="badge bg-secondary-subtle text-secondary text-decoration-none" style={{ fontSize: 9 }}>Theme</a>
                   <button className="badge bg-light border text-muted" style={{ fontSize: 9, cursor: 'pointer' }} onClick={() => toggleActive(site)}>
                     {site.is_active ? 'Disable' : 'Enable'}
                   </button>
@@ -1975,11 +1975,11 @@ const SitesTab = () => {
               </div>
               <div className="modal-body">
                 {[
-                  { label: 'Fetch token map (JSON) — vanilla JS', code: `fetch('${active.endpoints.tokens}')\n  .then(r => r.json())\n  .then(tokens => console.log(tokens));` },
-                  { label: 'Inject CSS variables — vanilla JS', code: `fetch('${active.endpoints.css}')\n  .then(r => r.text())\n  .then(css => {\n    const s = document.createElement('style');\n    s.textContent = css;\n    document.head.appendChild(s);\n  });` },
-                  { label: 'With API key header', code: `fetch('${active.endpoints.tokens}', {\n  headers: { 'X-DS-Key': 'ds_your_api_key_here' }\n}).then(r => r.json()).then(console.log);` },
-                  { label: 'React hook', code: `import { useEffect, useState } from 'react';\n\nexport function useDesignTokens() {\n  const [tokens, setTokens] = useState({});\n  useEffect(() => {\n    fetch('${active.endpoints.tokens}')\n      .then(r => r.json()).then(setTokens);\n  }, []);\n  return tokens;\n}` },
-                  { label: 'Next.js — inject in layout (SSR)', code: `// app/layout.tsx\nconst css = await fetch('${active.endpoints.css}').then(r => r.text());\n\nexport default function RootLayout({ children }) {\n  return (\n    <html>\n      <head><style dangerouslySetInnerHTML={{ __html: css }} /></head>\n      <body>{children}</body>\n    </html>\n  );\n}` },
+                  { label: 'Fetch token map (JSON) — vanilla JS', code: `fetch('${active.endpoints?.tokens}')\n  .then(r => r.json())\n  .then(tokens => console.log(tokens));` },
+                  { label: 'Inject CSS variables — vanilla JS', code: `fetch('${active.endpoints?.css}')\n  .then(r => r.text())\n  .then(css => {\n    const s = document.createElement('style');\n    s.textContent = css;\n    document.head.appendChild(s);\n  });` },
+                  { label: 'With API key header', code: `fetch('${active.endpoints?.tokens}', {\n  headers: { 'X-DS-Key': 'ds_your_api_key_here' }\n}).then(r => r.json()).then(console.log);` },
+                  { label: 'React hook', code: `import { useEffect, useState } from 'react';\n\nexport function useDesignTokens() {\n  const [tokens, setTokens] = useState({});\n  useEffect(() => {\n    fetch('${active.endpoints?.tokens}')\n      .then(r => r.json()).then(setTokens);\n  }, []);\n  return tokens;\n}` },
+                  { label: 'Next.js — inject in layout (SSR)', code: `// app/layout.tsx\nconst css = await fetch('${active.endpoints?.css}').then(r => r.text());\n\nexport default function RootLayout({ children }) {\n  return (\n    <html>\n      <head><style dangerouslySetInnerHTML={{ __html: css }} /></head>\n      <body>{children}</body>\n    </html>\n  );\n}` },
                 ].map(({ label, code }) => (
                   <div key={label} className="mb-3">
                     <div className="fw-semibold small mb-1">{label}</div>
