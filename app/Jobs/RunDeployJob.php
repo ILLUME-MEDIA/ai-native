@@ -409,38 +409,42 @@ class RunDeployJob implements ShouldQueue
         $user = $project->getPlainFtpUsername();
         $pass = $project->getPlainFtpPassword();
         $port = $project->ftp_port ?: 21;
+        $ssl  = (bool) $project->ftp_ssl;
         $path = rtrim($project->ftp_path ?: '/', '/') . '/';
 
         if (!$host || !$user || !$pass) {
             throw new \RuntimeException('FTP credentials not fully configured.');
         }
 
-        $ftp = $project->ftp_ssl
-            ? @ftp_ssl_connect($host, $port, 30)
-            : @ftp_connect($host, $port, 30);
+        $connect = function () use ($host, $port, $ssl, $user, $pass) {
+            $ftp = $ssl
+                ? @ftp_ssl_connect($host, $port, 60)
+                : @ftp_connect($host, $port, 60);
 
-        if (!$ftp) throw new \RuntimeException("FTP connection failed: {$host}:{$port}");
+            if (!$ftp) throw new \RuntimeException("FTP connection failed: {$host}:{$port}");
+            if (!ftp_login($ftp, $user, $pass)) {
+                ftp_close($ftp);
+                throw new \RuntimeException("FTP login failed for user: {$user}");
+            }
+            ftp_set_option($ftp, FTP_TIMEOUT_SEC, 120);
+            ftp_pasv($ftp, true);
+            return $ftp;
+        };
 
-        if (!ftp_login($ftp, $user, $pass)) {
-            ftp_close($ftp);
-            throw new \RuntimeException("FTP login failed for user: {$user}");
-        }
-
-        ftp_pasv($ftp, true);
+        $ftp = $connect();
         $this->log($lines, "FTP connected to {$host}:{$port} → {$path}");
 
-        $count = $this->ftpUploadDir($ftp, $localDir, $path, $lines);
+        $count = $this->ftpUploadDir($ftp, $localDir, $path, $lines, $connect);
         ftp_close($ftp);
         return $count;
     }
 
-    private function ftpUploadDir($ftp, string $localDir, string $remotePath, array &$lines): int
+    private function ftpUploadDir(&$ftp, string $localDir, string $remotePath, array &$lines, callable $connect): int
     {
         $count = 0;
         foreach (scandir($localDir) as $item) {
             if ($item === '.' || $item === '..') continue;
 
-            // Check stop flag every file
             $this->checkStopped();
 
             $local  = $localDir . '/' . $item;
@@ -448,12 +452,30 @@ class RunDeployJob implements ShouldQueue
 
             if (is_dir($local)) {
                 @ftp_mkdir($ftp, $remote);
-                $count += $this->ftpUploadDir($ftp, $local, $remote . '/', $lines);
+                $count += $this->ftpUploadDir($ftp, $local, $remote . '/', $lines, $connect);
             } else {
-                if (ftp_put($ftp, $remote, $local, FTP_BINARY)) {
+                // Try up to 3 times — reconnect on timeout/failure
+                $uploaded = false;
+                for ($try = 1; $try <= 3; $try++) {
+                    if (@ftp_put($ftp, $remote, $local, FTP_BINARY)) {
+                        $uploaded = true;
+                        break;
+                    }
+                    if ($try < 3) {
+                        $this->log($lines, "[WARN] Upload failed (attempt {$try}), reconnecting...");
+                        try {
+                            @ftp_close($ftp);
+                            $ftp = $connect();
+                            ftp_pasv($ftp, true);
+                        } catch (\Throwable $e) {
+                            throw new \RuntimeException("FTP reconnect failed: " . $e->getMessage());
+                        }
+                    }
+                }
+                if ($uploaded) {
                     $count++;
                 } else {
-                    $this->log($lines, "[WARN] Upload failed: {$remote}");
+                    $this->log($lines, "[WARN] Upload failed after 3 attempts: {$remote}");
                 }
             }
         }

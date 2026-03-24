@@ -261,8 +261,11 @@ export default function DeployManager() {
   // ── Live log output polling (targeted, faster than fetching all logs) ────────
   const startLivePolling = useCallback((projectId, logId) => {
     clearInterval(liveRef.current);
-    setLiveLog({ id: logId, projectId, status: 'pending', output: '', duration_seconds: null });
+    const pending = { id: logId, projectId, status: 'pending', output: '', duration_seconds: null };
+    setLiveLog(pending);
     setOpenLog(logId);
+    // Add a placeholder row immediately so the terminal renders before fetchLogs returns
+    setLogs(prev => prev.some(l => l.id === logId) ? prev : [pending, ...prev]);
 
     liveRef.current = setInterval(async () => {
       try {
@@ -399,13 +402,11 @@ export default function DeployManager() {
       try { d = await r.json(); } catch { /* non-JSON response */ }
 
       if (r.ok && d.log_id) {
-        // Navigate to detail and start live polling immediately
+        // Navigate to detail, start live polling immediately (don't wait for log list)
         setSelected(p.id);
         setView('detail');
-        // Fetch the log list first, then start live polling on the new log
-        fetchLogs(p.id, true).then(() => {
-          startLivePolling(p.id, d.log_id);
-        });
+        startLivePolling(p.id, d.log_id);
+        fetchLogs(p.id, true);
         fetchProjects(true);
       } else {
         const msg = d.message || `Deploy failed (HTTP ${r.status})`;
