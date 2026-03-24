@@ -981,29 +981,48 @@ function callDS(path, opts = {}) {
 }
 
 const SiteTokenEditor = ({ site, onClose }) => {
-  const [tokens, setTokens]     = useState([]);
-  const [vals, setVals]         = useState({});
-  const [saving, setSaving]     = useState(null);
-  const [saved, setSaved]       = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [tab, setTab]           = useState('colors');
-  const saveTimers              = useRef({});
+  const [tokens, setTokens]         = useState([]);
+  const [vals, setVals]             = useState({});
+  const [saving, setSaving]         = useState(null);
+  const [saved, setSaved]           = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [tab, setTab]               = useState('colors');
+  const [activeThemeId, setActiveThemeId] = useState(null);
+  const [activeThemeName, setActiveThemeName] = useState('');
+  const saveTimers                  = useRef({});
 
   const resolvedThemeId = site?.resolved_theme_id;
 
-  useEffect(() => {
-    if (!site || !resolvedThemeId) return;
+  const loadTokensForTheme = useCallback(async (themeId, themeName = '') => {
     setLoading(true);
-    callDS(`/tokens?theme_id=${resolvedThemeId}`)
-      .then(data => {
-        const list = Array.isArray(data) ? data : (data?.data ?? []);
-        setTokens(list);
-        const map = {};
-        list.forEach(t => { map[t.name] = t.value; });
-        setVals(map);
-      })
-      .finally(() => setLoading(false));
-  }, [site, resolvedThemeId]);
+    setActiveThemeId(themeId);
+    setActiveThemeName(themeName);
+    try {
+      const data = await callDS(`/tokens?theme_id=${themeId}`);
+      const list = Array.isArray(data) ? data : (data?.data ?? []);
+      setTokens(list);
+      const map = {};
+      list.forEach(t => { map[t.name] = t.value; });
+      setVals(map);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!site) return;
+    if (resolvedThemeId) {
+      loadTokensForTheme(resolvedThemeId, site.resolved_theme_name || '');
+    } else {
+      // No theme on site — fall back to default/first theme from DB
+      callDS('/themes').then(themes => {
+        const list = Array.isArray(themes) ? themes : [];
+        const def = list.find(t => t.is_default) || list[0];
+        if (def) loadTokensForTheme(def.id, def.name);
+        else setLoading(false);
+      });
+    }
+  }, [site?.id, resolvedThemeId, loadTokensForTheme]);
 
   const handleChange = useCallback((tokenName, newValue) => {
     setVals(prev => ({ ...prev, [tokenName]: newValue }));
@@ -1014,7 +1033,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
       setSaving(tokenName);
       try {
         await callDS(`/tokens/${token.id}`, { method: 'PUT', body: { value: newValue } });
-        const list = await callDS(`/tokens?theme_id=${resolvedThemeId}`);
+        const list = await callDS(`/tokens?theme_id=${activeThemeId}`);
         const map = {};
         (Array.isArray(list) ? list : (list?.data ?? [])).forEach(t => { map[t.name] = t.value; });
         const { broadcastTokenChange } = await import('@admin/utils/designSystemSync');
@@ -1023,7 +1042,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
         setTimeout(() => setSaved(null), 1500);
       } finally { setSaving(null); }
     }, 600);
-  }, [tokens, resolvedThemeId]);
+  }, [tokens, activeThemeId]);
 
   // ── token groups ──────────────────────────────────────────────────────────
   const byCategory = (cat) => tokens.filter(t => t.category === cat);
@@ -1148,7 +1167,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                 Token Editor — {site.name}
               </h5>
               <div className="text-muted mt-1" style={{ fontSize: 11 }}>
-                Theme: <strong>{site.resolved_theme_name || 'Default'}</strong>
+                Theme: <strong>{activeThemeName || site.resolved_theme_name || 'Default'}</strong>
                 <span className="ms-3 text-success">
                   <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
                   {' '}Auto-saves · API updates instantly · Broadcasts to all tabs
@@ -1158,16 +1177,16 @@ const SiteTokenEditor = ({ site, onClose }) => {
             <button className="btn-close" onClick={onClose} />
           </div>
 
-          {!resolvedThemeId ? (
-            <div className="modal-body text-center py-5">
-              <i className="ri-palette-line fs-1 text-muted opacity-50 d-block mb-2" />
-              <div className="fw-semibold mb-1">No theme assigned</div>
-              <div className="text-muted small">Edit this site and select a theme first, then you can edit its tokens.</div>
-            </div>
-          ) : loading ? (
+          {loading ? (
             <div className="modal-body text-center py-5">
               <div className="spinner-border text-primary" />
-              <div className="text-muted mt-2 small">Loading {site.resolved_theme_name || 'theme'} tokens…</div>
+              <div className="text-muted mt-2 small">Loading {activeThemeName || site.resolved_theme_name || 'theme'} tokens…</div>
+            </div>
+          ) : !activeThemeId ? (
+            <div className="modal-body text-center py-5">
+              <i className="ri-palette-line fs-1 text-muted opacity-50 d-block mb-2" />
+              <div className="fw-semibold mb-1">No themes found</div>
+              <div className="text-muted small">Create a theme first from the Themes tab, then tokens will load here.</div>
             </div>
           ) : (
             <div className="modal-body p-0">
