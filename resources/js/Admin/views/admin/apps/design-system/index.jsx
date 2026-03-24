@@ -1728,8 +1728,6 @@ const SitesTab = () => {
         setSites(prev => [...prev, site]);
       }
       setModal(null);
-      // Background refresh to sync any server-side computed fields
-      load();
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -1742,7 +1740,6 @@ const SitesTab = () => {
     try {
       await call(`${BASE}/${site.id}`, { method: 'DELETE' });
       setSites(prev => prev.filter(s => s.id !== site.id));
-      load();
     } catch {}
   };
 
@@ -1750,7 +1747,7 @@ const SitesTab = () => {
     try {
       const res = await call(`${BASE}/${site.id}/generate-key`, { method: 'POST' });
       setRevealed(r => ({ ...r, [site.id]: res.api_key }));
-      await load();
+      setSites(prev => prev.map(s => s.id === site.id ? { ...s, has_api_key: true, masked_api_key: res.masked_api_key ?? s.masked_api_key } : s));
     } catch (e) { alert(e.message); }
   };
 
@@ -1766,7 +1763,6 @@ const SitesTab = () => {
     try {
       const updated = await call(`${BASE}/${site.id}`, { method: 'PUT', body: { is_active: !site.is_active } });
       setSites(prev => prev.map(s => s.id === site.id ? updated : s));
-      load();
     } catch {}
   };
 

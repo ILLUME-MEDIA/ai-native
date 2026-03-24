@@ -290,7 +290,7 @@ Route::get('/design-tokens/{slug}', function (\Illuminate\Http\Request $request,
     if (!$theme) return response()->json(['error' => 'Site not found'], 404);
     return response()->json($theme->resolveTokenMap())
         ->header('Access-Control-Allow-Origin', '*')
-        ->header('Cache-Control', 'public, max-age=60');
+        ->header('Cache-Control', 'no-store');
 })->where('slug', '[a-z0-9-]+');
 
 Route::get('/design-tokens/{slug}/css', function (\Illuminate\Http\Request $request, string $slug) use ($resolveThemeForRequest) {
@@ -301,7 +301,7 @@ Route::get('/design-tokens/{slug}/css', function (\Illuminate\Http\Request $requ
     return response($css, 200, [
         'Content-Type'                => 'text/css',
         'Access-Control-Allow-Origin' => '*',
-        'Cache-Control'               => 'public, max-age=60',
+        'Cache-Control'               => 'no-store',
     ]);
 })->where('slug', '[a-z0-9-]+');
 
@@ -314,7 +314,7 @@ Route::get('/design-tokens/{slug}/theme', function (\Illuminate\Http\Request $re
         'token_map' => $theme->resolveTokenMap(),
         'tokens'    => $theme->tokens,
     ])->header('Access-Control-Allow-Origin', '*')
-      ->header('Cache-Control', 'public, max-age=60');
+      ->header('Cache-Control', 'no-store');
 })->where('slug', '[a-z0-9-]+');
 
 // ── App Secrets (system credentials stored in DB instead of .env) ────────────
