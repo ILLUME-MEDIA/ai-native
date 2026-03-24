@@ -1666,6 +1666,7 @@ const SitesTab = () => {
     const res = await fetch(url, {
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       credentials: 'include',
+      cache: 'no-store',
       ...opts,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
@@ -1720,8 +1721,15 @@ const SitesTab = () => {
         method: isEdit ? 'PUT' : 'POST',
         body: { ...form, theme_id: form.theme_id || null },
       });
-      await load();
+      // Instantly patch local state so UI updates without waiting for re-fetch
+      if (isEdit) {
+        setSites(prev => prev.map(s => s.id === site.id ? site : s));
+      } else {
+        setSites(prev => [...prev, site]);
+      }
       setModal(null);
+      // Background refresh to sync any server-side computed fields
+      load();
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -1731,7 +1739,11 @@ const SitesTab = () => {
 
   const handleDelete = async (site) => {
     if (!confirm(`Delete site "${site.name}"?`)) return;
-    try { await call(`${BASE}/${site.id}`, { method: 'DELETE' }); await load(); } catch {}
+    try {
+      await call(`${BASE}/${site.id}`, { method: 'DELETE' });
+      setSites(prev => prev.filter(s => s.id !== site.id));
+      load();
+    } catch {}
   };
 
   const handleGenKey = async (site) => {
@@ -1751,7 +1763,11 @@ const SitesTab = () => {
   };
 
   const toggleActive = async (site) => {
-    try { await call(`${BASE}/${site.id}`, { method: 'PUT', body: { is_active: !site.is_active } }); await load(); } catch {}
+    try {
+      const updated = await call(`${BASE}/${site.id}`, { method: 'PUT', body: { is_active: !site.is_active } });
+      setSites(prev => prev.map(s => s.id === site.id ? updated : s));
+      load();
+    } catch {}
   };
 
   if (loading) return <div className="text-center py-5"><div className="spinner-border text-primary" /></div>;
