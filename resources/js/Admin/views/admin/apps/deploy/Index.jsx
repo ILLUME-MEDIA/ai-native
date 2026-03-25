@@ -284,7 +284,7 @@ export default function DeployManager() {
           setLiveLog(null);
         }
       } catch { /* ignore transient network errors */ }
-    }, 1500);
+    }, 500);
   }, [fetchProjects]); // eslint-disable-line
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
@@ -294,7 +294,7 @@ export default function DeployManager() {
     clearInterval(pollRef.current);
     const busy = projects.some(p => p.status === 'deploying' || p.status === 'running' || p.status === 'pending')
       || Object.values(deploying).some(Boolean);
-    const interval = busy ? 2000 : 5000; // 2s when deploying, 5s idle
+    const interval = busy ? 1500 : 5000; // 1.5s when deploying, 5s idle
     pollRef.current = setInterval(async () => {
       await fetchProjects(true);
       if (selected && !liveLog) fetchLogs(selected, true);
@@ -477,8 +477,9 @@ export default function DeployManager() {
       const r = await apiFetch(`${API}/detect-node`);
       const d = await r.json();
       setNodeInfo(d);
-      if (d.found && d.node_path) {
-        setForm(f => ({ ...f, node_path: d.node_path }));
+      // Auto-fill with recommended (>=18) path
+      if (d.recommended?.path) {
+        setForm(f => ({ ...f, node_path: d.recommended.path }));
       }
     } finally { setNodeDetecting(false); }
   };
@@ -503,9 +504,14 @@ export default function DeployManager() {
       }
       setShowForm(false);
       setView('list');
-      // Always fetch fresh from DB — no optimistic state, no delay
-      await fetchProjects(true);
-      // If we just edited the currently-open project, refresh its logs too
+      // Instantly update UI with server-returned data (no wait)
+      if (editId) {
+        setProjects(prev => prev.map(p => p.id === editId ? d : p));
+      } else {
+        setProjects(prev => [d, ...prev]);
+      }
+      // Background sync to ensure DB consistency
+      fetchProjects(true);
       if (editId && selected === editId) fetchLogs(editId, true);
     } catch (err) { setFormErr(err.message); }
     finally { setSaving(false); }
@@ -1061,10 +1067,22 @@ function ProjectFormModal({
                     </button>
                   </div>
                   {nodeInfo && (
-                    <div className={`mt-1 small ${nodeInfo.found ? 'text-success' : 'text-danger'}`}>
-                      {nodeInfo.found
-                        ? <>Node {nodeInfo.node_version} · npm {nodeInfo.npm_version} → <code>{nodeInfo.node_path}</code></>
-                        : 'Node.js not found in PATH on this server.'}
+                    <div className="mt-2">
+                      {!nodeInfo.found
+                        ? <div className="alert alert-danger py-1 px-2 small mb-0">Node.js not found on this server.</div>
+                        : nodeInfo.installations.map((n, i) => (
+                          <div key={i} className={`d-flex align-items-center gap-2 p-2 rounded mb-1 border ${n.ok ? 'border-success bg-success bg-opacity-10' : 'border-secondary-subtle bg-light'}`}>
+                            <span className={`badge ${n.ok ? 'bg-success' : 'bg-secondary'} text-nowrap`}>{n.version}</span>
+                            <code className="small flex-fill text-truncate" title={n.path}>{n.path}</code>
+                            {n.ok
+                              ? <button type="button" className="btn btn-success btn-sm py-0 px-2 text-nowrap"
+                                  onClick={() => setForm(f => ({ ...f, node_path: n.path }))}>
+                                  Use
+                                </button>
+                              : <span className="badge bg-danger-subtle text-danger small text-nowrap">Too old</span>}
+                          </div>
+                        ))
+                      }
                     </div>
                   )}
                   <div className="form-text">

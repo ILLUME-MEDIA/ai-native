@@ -122,17 +122,69 @@ class DeployController extends Controller
 
     public function detectNode()
     {
-        $nodeBin  = trim(shell_exec('which node 2>/dev/null') ?? '');
-        $npmBin   = trim(shell_exec('which npm 2>/dev/null') ?? '');
-        $nodeVer  = $nodeBin ? trim(shell_exec("{$nodeBin} --version 2>/dev/null") ?? '') : null;
-        $npmVer   = $npmBin  ? trim(shell_exec("{$npmBin} --version 2>/dev/null") ?? '') : null;
-        $nodeDir  = $nodeBin ? dirname($nodeBin) : null;
+        $home = rtrim(getenv('HOME') ?: dirname(dirname(base_path())), '/');
+
+        $searchPatterns = [
+            '/usr/local/bin/node',
+            '/usr/bin/node',
+            '/bin/node',
+            '/opt/alt/node*/bin/node',
+            '/opt/cpanel/ea-nodejs*/bin/node',
+            '/opt/nodejs*/bin/node',
+            $home . '/.nvm/versions/node/*/bin/node',
+            $home . '/nodevenv/*/*/bin/node',
+            '/usr/local/nvm/versions/node/*/bin/node',
+        ];
+
+        $found = [];
+        $checked = [];
+
+        foreach ($searchPatterns as $pattern) {
+            $bins = glob($pattern) ?: [];
+            // If no glob chars, check directly
+            if (empty($bins) && !str_contains($pattern, '*') && file_exists($pattern)) {
+                $bins = [$pattern];
+            }
+            foreach ($bins as $bin) {
+                if (isset($checked[$bin])) continue;
+                $checked[$bin] = true;
+                $ver = trim(shell_exec("{$bin} --version 2>/dev/null") ?? '');
+                if (!$ver) continue;
+                $found[] = [
+                    'path'    => dirname($bin),
+                    'bin'     => $bin,
+                    'version' => $ver,
+                    'ok'      => version_compare(ltrim($ver, 'v'), '18.0.0', '>='),
+                ];
+            }
+        }
+
+        // Fallback: which node
+        $whichNode = trim(shell_exec('which node 2>/dev/null') ?? '');
+        if ($whichNode && !isset($checked[$whichNode]) && file_exists($whichNode)) {
+            $ver = trim(shell_exec("{$whichNode} --version 2>/dev/null") ?? '');
+            if ($ver) {
+                $found[] = [
+                    'path'    => dirname($whichNode),
+                    'bin'     => $whichNode,
+                    'version' => $ver,
+                    'ok'      => version_compare(ltrim($ver, 'v'), '18.0.0', '>='),
+                ];
+            }
+        }
+
+        // Sort: ok (>=18) first, then by version descending
+        usort($found, fn($a, $b) =>
+            $b['ok'] <=> $a['ok'] ?:
+            version_compare(ltrim($b['version'], 'v'), ltrim($a['version'], 'v'))
+        );
+
+        $recommended = collect($found)->first(fn($n) => $n['ok']);
 
         return response()->json([
-            'node_path'    => $nodeDir,
-            'node_version' => $nodeVer,
-            'npm_version'  => $npmVer,
-            'found'        => (bool) $nodeBin,
+            'installations' => $found,
+            'recommended'   => $recommended,
+            'found'         => count($found) > 0,
         ]);
     }
 

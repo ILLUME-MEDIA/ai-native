@@ -48,7 +48,7 @@ class DeployProject extends Model
 
     public function getOwnerRepo(): array
     {
-        preg_match('#github\.com[/:]([^/]+)/([^/.]+?)(?:\.git)?$#', $this->repo_url, $m);
+        preg_match('#github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?$#', $this->repo_url, $m);
         return [$m[1] ?? null, $m[2] ?? null];
     }
 
