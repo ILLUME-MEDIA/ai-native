@@ -48,7 +48,7 @@ const AddEditModal = ({
   useEffect(() => {
     if (!open) reset();
   }, [open]);
-  return <Modal show={open} onHide={toggle} centered>
+  return <Modal show={open} onHide={toggle}>
       <Form onSubmit={handleSubmit(onSubmitEvent)}>
         <ModalHeader>
           <ModalTitle as="h4">{isEditable ? 'Edit' : 'Create'} Event</ModalTitle>

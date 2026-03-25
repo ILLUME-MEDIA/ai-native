@@ -19,7 +19,7 @@ const DeleteConfirmationModal = ({
     }
     return `Are you sure you want to delete this ${itemName}?`;
   };
-  return <Modal show={show} onHide={onHide} centered>
+  return <Modal show={show} onHide={onHide}>
       <ModalHeader closeButton>
         <ModalTitle>{modalTitle}</ModalTitle>
       </ModalHeader>

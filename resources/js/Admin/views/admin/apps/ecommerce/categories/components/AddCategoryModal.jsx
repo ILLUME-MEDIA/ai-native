@@ -9,7 +9,7 @@ const AddCategoryModal = ({
     console.log('Form submitted. Implement data handling in the parent if needed.');
     handleClose();
   };
-  return <Modal show={show} onHide={handleClose} size="lg" centered>
+  return <Modal show={show} onHide={handleClose} size="lg">
       <ModalHeader closeButton>
         <ModalTitle as="h5" id="addCategoryModalLabel">
           Add New Category
