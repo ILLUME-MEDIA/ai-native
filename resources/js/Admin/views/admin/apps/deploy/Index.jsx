@@ -1071,15 +1071,22 @@ function ProjectFormModal({
                       {!nodeInfo.found
                         ? <div className="alert alert-danger py-1 px-2 small mb-0">Node.js not found on this server.</div>
                         : nodeInfo.installations.map((n, i) => (
-                          <div key={i} className={`d-flex align-items-center gap-2 p-2 rounded mb-1 border ${n.ok ? 'border-success bg-success bg-opacity-10' : 'border-secondary-subtle bg-light'}`}>
-                            <span className={`badge ${n.ok ? 'bg-success' : 'bg-secondary'} text-nowrap`}>{n.version}</span>
-                            <code className="small flex-fill text-truncate" title={n.path}>{n.path}</code>
-                            {n.ok
-                              ? <button type="button" className="btn btn-success btn-sm py-0 px-2 text-nowrap"
-                                  onClick={() => setForm(f => ({ ...f, node_path: n.path }))}>
-                                  Use
-                                </button>
-                              : <span className="badge bg-danger-subtle text-danger small text-nowrap">Too old</span>}
+                          <div key={i} className={`p-2 rounded mb-1 border ${n.ok && !n.is_virtualenv ? 'border-success bg-success bg-opacity-10' : n.ok ? 'border-warning bg-warning bg-opacity-10' : 'border-secondary-subtle bg-light'}`}>
+                            <div className="d-flex align-items-center gap-2">
+                              <span className={`badge ${n.ok ? (n.is_virtualenv ? 'bg-warning text-dark' : 'bg-success') : 'bg-secondary'} text-nowrap`}>{n.version}</span>
+                              <code className="small flex-fill text-truncate" title={n.path}>{n.path}</code>
+                              {n.ok
+                                ? <button type="button" className={`btn btn-sm py-0 px-2 text-nowrap ${n.is_virtualenv ? 'btn-warning' : 'btn-success'}`}
+                                    onClick={() => setForm(f => ({ ...f, node_path: n.path }))}>
+                                    Use
+                                  </button>
+                                : <span className="badge bg-danger-subtle text-danger small text-nowrap">Too old</span>}
+                            </div>
+                            {n.ok && n.is_virtualenv && (
+                              <div className="text-warning-emphasis small mt-1" style={{fontSize:'0.72rem'}}>
+                                ⚠ Virtual env — npm may install to wrong dir. Use /opt/alt/ path if available.
+                              </div>
+                            )}
                           </div>
                         ))
                       }

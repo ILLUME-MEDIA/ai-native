@@ -173,13 +173,26 @@ class DeployController extends Controller
             }
         }
 
-        // Sort: ok (>=18) first, then by version descending
-        usort($found, fn($a, $b) =>
-            $b['ok'] <=> $a['ok'] ?:
-            version_compare(ltrim($b['version'], 'v'), ltrim($a['version'], 'v'))
-        );
+        // Sort priority: ok (>=18) first, then prefer /opt/alt/ real paths over
+        // nodevenv virtual environments (nodevenv sets NPM_CONFIG_PREFIX which
+        // causes npm to install to wrong directory), then version descending.
+        $isVirtualenv = fn($p) => str_contains($p['bin'], 'nodevenv') || str_contains($p['bin'], '.nvm');
+        usort($found, function ($a, $b) use ($isVirtualenv) {
+            if ($b['ok'] !== $a['ok']) return $b['ok'] <=> $a['ok'];
+            // Real system paths preferred over virtualenvs
+            $aVenv = $isVirtualenv($a) ? 1 : 0;
+            $bVenv = $isVirtualenv($b) ? 1 : 0;
+            if ($aVenv !== $bVenv) return $aVenv <=> $bVenv;
+            return version_compare(ltrim($b['version'], 'v'), ltrim($a['version'], 'v'));
+        });
 
-        $recommended = collect($found)->first(fn($n) => $n['ok']);
+        // Add a warning flag for virtualenv paths so UI can warn the user
+        foreach ($found as &$n) {
+            $n['is_virtualenv'] = $isVirtualenv($n);
+        }
+
+        $recommended = collect($found)->first(fn($n) => $n['ok'] && !$n['is_virtualenv'])
+            ?? collect($found)->first(fn($n) => $n['ok']);
 
         return response()->json([
             'installations' => $found,
