@@ -312,5 +312,73 @@ Route::get('/purge-nginx-cache-7f3k9x', function () {
     ]);
 });
 
+// ── Uber Direct Debug ──────────────────────────────────────────────────────
+Route::get('/debug-uber-direct', function () {
+    $results = [];
+
+    // Step 0: Which DB are we connected to?
+    $results['db_connection'] = [
+        'database' => \Illuminate\Support\Facades\DB::getDatabaseName(),
+        'host'     => config('database.connections.mysql.host'),
+        'env_file' => app()->environmentFilePath(),
+        'app_env'  => app()->environment(),
+        'all_app_secrets_count' => \App\Models\AppSecret::count(),
+        'all_keys_in_table'     => \App\Models\AppSecret::pluck('key')->toArray(),
+    ];
+
+    // Step 1: Raw DB check (NO is_active filter)
+    $keys = ['UBER_DIRECT_CLIENT_ID', 'UBER_DIRECT_CLIENT_SECRET', 'UBER_DIRECT_CUSTOMER_ID', 'UBER_DIRECT_ENV'];
+    $secrets = \App\Models\AppSecret::whereIn('key', $keys)->get();
+    $results['db_total_found'] = $secrets->count();
+
+    foreach ($secrets as $s) {
+        try {
+            $plain = $s->getPlainValue();
+            $results['db'][$s->key] = [
+                'is_active' => $s->is_active,
+                'decrypted' => $plain ? '✓ (' . strlen($plain) . ' chars, ends: ...' . substr($plain, -4) . ')' : 'EMPTY',
+            ];
+        } catch (\Throwable $e) {
+            $results['db'][$s->key] = [
+                'is_active'     => $s->is_active,
+                'decrypt_error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    // Check if any keys completely missing from DB
+    $foundKeys = $secrets->pluck('key')->toArray();
+    $missingKeys = array_diff($keys, $foundKeys);
+    if ($missingKeys) $results['db_missing_keys'] = array_values($missingKeys);
+
+    // Step 2: AppSecretService check
+    foreach (['UBER_DIRECT_CLIENT_ID', 'UBER_DIRECT_CLIENT_SECRET', 'UBER_DIRECT_CUSTOMER_ID', 'UBER_DIRECT_ENV'] as $key) {
+        $val = \App\Services\AppSecretService::get($key, '__NOT_SET__');
+        $results['service'][$key] = $val === '__NOT_SET__'
+            ? 'NOT SET'
+            : ($val ? '✓ (' . strlen($val) . ' chars)' : 'EMPTY STRING');
+    }
+
+    // Step 3: Try OAuth token
+    try {
+        $uber = app(\App\Services\UberDirectService::class);
+        $results['env'] = $uber->getEnv();
+        $results['customer_id_set'] = $uber->getCustomerId() ? '✓' : 'EMPTY';
+
+        // Force a quote to test full flow
+        $raw = $uber->createQuote(
+            '{"street_address":["100 Market St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}',
+            '{"street_address":["456 Mission St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}',
+            3550
+        );
+        $results['oauth'] = 'SUCCESS';
+        $results['quote_response'] = $raw;
+    } catch (\Throwable $e) {
+        $results['oauth_error'] = $e->getMessage();
+    }
+
+    return response()->json($results, 200, [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+});
+
 require __DIR__.'/auth.php';
 

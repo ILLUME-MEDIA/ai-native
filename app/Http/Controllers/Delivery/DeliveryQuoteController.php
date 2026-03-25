@@ -9,6 +9,7 @@ use App\Models\DeliverySetting;
 use App\Models\Muzzhub;
 use App\Models\DeliveryZone;
 use App\Services\DoorDashService;
+use App\Services\ShipEngineService;
 use App\Services\UberDirectService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -56,7 +57,7 @@ class DeliveryQuoteController extends Controller
     public function quote(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'vendor'          => 'required|string|in:doordash,uber_direct,ubereats,instacart,own',
+            'vendor'          => 'required|string|in:doordash,uber_direct,ubereats,instacart,own,shipengine',
             'pickup_address'  => 'nullable|string',
             'dropoff_address' => 'nullable|string',
             'order_value'     => 'nullable|numeric|min:0',
@@ -72,6 +73,7 @@ class DeliveryQuoteController extends Controller
             'ubereats'    => $this->quoteUberEats($data),
             'instacart'   => $this->quoteInstacart($data),
             'own'         => $this->quoteOwnDelivery($data),
+            'shipengine'  => $this->quoteShipEngine($data),
         };
     }
 
@@ -140,12 +142,27 @@ class DeliveryQuoteController extends Controller
         $feeCents = $raw['fee'] ?? $raw['delivery_fee'] ?? null;
         $taxCents = $raw['tax'] ?? null;
 
+        // DoorDash always returns fee/tax in cents (integers).
+        // Guard: if value looks like dollars already (< 200 and has decimals), don't divide.
+        $feeDollars = null;
+        if ($feeCents !== null) {
+            $feeDollars = is_float($feeCents) && $feeCents < 200
+                ? round($feeCents, 2)           // already dollars
+                : round($feeCents / 100, 2);    // cents → dollars
+        }
+        $taxDollars = null;
+        if ($taxCents !== null) {
+            $taxDollars = is_float($taxCents) && $taxCents < 200
+                ? round($taxCents, 2)
+                : round($taxCents / 100, 2);
+        }
+
         return response()->json([
             'success'           => true,
             'vendor'            => 'doordash',
-            'fee'               => $feeCents !== null ? round($feeCents / 100, 2) : null,
+            'fee'               => $feeDollars,
             'fee_cents'         => $feeCents,
-            'tax'               => $taxCents !== null ? round($taxCents / 100, 2) : null,
+            'tax'               => $taxDollars,
             'tax_cents'         => $taxCents,
             'currency'          => $raw['currency'] ?? 'USD',
             'estimated_minutes' => $this->parseDoorDashEta($raw),
@@ -159,18 +176,20 @@ class DeliveryQuoteController extends Controller
         ]);
     }
 
-    private function parseDoorDashEta(array $raw): ?int
+    private function parseDoorDashEta(array $raw): int
     {
         // v1/estimates returns delivery_time (ISO string)
-        foreach (['delivery_time', 'estimated_delivery_time'] as $field) {
+        foreach (['delivery_time', 'estimated_delivery_time', 'dropoff_time'] as $field) {
             if (!empty($raw[$field])) {
                 try {
                     $eta = \Carbon\Carbon::parse($raw[$field]);
-                    return max(1, (int) now()->diffInMinutes($eta));
+                    $mins = (int) now()->diffInMinutes($eta);
+                    if ($mins > 0) return $mins;
                 } catch (\Throwable) {}
             }
         }
-        return null;
+        // Fallback: DoorDash average delivery is ~35 min
+        return 35;
     }
 
     // ── Uber Direct Quote ─────────────────────────────────────────────────────
@@ -227,10 +246,13 @@ class DeliveryQuoteController extends Controller
         }
 
         $feeCents = $raw['fee'] ?? null;
-        $etaStr   = $raw['dropoff']['eta'] ?? null;
-        $etaMins  = null;
+        $etaStr   = $raw['dropoff']['eta'] ?? $raw['pickup']['eta'] ?? null;
+        $etaMins  = 30; // fallback: Uber Direct average ~30 min
         if ($etaStr) {
-            try { $etaMins = max(1, (int) now()->diffInMinutes(\Carbon\Carbon::parse($etaStr))); } catch (\Throwable) {}
+            try {
+                $mins = (int) now()->diffInMinutes(\Carbon\Carbon::parse($etaStr));
+                if ($mins > 0) $etaMins = $mins;
+            } catch (\Throwable) {}
         }
 
         return response()->json([
@@ -407,6 +429,88 @@ class DeliveryQuoteController extends Controller
                 'description' => $zone->description,
             ],
             'raw'               => null,
+        ]);
+    }
+
+    // ── ShipEngine Quote ──────────────────────────────────────────────────────
+
+    private function quoteShipEngine(array $data): JsonResponse
+    {
+        if (empty($data['business_id'])) {
+            return response()->json([
+                'success' => false, 'vendor' => 'shipengine',
+                'message' => 'business_id is required for ShipEngine quotes.',
+            ], 422);
+        }
+
+        $muzzhub   = Muzzhub::where('business_id', $data['business_id'])->first();
+        $fromZip   = $muzzhub?->zip ?? null;
+        $dropoff   = $data['dropoff_address'] ?? '';
+
+        // Extract ZIP from dropoff address string (last 5-digit group)
+        preg_match('/\b(\d{5})(?:-\d{4})?\b/', $dropoff, $m);
+        $toZip = $m[1] ?? null;
+
+        if (!$fromZip || !$toZip) {
+            return response()->json([
+                'success' => false, 'vendor' => 'shipengine',
+                'message' => 'Could not determine ZIP codes for ShipEngine quote. Ensure business has a ZIP and address includes a 5-digit ZIP.',
+            ], 422);
+        }
+
+        try {
+            $se  = app(ShipEngineService::class);
+            $raw = $se->estimateRates([
+                'carrier_ids'       => [],          // all connected carriers
+                'from_country_code' => 'US',
+                'from_postal_code'  => $fromZip,
+                'to_country_code'   => 'US',
+                'to_postal_code'    => $toZip,
+                'weight'            => ['value' => 1.0, 'unit' => 'pound'],
+                'dimensions'        => ['unit' => 'inch', 'length' => 12, 'width' => 9, 'height' => 3],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false, 'vendor' => 'shipengine',
+                'message' => $e->getMessage(),
+            ], 502);
+        }
+
+        // Normalize: pick cheapest rate from returned array
+        $rates = is_array($raw) && isset($raw[0]) ? $raw : ($raw['rate_response']['rates'] ?? $raw['rates'] ?? []);
+        $rates = array_filter($rates, fn($r) => isset($r['shipping_amount']['amount']) && ($r['validation_status'] ?? '') !== 'invalid');
+
+        if (empty($rates)) {
+            return response()->json([
+                'success' => false, 'vendor' => 'shipengine',
+                'message' => 'No ShipEngine rates available for this route.',
+            ], 200);
+        }
+
+        usort($rates, fn($a, $b) => $a['shipping_amount']['amount'] <=> $b['shipping_amount']['amount']);
+        $best = $rates[0];
+
+        $fee          = (float) $best['shipping_amount']['amount'];
+        $carrierName  = $best['carrier_friendly_name'] ?? $best['carrier_code'] ?? 'ShipEngine';
+        $serviceName  = $best['service_type'] ?? $best['service_code'] ?? '';
+        $deliveryDays = $best['delivery_days'] ?? null;
+        $estMinutes   = $deliveryDays ? $deliveryDays * 24 * 60 : null; // days → minutes
+
+        return response()->json([
+            'success'           => true,
+            'vendor'            => 'shipengine',
+            'fee'               => $fee,
+            'fee_cents'         => (int) round($fee * 100),
+            'currency'          => 'USD',
+            'estimated_minutes' => $estMinutes,
+            'delivery_days'     => $deliveryDays,
+            'carrier'           => $carrierName,
+            'service'           => $serviceName,
+            'min_order_amount'  => 0,
+            'expires_at'        => null,
+            'quote_id'          => $best['rate_id'] ?? null,
+            'zone'              => null,
+            'raw'               => ['best_rate' => $best, 'total_rates' => count($rates)],
         ]);
     }
 
