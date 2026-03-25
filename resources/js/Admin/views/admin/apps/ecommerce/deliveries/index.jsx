@@ -291,9 +291,27 @@ export default function DoorDashDeliveriesPage() {
                                                         <span className={`badge ${DD_STATUS_BADGE[order.doordash_status] || 'bg-secondary-subtle text-secondary'}`}>
                                                             {DD_STATUS_LABEL[order.doordash_status] || order.doordash_status.replace(/_/g, ' ')}
                                                         </span>
-                                                        {order.doordash_tracking_url && (
+                                                        {(order.tracking_url || order.doordash_tracking_url) && (
                                                             <a
-                                                                href={order.doordash_tracking_url}
+                                                                href={order.tracking_url || order.doordash_tracking_url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="d-block mt-1 text-primary"
+                                                                style={{ fontSize: '0.75rem' }}
+                                                            >
+                                                                <Icon name="map-pin" size={11} className="me-1" />
+                                                                Track
+                                                            </a>
+                                                        )}
+                                                    </>
+                                                ) : order.uber_direct_status ? (
+                                                    <>
+                                                        <span className="badge bg-info-subtle text-info text-capitalize">
+                                                            {order.uber_direct_status.replace(/_/g, ' ')}
+                                                        </span>
+                                                        {(order.tracking_url || order.uber_direct_tracking_url) && (
+                                                            <a
+                                                                href={order.tracking_url || order.uber_direct_tracking_url}
                                                                 target="_blank"
                                                                 rel="noopener noreferrer"
                                                                 className="d-block mt-1 text-primary"

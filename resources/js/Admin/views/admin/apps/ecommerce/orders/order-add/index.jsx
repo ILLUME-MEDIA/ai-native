@@ -19,10 +19,7 @@ function getSessionId() {
 const DELIVERY_VENDORS = [
   { value: '', label: 'In-house / Self' },
   { value: 'doordash', label: 'DoorDash' },
-  { value: 'uber_eats', label: 'Uber Eats' },
-  { value: 'grubhub', label: 'GrubHub' },
-  { value: 'instacart', label: 'Instacart' },
-  { value: 'postmates', label: 'Postmates' },
+  { value: 'uber_direct', label: 'Uber Direct' },
 ];
 
 const TAX_RATE = 10;

@@ -533,10 +533,10 @@ export default function OrderDetailsPage() {
                     )}
 
                     {/* Tracking link */}
-                    {order.doordash_tracking_url && (
+                    {(order.tracking_url || order.doordash_tracking_url || order.uber_direct_tracking_url) && (
                       <div className="mt-2">
                         <a
-                          href={order.doordash_tracking_url}
+                          href={order.tracking_url || order.doordash_tracking_url || order.uber_direct_tracking_url}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="btn btn-sm btn-outline-secondary w-100"

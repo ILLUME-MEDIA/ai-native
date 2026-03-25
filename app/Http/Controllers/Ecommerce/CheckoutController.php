@@ -13,6 +13,7 @@ use App\Models\StripeCustomer;
 use App\Services\DoorDashService;
 use App\Services\FeeService;
 use App\Services\StripeService;
+use App\Services\UberDirectService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -179,22 +180,12 @@ class CheckoutController extends Controller
             $order->update(['status' => 'preparing']);
         }
 
-        // ── DoorDash auto-dispatch ────────────────────────────────────────────
+        // ── Delivery auto-dispatch (DoorDash or Uber Direct) ─────────────────
+        // Only dispatch when status is 'preparing' (auto_accept triggered it)
+        // or when the vendor is set and address exists.
 
-        if (($data['delivery_vendor'] ?? '') === 'doordash' && $order->delivery_address) {
-            try {
-                $delivery = app(DoorDashService::class)->createDelivery($order);
-                $order->update([
-                    'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
-                    'doordash_status'       => $delivery['delivery_status'] ?? 'created',
-                    'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
-                    'tracking_url'          => $delivery['tracking_url'] ?? null,
-                    'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
-                        ? Carbon::parse($delivery['estimated_delivery_time']) : null,
-                ]);
-            } catch (\Throwable $e) {
-                Log::warning("DoorDash auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
-            }
+        if ($order->delivery_address && $order->fresh()->status === 'preparing') {
+            $this->dispatchDeliveryVendor($order->fresh());
         }
 
         // ── Stripe payment ────────────────────────────────────────────────────
@@ -407,6 +398,48 @@ class CheckoutController extends Controller
     {
         $auth = $request->header('Authorization', '');
         return str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : null;
+    }
+
+    private function dispatchDeliveryVendor(Order $order): void
+    {
+        $vendor = $order->delivery_vendor;
+        if (!$vendor || !$order->delivery_address) return;
+
+        if ($vendor === 'doordash' && !$order->doordash_delivery_id) {
+            try {
+                $delivery = app(DoorDashService::class)->createDelivery($order->load(['business', 'items']));
+                $order->update([
+                    'doordash_delivery_id'  => $delivery['id'] ?? $delivery['external_delivery_id'] ?? $order->order_number,
+                    'doordash_status'       => $delivery['status'] ?? 'scheduled',
+                    'doordash_tracking_url' => $delivery['delivery_tracking_url'] ?? null,
+                    'tracking_url'          => $delivery['delivery_tracking_url'] ?? null,
+                    'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
+                        ? Carbon::parse($delivery['estimated_delivery_time']) : null,
+                ]);
+                Log::info("DoorDash dispatched (checkout) for {$order->order_number}: id={$order->doordash_delivery_id}");
+            } catch (\Throwable $e) {
+                Log::error("DoorDash dispatch FAILED (checkout) for {$order->order_number}: {$e->getMessage()}");
+            }
+            return;
+        }
+
+        if ($vendor === 'uber_direct' && !$order->uber_direct_delivery_id) {
+            try {
+                $delivery = app(UberDirectService::class)->createDelivery($order->load(['business', 'items']));
+                $order->update([
+                    'uber_direct_delivery_id'  => $delivery['id'],
+                    'uber_direct_status'       => $delivery['status'] ?? 'pending',
+                    'uber_direct_tracking_url' => $delivery['tracking_url'] ?? null,
+                    'uber_direct_fee'          => $delivery['fee'] ?? null,
+                    'tracking_url'             => $delivery['tracking_url'] ?? $order->tracking_url,
+                    'estimated_delivery_at'    => isset($delivery['dropoff']['eta'])
+                        ? Carbon::parse($delivery['dropoff']['eta']) : null,
+                ]);
+                Log::info("Uber Direct dispatched (checkout) for {$order->order_number}: id={$order->uber_direct_delivery_id}");
+            } catch (\Throwable $e) {
+                Log::error("Uber Direct dispatch FAILED (checkout) for {$order->order_number}: {$e->getMessage()}");
+            }
+        }
     }
 
     private function otpPayload(Request $request): ?array

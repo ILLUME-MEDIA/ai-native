@@ -111,7 +111,6 @@ class OrderController extends Controller
 
         $sid       = $this->sessionId($request);
 
-        // DEBUG — remove after confirming cart clear works
         Log::info('ORDER::store sessionId', [
             'sid'        => $sid,
             'header_sid' => $request->header('X-Session-Id'),
@@ -292,7 +291,7 @@ class OrderController extends Controller
         if ($vendor === 'doordash' && !$order->doordash_delivery_id) {
             try {
                 $doorDash = app(DoorDashService::class);
-                $delivery = $doorDash->createDelivery($order->load('business'));
+                $delivery = $doorDash->createDelivery($order->load(['business', 'items']));
 
                 // v1 Classic: `status` (not `delivery_status`), `delivery_tracking_url` (not `tracking_url`)
                 $order->update([
@@ -306,7 +305,11 @@ class OrderController extends Controller
 
                 Log::info("DoorDash dispatched for {$order->order_number}: id={$order->doordash_delivery_id}");
             } catch (\Throwable $e) {
-                Log::warning("DoorDash auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
+                Log::error("DoorDash dispatch FAILED for {$order->order_number}: {$e->getMessage()}", [
+                    'order_id'         => $order->id,
+                    'delivery_address' => $order->delivery_address,
+                    'business_id'      => $order->business_id,
+                ]);
             }
             return;
         }
@@ -329,7 +332,11 @@ class OrderController extends Controller
 
                 Log::info("Uber Direct dispatched for {$order->order_number}: id={$order->uber_direct_delivery_id}");
             } catch (\Throwable $e) {
-                Log::warning("Uber Direct auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
+                Log::error("Uber Direct dispatch FAILED for {$order->order_number}: {$e->getMessage()}", [
+                    'order_id'         => $order->id,
+                    'delivery_address' => $order->delivery_address,
+                    'business_id'      => $order->business_id,
+                ]);
             }
             return;
         }

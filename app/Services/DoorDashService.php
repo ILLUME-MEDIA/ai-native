@@ -18,13 +18,20 @@ class DoorDashService
     public function __construct()
     {
         // Pick credential set based on DOORDASH_ENV
-        $this->env = config('services.doordash.env', 'sandbox');
-        $cfg = config("services.doordash.{$this->env}") ?? [];
+        // AppSecretService checks DB first, then falls back to env()
+        $this->env = (string) AppSecretService::get('DOORDASH_ENV', 'sandbox');
 
-        $this->developerId   = (string) ($cfg['developer_id']   ?? '');
-        $this->keyId         = (string) ($cfg['key_id']          ?? '');
-        $this->signingSecret = (string) ($cfg['signing_secret']  ?? '');
-        $this->baseUrl       = rtrim((string) ($cfg['base_url']  ?? 'https://openapi.doordash.com/drive/v1'), '/');
+        if ($this->env === 'production') {
+            $this->developerId   = (string) AppSecretService::get('DOORDASH_PROD_DEVELOPER_ID',  config('services.doordash.production.developer_id',  ''));
+            $this->keyId         = (string) AppSecretService::get('DOORDASH_PROD_KEY_ID',         config('services.doordash.production.key_id',         ''));
+            $this->signingSecret = (string) AppSecretService::get('DOORDASH_PROD_SIGNING_SECRET', config('services.doordash.production.signing_secret',  ''));
+            $this->baseUrl       = rtrim((string) AppSecretService::get('DOORDASH_PROD_BASE_URL', config('services.doordash.production.base_url', 'https://openapi.doordash.com/drive/v1')), '/');
+        } else {
+            $this->developerId   = (string) AppSecretService::get('DOORDASH_SANDBOX_DEVELOPER_ID',  config('services.doordash.sandbox.developer_id',  ''));
+            $this->keyId         = (string) AppSecretService::get('DOORDASH_SANDBOX_KEY_ID',         config('services.doordash.sandbox.key_id',         ''));
+            $this->signingSecret = (string) AppSecretService::get('DOORDASH_SANDBOX_SIGNING_SECRET', config('services.doordash.sandbox.signing_secret',  ''));
+            $this->baseUrl       = rtrim((string) AppSecretService::get('DOORDASH_SANDBOX_BASE_URL', config('services.doordash.sandbox.base_url', 'https://openapi.doordash.com/drive/v1')), '/');
+        }
     }
 
     /** Returns "sandbox" or "production" */
@@ -130,11 +137,11 @@ class DoorDashService
         // ── Customer object (required by v1 Classic) ───────────────────────────
         $nameParts = explode(' ', trim($order->customer_name ?? 'Customer'), 2);
         $customer  = array_filter([
-            'first_name'             => $nameParts[0] ?? 'Customer',
-            'last_name'              => $nameParts[1] ?? null,
-            'phone_number'           => $phDropoff,
-            'email'                  => $order->customer_email ?: null,
-            'should_send_notifications' => true,
+            'first_name'   => $nameParts[0] ?? 'Customer',
+            'last_name'    => $nameParts[1] ?? null,
+            'phone_number' => $phDropoff,
+            'email'        => $order->customer_email ?: null,
+            // Note: should_send_notifications is NOT supported in v1 Classic — causes serialization error
         ], fn($v) => $v !== null && $v !== '');
 
         // ── Final payload (v1 Classic fields only) ─────────────────────────────

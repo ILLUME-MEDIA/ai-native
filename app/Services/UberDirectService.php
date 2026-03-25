@@ -133,14 +133,44 @@ class UberDirectService
     }
 
     /**
-     * Build address string from a Business or raw address string.
-     * If it looks like a full address string, parse it; otherwise pass as-is in street_address.
+     * Build Uber Direct address JSON from a plain address string.
+     * Parses "Street, City, State, ZIP" or "Street, City, State ZIP" into components.
+     * Falls back to passing the full string as street_address if parsing fails.
      */
     public static function buildAddressFromString(string $address, string $country = 'US'): string
     {
         // Already JSON-encoded?
         if (str_starts_with(trim($address), '{')) return $address;
 
+        // Normalize: fix missing space after house number (e.g. "2280San" → "2280 San")
+        $address = preg_replace('/(\d)([A-Za-z])/', '$1 $2', $address);
+
+        // Try comma-separated parsing: "Street, City, State, ZIP" or "Street, City, State ZIP"
+        $parts = array_map('trim', explode(',', $address));
+
+        if (count($parts) >= 3) {
+            $street   = $parts[0];
+            $city     = $parts[1];
+            $stateZip = trim($parts[2]);
+            $zip      = trim($parts[3] ?? '');
+
+            // Handle "CA 94702" combined in same part
+            if ($zip === '' && str_contains($stateZip, ' ')) {
+                $spacePos = strrpos($stateZip, ' ');
+                $zip      = substr($stateZip, $spacePos + 1);
+                $stateZip = substr($stateZip, 0, $spacePos);
+            }
+
+            return json_encode(array_filter([
+                'street_address' => [$street],
+                'city'           => $city      ?: null,
+                'state'          => $stateZip  ?: null,
+                'zip_code'       => $zip        ?: null,
+                'country'        => $country,
+            ], fn($v) => $v !== null));
+        }
+
+        // Fallback: pass full string as street_address
         return json_encode([
             'street_address' => [$address],
             'country'        => $country,
@@ -283,11 +313,11 @@ class UberDirectService
     }
 
     /**
-     * Update a delivery (Uber Direct uses POST, not PATCH).
+     * Update a delivery (Uber Direct uses PATCH).
      */
     public function updateDelivery(string $deliveryId, array $data): array
     {
-        return $this->request('post', "/customers/{$this->customerId}/deliveries/{$deliveryId}", $data);
+        return $this->request('patch', "/customers/{$this->customerId}/deliveries/{$deliveryId}", $data);
     }
 
     /**

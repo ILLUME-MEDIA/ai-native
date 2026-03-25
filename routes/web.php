@@ -12,6 +12,18 @@ use Inertia\Inertia;
 // ── Deploy verification ───────────────────────────────────────────────────────
 Route::get('/version', function () {
     $commit     = trim(shell_exec('git rev-parse --short HEAD 2>/dev/null') ?? 'unknown');
+
+    $opcache = null;
+    if (function_exists('opcache_get_status')) {
+        $s = opcache_get_status(false);
+        $opcache = $s ? [
+            'enabled'             => true,
+            'validate_timestamps' => ini_get('opcache.validate_timestamps') ? 'ON' : 'OFF (files never reloaded — run /clear-cache after deploys)',
+            'revalidate_freq_sec' => (int) ini_get('opcache.revalidate_freq'),
+            'cached_scripts'      => $s['opcache_statistics']['num_cached_scripts'] ?? null,
+        ] : ['enabled' => false];
+    }
+
     return response()->json([
         'commit'      => $commit,
         'branch'      => trim(shell_exec('git rev-parse --abbrev-ref HEAD 2>/dev/null') ?? 'unknown'),
@@ -19,27 +31,87 @@ Route::get('/version', function () {
         'committed_at'=> trim(shell_exec('git log -1 --pretty=%ci 2>/dev/null') ?? 'unknown'),
         'server_time' => now()->toDateTimeString(),
         'env'         => app()->environment(),
+        'opcache'     => $opcache,
     ]);
 });
 
 // ── One-time: fix wrong DoorDash string delivery IDs ─────────────────────────
-Route::get('/fix-doordash-ids', function () {
-    $fixed = \App\Models\Order::whereNotNull('doordash_delivery_id')
+// DoorDash GET /deliveries/{id} requires the numeric internal ID.
+// Pass known numeric IDs as query params: ?ids=ORD-ABC:2788693984,ORD-DEF:2788689796
+// Or it will attempt to look up by the order number stored in doordash_delivery_id.
+Route::get('/fix-doordash-ids', function (Illuminate\Http\Request $request) {
+    // Accept manual mapping: ?ids=ORD-9YLJP6G3:2788693984,ORD-FGBFBSCP:2788689796
+    $manualMap = [];
+    if ($request->query('ids')) {
+        foreach (explode(',', $request->query('ids')) as $pair) {
+            [$orderNum, $numericId] = explode(':', trim($pair)) + [null, null];
+            if ($orderNum && $numericId) {
+                $manualMap[trim($orderNum)] = trim($numericId);
+            }
+        }
+    }
+
+    $orders = \App\Models\Order::whereNotNull('doordash_delivery_id')
         ->whereRaw("doordash_delivery_id REGEXP '[^0-9]'")
         ->get(['id', 'order_number', 'doordash_delivery_id']);
 
-    \App\Models\Order::whereNotNull('doordash_delivery_id')
-        ->whereRaw("doordash_delivery_id REGEXP '[^0-9]'")
-        ->update([
-            'doordash_delivery_id'  => null,
-            'doordash_status'       => null,
-            'doordash_tracking_url' => null,
-            'tracking_url'          => null,
-        ]);
+    if ($orders->isEmpty()) {
+        return response()->json(['message' => 'No orders with wrong DoorDash IDs found.']);
+    }
+
+    $doorDash = app(\App\Services\DoorDashService::class);
+    $results  = [];
+
+    foreach ($orders as $order) {
+        $numericId = $manualMap[$order->order_number] ?? null;
+
+        if (!$numericId) {
+            $results[] = [
+                'order'  => $order->order_number,
+                'old_id' => $order->doordash_delivery_id,
+                'error'  => 'No numeric DoorDash ID provided. Pass ?ids=ORDER_NUM:NUMERIC_ID',
+                'result' => 'skipped',
+            ];
+            continue;
+        }
+
+        try {
+            // DoorDash v1 GET requires the numeric internal ID
+            $delivery = $doorDash->getDelivery($numericId);
+
+            $trackingUrl = $delivery['delivery_tracking_url'] ?? null;
+            $status      = $delivery['status']               ?? null;
+            $eta         = $delivery['estimated_delivery_time'] ?? null;
+
+            $order->update(array_filter([
+                'doordash_delivery_id'  => (string) $numericId,
+                'doordash_tracking_url' => $trackingUrl,
+                'tracking_url'          => $trackingUrl,
+                'doordash_status'       => $status,
+                'estimated_delivery_at' => $eta ? \Illuminate\Support\Carbon::parse($eta) : null,
+            ], fn($v) => $v !== null));
+
+            $results[] = [
+                'order'        => $order->order_number,
+                'old_id'       => $order->doordash_delivery_id,
+                'new_id'       => $numericId,
+                'status'       => $status,
+                'tracking_url' => $trackingUrl,
+                'result'       => 'fixed',
+            ];
+        } catch (\Throwable $e) {
+            $results[] = [
+                'order'  => $order->order_number,
+                'old_id' => $order->doordash_delivery_id,
+                'error'  => $e->getMessage(),
+                'result' => 'error',
+            ];
+        }
+    }
 
     return response()->json([
-        'message' => 'Fixed ' . $fixed->count() . ' orders with wrong DoorDash IDs.',
-        'orders'  => $fixed->map(fn($o) => ['id' => $o->id, 'order' => $o->order_number, 'old_id' => $o->doordash_delivery_id]),
+        'message' => 'Processed ' . $orders->count() . ' orders.',
+        'results' => $results,
     ]);
 });
 
@@ -67,7 +139,26 @@ Route::get('/api-docs/openapi.yaml', function () {
 // the migration is marked as run in the migrations table without re-creating the table.
 // Clear all Laravel + OPcache caches. GET /clear-cache
 Route::get('/clear-cache', function () {
-    $opcacheCleared = function_exists('opcache_reset') ? opcache_reset() : false;
+    // opcache_reset() only clears the current worker process.
+    // opcache_invalidate() per-file forces reload even in multi-worker setups.
+    $invalidated = 0;
+    $resetOk     = false;
+    if (function_exists('opcache_reset')) {
+        $resetOk = opcache_reset();
+    }
+    if (function_exists('opcache_invalidate')) {
+        // Recursively invalidate every PHP file under app/ and routes/
+        $dirs = [app_path(), base_path('routes'), base_path('bootstrap')];
+        foreach ($dirs as $dir) {
+            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+            foreach ($it as $file) {
+                if ($file->getExtension() === 'php') {
+                    opcache_invalidate($file->getPathname(), true);
+                    $invalidated++;
+                }
+            }
+        }
+    }
 
     Artisan::call('config:clear');
     Artisan::call('route:clear');
@@ -76,9 +167,13 @@ Route::get('/clear-cache', function () {
     Artisan::call('event:clear');
 
     return response()->json([
-        'message'        => 'All caches cleared.',
-        'opcache_reset'  => $opcacheCleared,
-        'cleared'        => ['config', 'route', 'view', 'cache', 'event'],
+        'message'            => 'All caches cleared.',
+        'opcache_reset'      => $resetOk,
+        'opcache_invalidated'=> $invalidated . ' PHP files',
+        'cleared'            => ['config', 'route', 'view', 'cache', 'event'],
+        'note'               => $invalidated === 0
+            ? 'OPcache extension not active — restart your web server to clear bytecode cache'
+            : 'OPcache files invalidated for this worker. If multi-worker (Apache/FPM), also restart the server.',
     ]);
 })->name('clear-cache');
 
