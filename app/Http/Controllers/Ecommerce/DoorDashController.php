@@ -114,21 +114,31 @@ class DoorDashController extends Controller
             ], 502);
         }
 
-        $ddStatus = $delivery['delivery_status'] ?? null;
+        // v1 Classic API returns `status` (not `delivery_status`)
+        // and `delivery_tracking_url` (not `tracking_url`)
+        $ddStatus    = $delivery['status'] ?? null;
+        $trackingUrl = $delivery['delivery_tracking_url'] ?? null;
 
         $update = [];
-        if ($ddStatus) $update['doordash_status'] = $ddStatus;
-        if (! empty($delivery['tracking_url'])) $update['doordash_tracking_url'] = $delivery['tracking_url'];
+        if ($ddStatus)    $update['doordash_status']       = $ddStatus;
+        if ($trackingUrl) $update['doordash_tracking_url'] = $trackingUrl;
+        if ($trackingUrl) $update['tracking_url']          = $trackingUrl;
+        if (!empty($delivery['estimated_delivery_time'])) {
+            $update['estimated_delivery_at'] = Carbon::parse($delivery['estimated_delivery_time']);
+        }
         if ($update) $order->update($update);
 
-        // Mirror certain DoorDash statuses onto the order status
+        // Mirror DoorDash statuses onto our order status
         $orderStatus = match ($ddStatus) {
+            'enroute_to_pickup', 'arrived_at_pickup'       => 'preparing',
             'picked_up', 'enroute_to_dropoff', 'arrived_at_dropoff' => 'out_for_delivery',
             'delivered'          => 'delivered',
             'delivery_cancelled' => 'cancelled',
             default              => null,
         };
-        if ($orderStatus) $order->update(['status' => $orderStatus]);
+        if ($orderStatus && $orderStatus !== $order->status) {
+            $order->update(['status' => $orderStatus]);
+        }
 
         return response()->json([
             'success'      => true,
@@ -213,13 +223,15 @@ class DoorDashController extends Controller
             ], 502);
         }
 
+        // v1 Classic: response field is `status` (not `delivery_status`)
+        // and `delivery_tracking_url` (not `tracking_url`)
         $order->update([
-            'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
-            'doordash_status'       => $delivery['delivery_status'] ?? 'created',
-            'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
-            'tracking_url'          => $delivery['tracking_url'] ?? null,
+            'doordash_delivery_id'  => $delivery['id'] ?? $delivery['external_delivery_id'] ?? $order->order_number,
+            'doordash_status'       => $delivery['status'] ?? 'scheduled',
+            'doordash_tracking_url' => $delivery['delivery_tracking_url'] ?? null,
+            'tracking_url'          => $delivery['delivery_tracking_url'] ?? null,
             'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
-                ? \Illuminate\Support\Carbon::parse($delivery['estimated_delivery_time']) : null,
+                ? Carbon::parse($delivery['estimated_delivery_time']) : null,
         ]);
 
         return response()->json([
@@ -247,9 +259,11 @@ class DoorDashController extends Controller
         if ($externalId && $ddStatus) {
             $updateFields = ['doordash_status' => $ddStatus];
 
-            if (! empty($data['tracking_url'])) {
-                $updateFields['doordash_tracking_url'] = $data['tracking_url'];
-                $updateFields['tracking_url']           = $data['tracking_url'];
+            // Webhooks may use either `tracking_url` or `delivery_tracking_url`
+            $webhookTrackingUrl = $data['delivery_tracking_url'] ?? $data['tracking_url'] ?? null;
+            if ($webhookTrackingUrl) {
+                $updateFields['doordash_tracking_url'] = $webhookTrackingUrl;
+                $updateFields['tracking_url']          = $webhookTrackingUrl;
             }
             if (! empty($data['estimated_delivery_time'])) {
                 $updateFields['estimated_delivery_at'] = Carbon::parse($data['estimated_delivery_time']);

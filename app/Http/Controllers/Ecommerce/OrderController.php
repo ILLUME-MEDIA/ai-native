@@ -183,28 +183,15 @@ class OrderController extends Controller
 
         $order->load('business');
 
-        // ── Auto-accept: confirm + set preparing immediately ─────────────────
+        // ── Auto-accept: set preparing immediately ────────────────────────────
         if ($order->business?->auto_accept) {
             $order->update(['status' => 'preparing']);
         }
 
-        // ── Auto-dispatch DoorDash delivery ──────────────────────────────────
-        if (($data['delivery_vendor'] ?? '') === 'doordash' && $order->delivery_address) {
-            try {
-                $doorDash = app(DoorDashService::class);
-                $delivery = $doorDash->createDelivery($order);
-                $order->update([
-                    'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
-                    'doordash_status'       => $delivery['delivery_status'] ?? 'created',
-                    'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
-                    'tracking_url'          => $delivery['tracking_url'] ?? null,
-                    'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
-                        ? \Illuminate\Support\Carbon::parse($delivery['estimated_delivery_time']) : null,
-                ]);
-            } catch (\Throwable $e) {
-                // Don't fail the order — log the error and let admin manually dispatch
-                Log::warning("DoorDash auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
-            }
+        // ── Auto-dispatch: only when status is 'preparing' (auto_accept triggered) ──
+        // Manual preparing triggers dispatch via updateStatus() instead.
+        if ($order->delivery_address && $order->fresh()->status === 'preparing') {
+            $this->dispatchDeliveryVendor($order->fresh());
         }
 
         return response()->json($order->fresh()->load(['business', 'items']), 201);
@@ -275,29 +262,76 @@ class OrderController extends Controller
         $previousStatus = $order->status;
         $order->update($data);
 
-        // ── Auto-dispatch DoorDash when order is confirmed ────────────────
-        if (
-            in_array($data['status'], ['confirmed', 'preparing']) &&
-            $previousStatus === 'pending' &&
-            ($order->delivery_vendor === 'doordash' || $order->item_delivery_type === 'delivery') &&
-            $order->delivery_address &&
-            !$order->doordash_delivery_id
-        ) {
-            try {
-                $doorDash = app(\App\Services\DoorDashService::class);
-                $delivery = $doorDash->createDelivery($order->load('business'));
-
-                $order->update([
-                    'doordash_delivery_id'  => $delivery['external_delivery_id'] ?? $order->order_number,
-                    'doordash_status'       => $delivery['delivery_status'] ?? 'created',
-                    'doordash_tracking_url' => $delivery['tracking_url'] ?? null,
-                    'tracking_url'          => $delivery['tracking_url'] ?? null,
-                ]);
-            } catch (\Throwable $e) {
-                \Log::warning("DoorDash auto-dispatch on confirm failed for {$order->order_number}: {$e->getMessage()}");
-            }
+        // ── Auto-dispatch delivery vendor when status becomes 'preparing' ───
+        // Triggers for DoorDash or Uber Direct, any previous status, only if
+        // not yet dispatched.
+        if ($data['status'] === 'preparing' && $order->delivery_address) {
+            $this->dispatchDeliveryVendor($order);
         }
 
         return response()->json($order->fresh()->load(['business', 'items', 'assignedDriver']));
+    }
+
+    // ── Delivery dispatch helper ──────────────────────────────────────────────
+
+    /**
+     * Auto-dispatch to the selected delivery vendor (DoorDash or Uber Direct).
+     * Called on order creation and whenever status becomes 'preparing'.
+     * Only dispatches if the vendor is supported AND no delivery is active yet.
+     * Errors are logged but never fail the order.
+     */
+    private function dispatchDeliveryVendor(Order $order): void
+    {
+        $vendor = $order->delivery_vendor;
+
+        if (!$vendor || !$order->delivery_address) {
+            return;
+        }
+
+        // ── DoorDash ──────────────────────────────────────────────────────────
+        if ($vendor === 'doordash' && !$order->doordash_delivery_id) {
+            try {
+                $doorDash = app(DoorDashService::class);
+                $delivery = $doorDash->createDelivery($order->load('business'));
+
+                // v1 Classic: `status` (not `delivery_status`), `delivery_tracking_url` (not `tracking_url`)
+                $order->update([
+                    'doordash_delivery_id'  => $delivery['id'] ?? $delivery['external_delivery_id'] ?? $order->order_number,
+                    'doordash_status'       => $delivery['status'] ?? 'scheduled',
+                    'doordash_tracking_url' => $delivery['delivery_tracking_url'] ?? null,
+                    'tracking_url'          => $delivery['delivery_tracking_url'] ?? null,
+                    'estimated_delivery_at' => isset($delivery['estimated_delivery_time'])
+                        ? Carbon::parse($delivery['estimated_delivery_time']) : null,
+                ]);
+
+                Log::info("DoorDash dispatched for {$order->order_number}: id={$order->doordash_delivery_id}");
+            } catch (\Throwable $e) {
+                Log::warning("DoorDash auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
+            }
+            return;
+        }
+
+        // ── Uber Direct ───────────────────────────────────────────────────────
+        if ($vendor === 'uber_direct' && !$order->uber_direct_delivery_id) {
+            try {
+                $uber     = app(\App\Services\UberDirectService::class);
+                $delivery = $uber->createDelivery($order->load(['business', 'items']));
+
+                $order->update([
+                    'uber_direct_delivery_id'  => $delivery['id'],
+                    'uber_direct_status'       => $delivery['status'] ?? 'pending',
+                    'uber_direct_tracking_url' => $delivery['tracking_url'] ?? null,
+                    'uber_direct_fee'          => $delivery['fee'] ?? null,
+                    'tracking_url'             => $delivery['tracking_url'] ?? $order->tracking_url,
+                    'estimated_delivery_at'    => isset($delivery['dropoff']['eta'])
+                        ? Carbon::parse($delivery['dropoff']['eta']) : null,
+                ]);
+
+                Log::info("Uber Direct dispatched for {$order->order_number}: id={$order->uber_direct_delivery_id}");
+            } catch (\Throwable $e) {
+                Log::warning("Uber Direct auto-dispatch failed for {$order->order_number}: {$e->getMessage()}");
+            }
+            return;
+        }
     }
 }

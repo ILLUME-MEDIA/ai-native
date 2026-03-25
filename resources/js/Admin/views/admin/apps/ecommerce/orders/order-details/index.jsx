@@ -36,6 +36,10 @@ export default function OrderDetailsPage() {
   const [toast, setToast]         = useState(null);
   const [recentOrders, setRecentOrders] = useState([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [uberTrackingLoading, setUberTrackingLoading] = useState(false);
+  const [uberDispatchLoading, setUberDispatchLoading] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -69,6 +73,58 @@ export default function OrderDetailsPage() {
       .then(r => { setOrder(r.data); showToast('Status updated'); })
       .catch(() => showToast('Update failed', 'danger'))
       .finally(() => setUpdating(false));
+  };
+
+  const refreshTracking = () => {
+    setTrackingLoading(true);
+    axios.get(`/api/delivery/doordash/status/${orderId}`)
+      .then(r => {
+        showToast('Tracking refreshed');
+        load(); // reload full order to get updated doordash_status / tracking_url
+      })
+      .catch(e => showToast(e.response?.data?.message || 'Tracking refresh failed', 'danger'))
+      .finally(() => setTrackingLoading(false));
+  };
+
+  const dispatchDoorDash = () => {
+    setDispatchLoading(true);
+    axios.post(`/api/delivery/doordash/dispatch/${orderId}`)
+      .then(r => {
+        showToast('DoorDash delivery dispatched!');
+        load();
+      })
+      .catch(e => showToast(e.response?.data?.message || 'Dispatch failed', 'danger'))
+      .finally(() => setDispatchLoading(false));
+  };
+
+  const cancelDoorDash = () => {
+    if (!window.confirm('Cancel DoorDash delivery?')) return;
+    axios.post(`/api/delivery/doordash/cancel/${orderId}`)
+      .then(() => { showToast('DoorDash delivery cancelled'); load(); })
+      .catch(e => showToast(e.response?.data?.message || 'Cancel failed', 'danger'));
+  };
+
+  const refreshUberTracking = () => {
+    setUberTrackingLoading(true);
+    axios.get(`/api/delivery/uber-direct/status/${orderId}`)
+      .then(() => { showToast('Uber tracking refreshed'); load(); })
+      .catch(e => showToast(e.response?.data?.message || 'Uber tracking refresh failed', 'danger'))
+      .finally(() => setUberTrackingLoading(false));
+  };
+
+  const dispatchUberDirect = () => {
+    setUberDispatchLoading(true);
+    axios.post(`/api/delivery/uber-direct/dispatch/${orderId}`)
+      .then(() => { showToast('Uber Direct delivery dispatched!'); load(); })
+      .catch(e => showToast(e.response?.data?.message || 'Uber dispatch failed', 'danger'))
+      .finally(() => setUberDispatchLoading(false));
+  };
+
+  const cancelUberDirect = () => {
+    if (!window.confirm('Cancel Uber Direct delivery?')) return;
+    axios.post(`/api/delivery/uber-direct/cancel/${orderId}`)
+      .then(() => { showToast('Uber Direct delivery cancelled'); load(); })
+      .catch(e => showToast(e.response?.data?.message || 'Cancel failed', 'danger'));
   };
 
   // No ID — show recent orders picker
@@ -227,11 +283,11 @@ export default function OrderDetailsPage() {
                   {(order.items || []).map(item => (
                     <tr key={item.id}>
                       <td>
-                        <div className="fw-semibold">{item.name}</div>
+                        <div className="fw-semibold" style={{ color: '#212529' }}>{item.name}</div>
                       </td>
-                      <td>${parseFloat(item.price).toFixed(2)}</td>
-                      <td>{item.quantity}</td>
-                      <td className="fw-semibold">${parseFloat(item.subtotal).toFixed(2)}</td>
+                      <td style={{ color: '#212529' }}>${parseFloat(item.price).toFixed(2)}</td>
+                      <td style={{ color: '#212529' }}>{item.quantity}</td>
+                      <td className="fw-semibold" style={{ color: '#212529' }}>${parseFloat(item.subtotal).toFixed(2)}</td>
                       {order.items?.some(i => i.notes) && (
                         <td><small className="text-muted">{item.notes || '—'}</small></td>
                       )}
@@ -247,22 +303,34 @@ export default function OrderDetailsPage() {
             <CardBody>
               <div className="d-flex justify-content-between mb-2">
                 <span className="text-muted">Subtotal</span>
-                <span>${subtotal.toFixed(2)}</span>
+                <span style={{ color: '#212529' }}>${subtotal.toFixed(2)}</span>
               </div>
-              <div className="d-flex justify-content-between mb-2 text-muted">
-                <span>Tax</span>
-                <span>${parseFloat(order.tax || 0).toFixed(2)}</span>
+              <div className="d-flex justify-content-between mb-2">
+                <span className="text-muted">Tax</span>
+                <span style={{ color: '#212529' }}>${parseFloat(order.tax || 0).toFixed(2)}</span>
               </div>
+              {parseFloat(order.platform_fee) > 0 && (
+                <div className="d-flex justify-content-between mb-2">
+                  <span className="text-muted">Platform Fee</span>
+                  <span style={{ color: '#212529' }}>${parseFloat(order.platform_fee).toFixed(2)}</span>
+                </div>
+              )}
+              {parseFloat(order.tip) > 0 && (
+                <div className="d-flex justify-content-between mb-2">
+                  <span className="text-muted">Tip</span>
+                  <span style={{ color: '#212529' }}>${parseFloat(order.tip).toFixed(2)}</span>
+                </div>
+              )}
               {parseFloat(order.delivery_fee) > 0 && (
-                <div className="d-flex justify-content-between mb-2 text-muted">
-                  <span>Delivery Fee</span>
-                  <span>${parseFloat(order.delivery_fee).toFixed(2)}</span>
+                <div className="d-flex justify-content-between mb-2">
+                  <span className="text-muted">Delivery Fee</span>
+                  <span style={{ color: '#212529' }}>${parseFloat(order.delivery_fee).toFixed(2)}</span>
                 </div>
               )}
               <hr />
               <div className="d-flex justify-content-between fw-bold fs-5">
-                <span>Total</span>
-                <span>${parseFloat(order.total).toFixed(2)}</span>
+                <span style={{ color: '#212529' }}>Total</span>
+                <span style={{ color: '#212529' }}>${parseFloat(order.total).toFixed(2)}</span>
               </div>
             </CardBody>
           </Card>
@@ -320,7 +388,7 @@ export default function OrderDetailsPage() {
               </CardTitle>
             </CardHeader>
             <CardBody>
-              <div className="fw-semibold">{order.business?.name || '—'}</div>
+              <div className="fw-semibold" style={{ color: '#212529' }}>{order.business?.name || '—'}</div>
               <small className="text-muted">{order.business?.city || ''}</small>
             </CardBody>
           </Card>
@@ -341,7 +409,7 @@ export default function OrderDetailsPage() {
               ].map(({ icon, label }) => (
                 <div key={icon} className="d-flex align-items-center gap-2 mb-2">
                   <Icon name={icon} size={14} className="text-muted" />
-                  <small>{label}</small>
+                  <small style={{ color: '#212529' }}>{label}</small>
                 </div>
               ))}
             </CardBody>
@@ -356,34 +424,321 @@ export default function OrderDetailsPage() {
               </CardTitle>
             </CardHeader>
             <CardBody>
-              <div className="d-flex gap-2 mb-2">
-                <Badge bg="secondary" className="text-capitalize">{order.order_type?.replace('_', ' ')}</Badge>
+              <div className="d-flex gap-2 mb-2 flex-wrap">
+                <span className="badge text-capitalize" style={{ background: '#6c757d', color: '#fff' }}>
+                  {order.order_type?.replace(/_/g, ' ')}
+                </span>
                 {order.item_delivery_type && order.item_delivery_type !== order.order_type && (
-                  <Badge bg="secondary" className="text-capitalize">{order.item_delivery_type}</Badge>
+                  <span className="badge text-capitalize" style={{ background: '#6c757d', color: '#fff' }}>
+                    {order.item_delivery_type}
+                  </span>
                 )}
                 {order.delivery_vendor && (
-                  <Badge bg="info" className="text-capitalize">{order.delivery_vendor.replace('_', ' ')}</Badge>
+                  <span className="badge text-capitalize" style={{ background: '#0dcaf0', color: '#000' }}>
+                    {order.delivery_vendor.replace(/_/g, ' ')}
+                  </span>
                 )}
               </div>
               {order.delivery_address && (
                 <div className="d-flex align-items-start gap-2">
                   <Icon name="map-pin" size={14} className="text-muted mt-1" />
-                  <small className="text-muted">{order.delivery_address}</small>
+                  <small style={{ color: '#495057' }}>{order.delivery_address}</small>
                 </div>
               )}
               {order.notes && (
                 <div className="mt-2 border-top pt-2">
-                  <small className="text-muted"><strong>Notes:</strong> {order.notes}</small>
+                  <small style={{ color: '#495057' }}><strong>Notes:</strong> {order.notes}</small>
                 </div>
               )}
             </CardBody>
           </Card>
 
+          {/* DoorDash Tracking */}
+          {order.delivery_vendor === 'doordash' && (
+            <Card className="mb-3">
+              <CardHeader className="d-flex justify-content-between align-items-center">
+                <CardTitle as="h5" className="mb-0">
+                  <Icon name="truck" size={15} className="me-2" />
+                  DoorDash Tracking
+                </CardTitle>
+                <div className="d-flex gap-1">
+                  {order.doordash_delivery_id ? (
+                    <>
+                      <Button
+                        variant="outline-primary"
+                        size="sm"
+                        disabled={trackingLoading}
+                        onClick={refreshTracking}
+                        title="Refresh tracking from DoorDash"
+                      >
+                        {trackingLoading
+                          ? <Spinner size="sm" />
+                          : <Icon name="rotate-2" size={13} />}
+                      </Button>
+                      {!['delivered','delivery_cancelled','returned'].includes(order.doordash_status) && (
+                        <Button variant="outline-danger" size="sm" onClick={cancelDoorDash} title="Cancel delivery">
+                          <Icon name="x" size={13} />
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={dispatchLoading || !order.delivery_address}
+                      onClick={dispatchDoorDash}
+                    >
+                      {dispatchLoading ? <Spinner size="sm" className="me-1" /> : <Icon name="send" size={13} className="me-1" />}
+                      Dispatch
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardBody>
+                {order.doordash_delivery_id ? (
+                  <>
+                    {/* Status row */}
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <small className="text-muted">Status</small>
+                      <span
+                        className="badge rounded-pill"
+                        style={{
+                          background: {
+                            created: '#6c757d', confirmed: '#0dcaf0', enroute_to_pickup: '#0d6efd',
+                            arrived_at_pickup: '#6610f2', picked_up: '#fd7e14',
+                            enroute_to_dropoff: '#fd7e14', arrived_at_dropoff: '#198754',
+                            delivered: '#198754', delivery_cancelled: '#dc3545', returned: '#dc3545',
+                          }[order.doordash_status] || '#6c757d',
+                          color: '#fff', padding: '4px 10px', fontSize: '0.75rem',
+                        }}
+                      >
+                        {order.tracking?.status_label || order.doordash_status?.replace(/_/g, ' ') || 'Unknown'}
+                      </span>
+                    </div>
+
+                    {/* Delivery ID */}
+                    <div className="d-flex justify-content-between mb-2">
+                      <small className="text-muted">Delivery ID</small>
+                      <small className="font-monospace" style={{ color: '#212529' }}>{order.doordash_delivery_id}</small>
+                    </div>
+
+                    {/* ETA */}
+                    {order.estimated_delivery_at && (
+                      <div className="d-flex justify-content-between mb-2">
+                        <small className="text-muted">Estimated Delivery</small>
+                        <small style={{ color: '#212529' }}>
+                          {new Date(order.estimated_delivery_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </small>
+                      </div>
+                    )}
+
+                    {/* Tracking link */}
+                    {order.doordash_tracking_url && (
+                      <div className="mt-2">
+                        <a
+                          href={order.doordash_tracking_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-sm btn-outline-secondary w-100"
+                        >
+                          <Icon name="map-pin" size={13} className="me-1" />
+                          Open Live Tracking
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Dasher progress steps */}
+                    <div className="mt-3 pt-2 border-top">
+                      {[
+                        { key: 'created',            label: 'Order Received' },
+                        { key: 'enroute_to_pickup',  label: 'Dasher Heading to Restaurant' },
+                        { key: 'arrived_at_pickup',  label: 'Dasher at Restaurant' },
+                        { key: 'picked_up',          label: 'Picked Up' },
+                        { key: 'enroute_to_dropoff', label: 'Out for Delivery' },
+                        { key: 'delivered',          label: 'Delivered' },
+                      ].map(step => {
+                        const flow = ['created','enroute_to_pickup','arrived_at_pickup','picked_up','enroute_to_dropoff','delivered'];
+                        const curIdx  = flow.indexOf(order.doordash_status ?? '');
+                        const stepIdx = flow.indexOf(step.key);
+                        const isDone    = stepIdx < curIdx;
+                        const isCurrent = step.key === order.doordash_status;
+                        return (
+                          <div key={step.key} className="d-flex align-items-center gap-2 mb-1">
+                            <div
+                              className="rounded-circle flex-shrink-0"
+                              style={{
+                                width: 10, height: 10,
+                                background: isCurrent ? '#0d6efd' : isDone ? '#198754' : '#dee2e6',
+                              }}
+                            />
+                            <small style={{
+                              color: isCurrent ? '#0d6efd' : isDone ? '#198754' : '#adb5bd',
+                              fontWeight: isCurrent ? 600 : 400,
+                              fontSize: '0.72rem',
+                            }}>
+                              {step.label}
+                            </small>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-3">
+                    <Icon name="truck" size={28} className="text-muted mb-2 opacity-50" />
+                    <p className="text-muted small mb-2">No DoorDash delivery dispatched yet.</p>
+                    {!order.delivery_address && (
+                      <small className="text-danger">Order has no delivery address.</small>
+                    )}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          )}
+
+          {/* Uber Direct Tracking */}
+          {order.delivery_vendor === 'uber_direct' && (
+            <Card className="mb-3">
+              <CardHeader className="d-flex justify-content-between align-items-center">
+                <CardTitle as="h5" className="mb-0">
+                  <Icon name="bolt" size={15} className="me-2" />
+                  Uber Direct Tracking
+                </CardTitle>
+                <div className="d-flex gap-1">
+                  {order.uber_direct_delivery_id ? (
+                    <>
+                      <Button
+                        variant="outline-primary"
+                        size="sm"
+                        disabled={uberTrackingLoading}
+                        onClick={refreshUberTracking}
+                        title="Refresh tracking from Uber Direct"
+                      >
+                        {uberTrackingLoading ? <Spinner size="sm" /> : <Icon name="rotate-2" size={13} />}
+                      </Button>
+                      {!['delivered','completed','canceled','cancelled','returned'].includes(order.uber_direct_status) && (
+                        <Button variant="outline-danger" size="sm" onClick={cancelUberDirect} title="Cancel delivery">
+                          <Icon name="x" size={13} />
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={uberDispatchLoading || !order.delivery_address}
+                      onClick={dispatchUberDirect}
+                    >
+                      {uberDispatchLoading ? <Spinner size="sm" className="me-1" /> : <Icon name="send" size={13} className="me-1" />}
+                      Dispatch
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardBody>
+                {order.uber_direct_delivery_id ? (
+                  <>
+                    {/* Status */}
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <small className="text-muted">Status</small>
+                      <span
+                        className="badge rounded-pill"
+                        style={{
+                          background: {
+                            pending: '#6c757d', pickup: '#0d6efd', pickup_complete: '#fd7e14',
+                            dropoff: '#fd7e14', delivered: '#198754', completed: '#198754',
+                            canceled: '#dc3545', cancelled: '#dc3545', returned: '#dc3545',
+                          }[order.uber_direct_status] || '#6c757d',
+                          color: '#fff', padding: '4px 10px', fontSize: '0.75rem',
+                        }}
+                      >
+                        {order.uber_direct_status?.replace(/_/g, ' ') || 'Unknown'}
+                      </span>
+                    </div>
+
+                    {/* Delivery ID */}
+                    <div className="d-flex justify-content-between mb-2">
+                      <small className="text-muted">Delivery ID</small>
+                      <small className="font-monospace" style={{ color: '#212529', fontSize: '0.7rem' }}>
+                        {order.uber_direct_delivery_id?.slice(0, 20)}…
+                      </small>
+                    </div>
+
+                    {/* ETA */}
+                    {order.estimated_delivery_at && (
+                      <div className="d-flex justify-content-between mb-2">
+                        <small className="text-muted">Estimated Delivery</small>
+                        <small style={{ color: '#212529' }}>
+                          {new Date(order.estimated_delivery_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </small>
+                      </div>
+                    )}
+
+                    {/* Tracking link */}
+                    {order.uber_direct_tracking_url && (
+                      <div className="mt-2">
+                        <a
+                          href={order.uber_direct_tracking_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-sm btn-outline-secondary w-100"
+                        >
+                          <Icon name="map-pin" size={13} className="me-1" />
+                          Open Live Tracking
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Progress steps */}
+                    <div className="mt-3 pt-2 border-top">
+                      {[
+                        { key: 'pending',         label: 'Finding Courier' },
+                        { key: 'pickup',          label: 'Courier Heading to Pickup' },
+                        { key: 'pickup_complete', label: 'Picked Up' },
+                        { key: 'dropoff',         label: 'Out for Delivery' },
+                        { key: 'delivered',       label: 'Delivered' },
+                      ].map(step => {
+                        const flow = ['pending','pickup','pickup_complete','dropoff','delivered'];
+                        const curIdx  = flow.indexOf(order.uber_direct_status ?? '');
+                        const stepIdx = flow.indexOf(step.key);
+                        const isDone    = stepIdx < curIdx;
+                        const isCurrent = step.key === order.uber_direct_status;
+                        return (
+                          <div key={step.key} className="d-flex align-items-center gap-2 mb-1">
+                            <div className="rounded-circle flex-shrink-0" style={{
+                              width: 10, height: 10,
+                              background: isCurrent ? '#0d6efd' : isDone ? '#198754' : '#dee2e6',
+                            }} />
+                            <small style={{
+                              color: isCurrent ? '#0d6efd' : isDone ? '#198754' : '#adb5bd',
+                              fontWeight: isCurrent ? 600 : 400,
+                              fontSize: '0.72rem',
+                            }}>
+                              {step.label}
+                            </small>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-3">
+                    <Icon name="bolt" size={28} className="text-muted mb-2 opacity-50" />
+                    <p className="text-muted small mb-2">No Uber Direct delivery dispatched yet.</p>
+                    {!order.delivery_address && (
+                      <small className="text-danger">Order has no delivery address.</small>
+                    )}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          )}
+
           {/* Order Meta */}
           <Card>
             <CardHeader>
               <CardTitle as="h5" className="mb-0">
-                <Icon name="info-circle" size={15} className="me-2" />
+                <Icon name="info-circle-filled" size={15} className="me-2" />
                 Order Info
               </CardTitle>
             </CardHeader>

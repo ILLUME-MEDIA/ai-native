@@ -95,34 +95,122 @@ class DoorDashService
     // ── Drive API calls ───────────────────────────────────────────────────────
 
     /**
-     * Create a DoorDash Drive delivery for a given order.
-     * Returns the full delivery object from DoorDash.
+     * Create a DoorDash Drive Classic (v1) delivery for a given order.
+     *
+     * API spec: POST /drive/v1/deliveries
+     * Key differences from our old flat payload:
+     *  - pickup_address / dropoff_address must be OBJECTS (city, state, street, zip_code)
+     *  - customer is REQUIRED object (phone_number, first_name, last_name, email)
+     *  - There is NO dropoff_phone_number / dropoff_business_name at root — those live in customer{}
+     *  - Response fields: status (not delivery_status), delivery_tracking_url (not tracking_url)
      */
     public function createDelivery(Order $order): array
     {
         $business = $order->business;
 
-        $pickupAddress = implode(', ', array_filter([
-            $business->address ?? '',
-            $business->address_2 ?? '',
-            $business->city ?? '',
-            $business->state ?? '',
-            $business->zip ?? '',
-        ]));
+        // ── Phone numbers ──────────────────────────────────────────────────────
+        $phPickup  = $this->normalizePhone($business->phone ?? '');
+        $phDropoff = $this->normalizePhone($order->customer_phone ?? '');
+        $phPickup  = $phPickup  ?? $phDropoff;
+        $phDropoff = $phDropoff ?? $phPickup;
 
-        return $this->request('post', '/deliveries', [
-            'external_delivery_id'  => $order->order_number,
-            'pickup_address'        => $pickupAddress,
-            'pickup_business_name'  => $business->name,
-            'pickup_phone_number'   => $this->normalizePhone($business->phone),
-            'pickup_instructions'   => "Pick up order {$order->order_number}",
-            'dropoff_address'       => $order->delivery_address,
-            'dropoff_business_name' => $order->customer_name ?? 'Customer',
-            'dropoff_phone_number'  => $this->normalizePhone($order->customer_phone),
-            'dropoff_instructions'  => $order->notes ?? '',
-            'order_value'           => (int) round($order->total * 100), // cents
-            'currency'              => 'USD',
+        // ── Pickup address object ──────────────────────────────────────────────
+        $pickupAddress = array_filter([
+            'street'   => trim(($business->address ?? '') . ' ' . ($business->address_2 ?? '')),
+            'city'     => $business->city  ?? '',
+            'state'    => $business->state ?? '',
+            'zip_code' => $business->zip   ?? '',
+        ], fn($v) => $v !== '');
+
+        // ── Dropoff address object ─────────────────────────────────────────────
+        // Delivery address is stored as a string: "2309 San Pablo Ave, Berkeley, CA, 94702"
+        // Parse it into object fields; fall back to full_address only if parsing fails.
+        $dropoffAddress = $this->parseAddressString($order->delivery_address ?? '');
+
+        // ── Customer object (required by v1 Classic) ───────────────────────────
+        $nameParts = explode(' ', trim($order->customer_name ?? 'Customer'), 2);
+        $customer  = array_filter([
+            'first_name'             => $nameParts[0] ?? 'Customer',
+            'last_name'              => $nameParts[1] ?? null,
+            'phone_number'           => $phDropoff,
+            'email'                  => $order->customer_email ?: null,
+            'should_send_notifications' => true,
+        ], fn($v) => $v !== null && $v !== '');
+
+        // ── Final payload (v1 Classic fields only) ─────────────────────────────
+        $payload = array_filter([
+            'external_delivery_id' => $order->order_number,
+            'pickup_address'       => $pickupAddress,
+            'pickup_business_name' => $business->name,
+            'pickup_phone_number'  => $phPickup,
+            'pickup_instructions'  => "Pick up order {$order->order_number}",
+            'dropoff_address'      => $dropoffAddress,
+            'dropoff_instructions' => $order->notes ?: null,
+            'customer'             => $customer,
+            'order_value'          => (int) round($order->total * 100),
+            'tip'                  => $order->tip ? (int) round($order->tip * 100) : null,
+            'pickup_time'          => now()->addMinutes(20)->utc()->format('Y-m-d\TH:i:s\Z'),
+        ], fn($v) => $v !== null && $v !== '' && $v !== []);
+
+        Log::info('DoorDash createDelivery payload', ['payload' => $payload]);
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->generateJwt(),
+            'Content-Type'  => 'application/json',
+        ])->asJson()->post($this->baseUrl . '/deliveries', $payload);
+
+        Log::info('DoorDash createDelivery response', [
+            'http_status' => $response->status(),
+            'body'        => $response->body(),
         ]);
+
+        if ($response->successful()) {
+            return $response->json() ?? [];
+        }
+
+        throw new \RuntimeException('DoorDash createDelivery error: ' . $response->body());
+    }
+
+    /**
+     * Parse a delivery address string into a DoorDash address object.
+     * Input formats handled:
+     *   "2309 San Pablo Avenue, Berkeley, CA, 94702"
+     *   "2309 San Pablo Avenue, Berkeley, CA 94702"
+     *   "2309 San Pablo Avenue Berkeley CA 94702"  (fallback to full_address only)
+     */
+    private function parseAddressString(string $address): array
+    {
+        // Try comma-separated: "street, city, state, zip" or "street, city, state zip"
+        $parts = array_map('trim', explode(',', $address));
+
+        if (count($parts) >= 3) {
+            $street = $parts[0];
+            $city   = $parts[1];
+
+            // State and ZIP might be combined: "CA 94702" or separate: "CA", "94702"
+            $stateZip = $parts[2] ?? '';
+            $zip      = $parts[3] ?? '';
+
+            if ($zip === '') {
+                // "CA 94702" — split on last space
+                $spacePos = strrpos($stateZip, ' ');
+                if ($spacePos !== false) {
+                    $zip      = substr($stateZip, $spacePos + 1);
+                    $stateZip = substr($stateZip, 0, $spacePos);
+                }
+            }
+
+            return array_filter([
+                'street'       => $street,
+                'city'         => $city,
+                'state'        => trim($stateZip),
+                'zip_code'     => trim($zip),
+                'full_address' => $address,
+            ], fn($v) => $v !== '');
+        }
+
+        // Fallback: just pass full_address and let DoorDash parse it
+        return ['full_address' => $address];
     }
 
     /**
@@ -367,13 +455,15 @@ class DoorDashService
     }
 
     /**
-     * Map a DoorDash delivery_status string to a human-readable label.
+     * Map a DoorDash delivery status string to a human-readable label.
+     * REST API response uses `status`; webhooks use `delivery_status` (same values).
      */
     public static function statusLabel(string $status): string
     {
         return match ($status) {
+            'scheduled'            => 'Scheduled',
             'created'              => 'Order Received',
-            'confirmed'            => 'Confirmed',
+            'confirmed'            => 'Order Confirmed',
             'enroute_to_pickup'    => 'Dasher Heading to Restaurant',
             'arrived_at_pickup'    => 'Dasher at Restaurant',
             'picked_up'            => 'Out for Delivery',

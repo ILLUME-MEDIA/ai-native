@@ -191,11 +191,16 @@ class UberDirectController extends Controller
         try {
             $delivery = $this->uber->getDelivery($order->uber_direct_delivery_id);
 
-            // Sync status back to order
-            $order->update([
+            // Sync status + tracking back to order
+            $updateFields = [
                 'uber_direct_status'       => $delivery['status'] ?? $order->uber_direct_status,
                 'uber_direct_tracking_url' => $delivery['tracking_url'] ?? $order->uber_direct_tracking_url,
-            ]);
+                'tracking_url'             => $delivery['tracking_url'] ?? $order->tracking_url,
+            ];
+            if (!empty($delivery['dropoff']['eta'])) {
+                $updateFields['estimated_delivery_at'] = Carbon::parse($delivery['dropoff']['eta']);
+            }
+            $order->update($updateFields);
 
             return response()->json([
                 'success'       => true,
@@ -274,7 +279,8 @@ class UberDirectController extends Controller
             $result = $this->uber->cancelDelivery($order->uber_direct_delivery_id);
 
             $order->update([
-                'uber_direct_status' => 'cancelled',
+                'uber_direct_status' => 'canceled',
+                'status'             => 'cancelled',
             ]);
 
             return response()->json([
@@ -529,7 +535,8 @@ class UberDirectController extends Controller
                 'delivery.status.arrived_at_dropoff'  => 'dropoff',
                 'delivery.status.delivered'           => 'delivered',
                 'delivery.status.completed'           => 'completed',
-                'delivery.status.cancelled'           => 'cancelled',
+                'delivery.status.canceled'            => 'canceled',
+                'delivery.status.cancelled'           => 'canceled',
                 'delivery.status.returned'            => 'returned',
             ];
 
@@ -544,10 +551,10 @@ class UberDirectController extends Controller
                 if (in_array($uberStatus, ['delivered', 'completed'])) {
                     $updates['status']       = 'delivered';
                     $updates['delivered_at'] = now();
-                } elseif ($uberStatus === 'cancelled') {
+                } elseif (in_array($uberStatus, ['canceled', 'cancelled'])) {
                     $updates['status'] = 'cancelled';
                 } elseif (in_array($uberStatus, ['pickup', 'pickup_complete', 'dropoff'])) {
-                    $updates['status'] = 'delivering';
+                    $updates['status'] = 'out_for_delivery';
                 }
             }
 

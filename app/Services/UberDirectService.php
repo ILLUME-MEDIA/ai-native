@@ -221,20 +221,35 @@ class UberDirectService
             }
         }
 
+        // manifest_items is required by Uber Direct API — always include at least one item
+        if (empty($manifestItems)) {
+            $manifestItems = [[
+                'name'     => "Order {$order->order_number}",
+                'quantity' => 1,
+                'size'     => 'small',
+                'price'    => (int) round($order->total * 100),
+            ]];
+        }
+
+        // dropoff_phone_number is required — fallback to pickup phone if missing
+        $dropoffPhone = $this->normalizePhone($order->customer_phone)
+            ?? $this->normalizePhone($business->phone ?? null)
+            ?? '+10000000000'; // last-resort placeholder
+
         $payload = array_filter([
             'pickup_name'           => $business->name,
             'pickup_address'        => $pickupAddress,
-            'pickup_phone_number'   => $this->normalizePhone($business->phone),
+            'pickup_phone_number'   => $this->normalizePhone($business->phone) ?? '+10000000000',
             'pickup_instructions'   => "Pick up order {$order->order_number}",
             'dropoff_name'          => $order->customer_name ?? 'Customer',
             'dropoff_address'       => $dropoffAddress,
-            'dropoff_phone_number'  => $this->normalizePhone($order->customer_phone),
+            'dropoff_phone_number'  => $dropoffPhone,
             'dropoff_instructions'  => $order->notes ?? null,
             'manifest_total_value'  => (int) round($order->total * 100), // cents
+            'manifest_items'        => $manifestItems,
             'external_id'           => $order->order_number,
             'tip'                   => isset($options['tip_cents']) ? (int) $options['tip_cents'] : null,
             'requires_id'           => $options['requires_id'] ?? null,
-            'manifest_items'        => $manifestItems ?: null,
             // CPP fields (optional)
             'pickup_action'         => $options['pickup_action'] ?? null, // "pick_pack_pay" for CPP
             'pickup_payment'        => $options['pickup_payment'] ?? null,
@@ -316,6 +331,7 @@ class UberDirectService
             'dropoff'          => 'Out for Delivery',
             'delivered'        => 'Delivered',
             'completed'        => 'Completed',
+            'canceled',
             'cancelled'        => 'Cancelled',
             'returned'         => 'Returned',
             default            => ucfirst(str_replace('_', ' ', $status)),
