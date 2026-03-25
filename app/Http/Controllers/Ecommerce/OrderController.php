@@ -266,7 +266,7 @@ class OrderController extends Controller
         // Triggers for DoorDash or Uber Direct, any previous status, only if
         // not yet dispatched.
         if ($data['status'] === 'preparing' && $order->delivery_address) {
-            $this->dispatchDeliveryVendor($order);
+            $this->dispatchDeliveryVendor($order->load('business'));
         }
 
         return response()->json($order->fresh()->load(['business', 'items', 'assignedDriver']));

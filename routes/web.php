@@ -9,6 +9,41 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
+// ── Deploy verification ───────────────────────────────────────────────────────
+Route::get('/version', function () {
+    $commit     = trim(shell_exec('git rev-parse --short HEAD 2>/dev/null') ?? 'unknown');
+    return response()->json([
+        'commit'      => $commit,
+        'branch'      => trim(shell_exec('git rev-parse --abbrev-ref HEAD 2>/dev/null') ?? 'unknown'),
+        'message'     => trim(shell_exec('git log -1 --pretty=%s 2>/dev/null') ?? 'unknown'),
+        'committed_at'=> trim(shell_exec('git log -1 --pretty=%ci 2>/dev/null') ?? 'unknown'),
+        'server_time' => now()->toDateTimeString(),
+        'env'         => app()->environment(),
+    ]);
+});
+
+// ── One-time: fix wrong DoorDash string delivery IDs ─────────────────────────
+Route::get('/fix-doordash-ids', function () {
+    $fixed = \App\Models\Order::whereNotNull('doordash_delivery_id')
+        ->whereRaw("doordash_delivery_id REGEXP '[^0-9]'")
+        ->get(['id', 'order_number', 'doordash_delivery_id']);
+
+    \App\Models\Order::whereNotNull('doordash_delivery_id')
+        ->whereRaw("doordash_delivery_id REGEXP '[^0-9]'")
+        ->update([
+            'doordash_delivery_id'  => null,
+            'doordash_status'       => null,
+            'doordash_tracking_url' => null,
+            'tracking_url'          => null,
+        ]);
+
+    return response()->json([
+        'message' => 'Fixed ' . $fixed->count() . ' orders with wrong DoorDash IDs.',
+        'orders'  => $fixed->map(fn($o) => ['id' => $o->id, 'order' => $o->order_number, 'old_id' => $o->doordash_delivery_id]),
+    ]);
+});
+
+
 // â”€â”€ API Documentation (Swagger UI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Access via: /api-docs  (no auth required)
 Route::get('/api-docs', function () {
