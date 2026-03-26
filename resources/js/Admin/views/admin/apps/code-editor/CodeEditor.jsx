@@ -619,23 +619,27 @@ export default function CodeEditor() {
         return map[extension] || 'plaintext';
     }
 
+    // null = visual divider
     const activityItems = [
-        { id: 'explorer',   icon: <Folder size={16} />,    label: 'Explorer',       action: () => setLeftView('explorer'),              isActive: () => leftView === 'explorer' },
-        { id: 'search',     icon: <Search size={16} />,    label: 'Search',         action: () => setLeftView('search'),                isActive: () => leftView === 'search' },
-        { id: 'git',        icon: <GitBranch size={16} />, label: 'Source Control', action: () => setLeftView('git'),                   isActive: () => leftView === 'git' },
-        { id: 'outline',    icon: <AlignLeft size={16} />, label: 'Outline',        action: () => setLeftView('outline'),               isActive: () => leftView === 'outline' },
-        { id: 'settings',   icon: <Settings size={16} />,  label: 'Settings',       action: () => setLeftView('settings'),              isActive: () => leftView === 'settings' },
-        { id: 'visual',     icon: <Paintbrush size={16} />, label: 'Visual Editor', action: () => setCenterView(v => v === 'visual' ? 'code' : 'visual'),         isActive: () => centerView === 'visual' },
-        { id: 'whiteboard', icon: <PenTool size={16} />,   label: 'Whiteboard',    action: () => setCenterView(v => v === 'whiteboard' ? 'code' : 'whiteboard'), isActive: () => centerView === 'whiteboard' },
-        { id: 'mcp',        icon: <Store size={16} />,     label: 'MCP Store',     action: () => setLeftView(v => v === 'mcp' ? 'explorer' : 'mcp'),                         isActive: () => leftView === 'mcp' },
-        { id: 'ai-rules',   icon: <BookOpen size={16} />,  label: 'AI Rules',      action: () => setLeftView(v => v === 'ai-rules' ? 'explorer' : 'ai-rules'),               isActive: () => leftView === 'ai-rules' },
-        { id: 'run-configs', icon: <Play size={16} />,     label: 'Run Configurations', action: () => setLeftView(v => v === 'run-configs' ? 'explorer' : 'run-configs'), isActive: () => leftView === 'run-configs' },
-        { id: 'snippets',    icon: <Zap size={16} />,      label: 'Snippets',           action: () => setLeftView(v => v === 'snippets' ? 'explorer' : 'snippets'),       isActive: () => leftView === 'snippets' },
-        { id: 'env',         icon: <Key size={16} />,        label: 'Env Manager',        action: () => setLeftView(v => v === 'env' ? 'explorer' : 'env'),                              isActive: () => leftView === 'env' },
-        { id: 'http-client', icon: <Globe size={16} />,      label: 'HTTP Client',        action: () => setCenterView(v => v === 'http-client' ? 'code' : 'http-client'),           isActive: () => centerView === 'http-client' },
-        { id: 'database',    icon: <Database size={16} />,   label: 'Database Viewer',    action: () => setCenterView(v => v === 'database' ? 'code' : 'database'),                 isActive: () => centerView === 'database' },
-        { id: 'deploy',      icon: <Rocket size={16} />,     label: 'Deploy',             action: () => setCenterView(v => v === 'deploy' ? 'code' : 'deploy'),                     isActive: () => centerView === 'deploy' },
-        { id: 'plugins',     icon: <Puzzle size={16} />,     label: 'Plugins',            action: () => setLeftView(v => v === 'plugins' ? 'explorer' : 'plugins'),                 isActive: () => leftView === 'plugins' },
+        { id: 'explorer',    icon: <Folder size={16} />,     label: 'Explorer',           action: () => setLeftView('explorer'),                                                          isActive: () => leftView === 'explorer' },
+        { id: 'search',      icon: <Search size={16} />,     label: 'Search',             action: () => setLeftView('search'),                                                            isActive: () => leftView === 'search' },
+        { id: 'git',         icon: <GitBranch size={16} />,  label: 'Source Control',     action: () => setLeftView('git'),                                                               isActive: () => leftView === 'git' },
+        { id: 'outline',     icon: <AlignLeft size={16} />,  label: 'Outline',            action: () => setLeftView('outline'),                                                           isActive: () => leftView === 'outline' },
+        { id: 'settings',    icon: <Settings size={16} />,   label: 'Settings',           action: () => setLeftView('settings'),                                                          isActive: () => leftView === 'settings' },
+        null, // ── Design ──
+        { id: 'visual',      icon: <Paintbrush size={16} />, label: 'Visual Editor',      action: () => setCenterView(v => v === 'visual'      ? 'code' : 'visual'),      isActive: () => centerView === 'visual' },
+        { id: 'whiteboard',  icon: <PenTool size={16} />,    label: 'Whiteboard',         action: () => setCenterView(v => v === 'whiteboard'  ? 'code' : 'whiteboard'),  isActive: () => centerView === 'whiteboard' },
+        null, // ── Tools ──
+        { id: 'http-client', icon: <Globe size={16} />,      label: 'HTTP Client',        action: () => setCenterView(v => v === 'http-client' ? 'code' : 'http-client'), isActive: () => centerView === 'http-client' },
+        { id: 'database',    icon: <Database size={16} />,   label: 'Database Viewer',    action: () => setCenterView(v => v === 'database'    ? 'code' : 'database'),    isActive: () => centerView === 'database' },
+        { id: 'deploy',      icon: <Rocket size={16} />,     label: 'Deploy',             action: () => setCenterView(v => v === 'deploy'      ? 'code' : 'deploy'),      isActive: () => centerView === 'deploy' },
+        null, // ── Config ──
+        { id: 'ai-rules',    icon: <BookOpen size={16} />,   label: 'AI Rules',           action: () => setLeftView(v => v === 'ai-rules'    ? 'explorer' : 'ai-rules'),    isActive: () => leftView === 'ai-rules' },
+        { id: 'run-configs', icon: <Play size={16} />,       label: 'Run Configurations', action: () => setLeftView(v => v === 'run-configs' ? 'explorer' : 'run-configs'), isActive: () => leftView === 'run-configs' },
+        { id: 'snippets',    icon: <Zap size={16} />,        label: 'Snippets',           action: () => setLeftView(v => v === 'snippets'    ? 'explorer' : 'snippets'),    isActive: () => leftView === 'snippets' },
+        { id: 'env',         icon: <Key size={16} />,        label: 'Env Manager',        action: () => setLeftView(v => v === 'env'         ? 'explorer' : 'env'),         isActive: () => leftView === 'env' },
+        { id: 'mcp',         icon: <Store size={16} />,      label: 'MCP Store',          action: () => setLeftView(v => v === 'mcp'         ? 'explorer' : 'mcp'),         isActive: () => leftView === 'mcp' },
+        { id: 'plugins',     icon: <Puzzle size={16} />,     label: 'Plugins',            action: () => setLeftView(v => v === 'plugins'     ? 'explorer' : 'plugins'),     isActive: () => leftView === 'plugins' },
         // F-01: Plugin-contributed left panels
         ...pluginSnapshot.panels.filter(p => p.slot === 'left').map(p => ({
             id: p.id, icon: p.icon ?? <Puzzle size={16} />, label: p.label,
@@ -831,7 +835,11 @@ export default function CodeEditor() {
                         scrollbarWidth: 'none',
                         transition: 'width 0.2s',
                     }}>
-                        {activityItems.map(({ id, icon, label, action, isActive }) => {
+                        {activityItems.map((item, i) => {
+                            if (!item) return (
+                                <div key={`div-${i}`} style={{ width: '24px', height: '1px', background: t.border, margin: '4px 0', flexShrink: 0 }} />
+                            );
+                            const { id, icon, label, action, isActive } = item;
                             const active = isActive();
                             return (
                                 <button
