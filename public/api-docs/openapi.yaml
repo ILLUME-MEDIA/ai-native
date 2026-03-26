@@ -5137,16 +5137,25 @@ paths:
     post:
       tags:
         - Delivery Quote
-      summary: Get delivery fee quote (all vendors)
+      summary: Get delivery fee quote (single or multi-vendor)
       description: |
-        Single endpoint for all delivery vendors. Pass `vendor` to route to the correct provider.
+        Unified delivery quote endpoint. Supports two modes:
 
-        | Vendor | Endpoint Used | Notes |
-        |--------|--------------|-------|
-        | `doordash` | `POST /drive/v1/estimates` (Classic Drive API) | Returns real fee + tax + ETA. Falls back to Drive v2 quotes for newer accounts. |
-        | `ubereats` | Zone-based estimate | UberEats manages actual fee at checkout |
-        | `instacart` | Zone-based estimate | Instacart manages actual fee |
-        | `own` | Exact fee from delivery zone config | Returns `in_zone: false` if no zone covers the location |
+        **Single-vendor mode** — pass `vendor` (string):
+        Routes to one provider and returns a single `DeliveryQuoteResponse`.
+
+        **Multi-vendor mode** — pass `vendors` (array):
+        Queries all specified vendors in one request and returns all quotes plus the cheapest.
+        Response shape: `{ success, mode: "multi", quotes: {vendor: quote, ...}, cheapest: "vendor", cheapest_quote: {...} }`
+
+        | Vendor | Notes |
+        |--------|-------|
+        | `doordash` | Real fee + tax + ETA via Drive v1/estimates API |
+        | `uber_direct` | Real fee + ETA via Uber Direct quotes API |
+        | `ubereats` | Zone-based estimate (UberEats manages final fee at checkout) |
+        | `instacart` | Zone-based estimate (Instacart manages final fee) |
+        | `own` | Exact fee from delivery zone config |
+        | `shipengine` | Cheapest rate from connected carriers |
 
         ### DoorDash Quote Strategy (3-attempt fallback chain)
         1. `POST /drive/v1/estimates` — Classic Drive API. Returns `fee`, `tax`, `pickup_time`, `delivery_time` without creating a delivery.
@@ -5162,13 +5171,19 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - vendor
               properties:
                 vendor:
                   type: string
-                  enum: [doordash, uber_direct, ubereats, instacart, own]
+                  enum: [doordash, uber_direct, ubereats, instacart, own, shipengine]
+                  description: Single vendor key (use this OR `vendors`, not both)
                   example: uber_direct
+                vendors:
+                  type: array
+                  description: Multiple vendor keys — triggers multi-vendor mode (use this OR `vendor`, not both)
+                  items:
+                    type: string
+                    enum: [doordash, uber_direct, ubereats, instacart, own, shipengine]
+                  example: [doordash, uber_direct]
                 pickup_address:
                   type: string
                   description: |
@@ -5177,7 +5192,7 @@ paths:
                   example: '{"street_address":["100 Market St"],"city":"San Francisco","state":"CA","zip_code":"94105","country":"US"}'
                 dropoff_address:
                   type: string
-                  description: Dropoff (customer) address — required for doordash
+                  description: Dropoff (customer) address — required for doordash / uber_direct
                   example: "456 Oak Ave, Los Angeles, CA 90001"
                 order_value:
                   type: number
@@ -5187,7 +5202,7 @@ paths:
                   type: integer
                   description: |
                     Required for ubereats / instacart / own.
-                    For doordash: auto-fills `pickup_address` from the business's saved address
+                    For doordash / uber_direct: auto-fills `pickup_address` from the business's saved address
                     and uses the business phone as the pickup contact.
                   example: 1
                 lat:
@@ -5204,14 +5219,16 @@ paths:
                   example: "+13105551234"
       responses:
         "200":
-          description: Quote result
+          description: Quote result (single or multi-vendor)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeliveryQuoteResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/DeliveryQuoteResponse"
+                  - $ref: "#/components/schemas/MultiDeliveryQuoteResponse"
               examples:
-                doordash:
-                  summary: DoorDash Classic v1/estimates response
+                single_doordash:
+                  summary: Single-vendor — DoorDash response
                   value:
                     success: true
                     vendor: doordash
@@ -5227,8 +5244,36 @@ paths:
                     min_order_amount: 0
                     expires_at: null
                     zone: null
+                multi_vendor:
+                  summary: Multi-vendor — cheapest automatically selected
+                  value:
+                    success: true
+                    mode: multi
+                    cheapest: doordash
+                    cheapest_quote:
+                      success: true
+                      vendor: doordash
+                      fee: 5.99
+                      fee_cents: 599
+                      currency: USD
+                      estimated_minutes: 42
+                    quotes:
+                      doordash:
+                        success: true
+                        vendor: doordash
+                        fee: 5.99
+                        fee_cents: 599
+                        currency: USD
+                        estimated_minutes: 42
+                      uber_direct:
+                        success: true
+                        vendor: uber_direct
+                        fee: 7.50
+                        fee_cents: 750
+                        currency: USD
+                        estimated_minutes: 30
                 own_delivery:
-                  summary: Own delivery zone response
+                  summary: Single-vendor — Own delivery zone response
                   value:
                     success: true
                     vendor: own
@@ -5243,7 +5288,7 @@ paths:
                       name: Downtown LA
                       description: "5 mile radius"
         "422":
-          description: Missing required fields for the selected vendor
+          description: Missing required fields or no valid vendors specified
 
   # ── TAX LOOKUP ───────────────────────────────────────────────────────────────
 
@@ -9140,6 +9185,49 @@ components:
           type: object
           nullable: true
           description: Raw vendor API response (doordash only)
+
+    # ── MULTI-VENDOR DELIVERY QUOTE ────────────────────────────────────────────
+
+    MultiDeliveryQuoteResponse:
+      type: object
+      description: Response when `vendors` array is passed to POST /api/delivery/quote
+      properties:
+        success:
+          type: boolean
+          example: true
+        mode:
+          type: string
+          enum: [multi]
+          example: multi
+        quotes:
+          type: object
+          description: Map of vendor key → DeliveryQuoteResponse for each requested vendor
+          additionalProperties:
+            $ref: "#/components/schemas/DeliveryQuoteResponse"
+          example:
+            doordash:
+              success: true
+              vendor: doordash
+              fee: 5.99
+              fee_cents: 599
+              currency: USD
+              estimated_minutes: 42
+            uber_direct:
+              success: true
+              vendor: uber_direct
+              fee: 7.50
+              fee_cents: 750
+              currency: USD
+              estimated_minutes: 30
+        cheapest:
+          type: string
+          nullable: true
+          description: Vendor key with the lowest fee among successful quotes
+          example: doordash
+        cheapest_quote:
+          nullable: true
+          description: Full quote object for the cheapest vendor
+          $ref: "#/components/schemas/DeliveryQuoteResponse"
 
     # ── DELIVERY SETTINGS ──────────────────────────────────────────────────────
 

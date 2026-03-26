@@ -56,6 +56,11 @@ class DeliveryQuoteController extends Controller
      */
     public function quote(Request $request): JsonResponse
     {
+        // ── Multi-vendor mode: pass vendors[] array ────────────────────────────
+        if ($request->has('vendors') && is_array($request->input('vendors'))) {
+            return $this->quoteMulti($request);
+        }
+
         $data = $request->validate([
             'vendor'          => 'required|string|in:doordash,uber_direct,ubereats,instacart,own,shipengine',
             'pickup_address'  => 'nullable|string',
@@ -75,6 +80,89 @@ class DeliveryQuoteController extends Controller
             'own'         => $this->quoteOwnDelivery($data),
             'shipengine'  => $this->quoteShipEngine($data),
         };
+    }
+
+    /**
+     * Multi-vendor quote: call all requested vendors, return all results + cheapest.
+     *
+     * Body:
+     * {
+     *   "vendors"         : ["doordash", "uber_direct"],  // array of vendor keys
+     *   "dropoff_address" : "456 Oak Ave...",
+     *   "order_value"     : 35.50,
+     *   "business_id"     : 1,
+     *   ...
+     * }
+     *
+     * Response:
+     * {
+     *   "success"        : true,
+     *   "mode"           : "multi",
+     *   "quotes"         : { "doordash": {...}, "uber_direct": {...} },
+     *   "cheapest"       : "doordash",
+     *   "cheapest_quote" : { ...doordash quote... }
+     * }
+     */
+    private function quoteMulti(Request $request): JsonResponse
+    {
+        $allowed = ['doordash', 'uber_direct', 'ubereats', 'instacart', 'own', 'shipengine'];
+        $vendors  = array_values(array_unique(array_filter(
+            array_intersect((array) $request->input('vendors', []), $allowed)
+        )));
+
+        if (empty($vendors)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid vendors specified. Allowed: ' . implode(', ', $allowed),
+            ], 422);
+        }
+
+        $base = $request->only([
+            'pickup_address', 'dropoff_address', 'order_value',
+            'business_id', 'lat', 'lng', 'customer_phone',
+        ]);
+
+        $quotes = [];
+        foreach ($vendors as $vendor) {
+            $data = array_merge($base, ['vendor' => $vendor]);
+            try {
+                $response     = match ($vendor) {
+                    'doordash'    => $this->quoteDoorDash($data),
+                    'uber_direct' => $this->quoteUberDirect($data),
+                    'ubereats'    => $this->quoteUberEats($data),
+                    'instacart'   => $this->quoteInstacart($data),
+                    'own'         => $this->quoteOwnDelivery($data),
+                    'shipengine'  => $this->quoteShipEngine($data),
+                };
+                $quotes[$vendor] = json_decode($response->getContent(), true);
+            } catch (\Throwable $e) {
+                $quotes[$vendor] = [
+                    'success' => false,
+                    'vendor'  => $vendor,
+                    'message' => $e->getMessage(),
+                ];
+            }
+        }
+
+        // ── Find cheapest successful vendor ────────────────────────────────────
+        $cheapestVendor = null;
+        $cheapestFee    = PHP_INT_MAX;
+        foreach ($quotes as $vendor => $q) {
+            if (($q['success'] ?? false) && isset($q['fee']) && $q['fee'] !== null) {
+                if ((float) $q['fee'] < $cheapestFee) {
+                    $cheapestFee    = (float) $q['fee'];
+                    $cheapestVendor = $vendor;
+                }
+            }
+        }
+
+        return response()->json([
+            'success'        => true,
+            'mode'           => 'multi',
+            'quotes'         => $quotes,
+            'cheapest'       => $cheapestVendor,
+            'cheapest_quote' => $cheapestVendor ? $quotes[$cheapestVendor] : null,
+        ]);
     }
 
     // ── DoorDash Quote ────────────────────────────────────────────────────────

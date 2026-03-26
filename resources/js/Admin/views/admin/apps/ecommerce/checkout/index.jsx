@@ -260,36 +260,31 @@ export default function CheckoutPage() {
     setSelectedQuoteVendor(null);
     setQuoteFetched(false);
 
-    const results = {};
-    const errs    = {};
+    try {
+      const r = await axios.post('/api/delivery/quote', {
+        vendors:         vendorsToFetch,
+        dropoff_address: form.delivery_address,
+        order_value:     subtotal,
+        business_id:     businessId,
+        ...(form.customer_phone ? { customer_phone: form.customer_phone } : {}),
+      });
 
-    await Promise.allSettled(
-      vendorsToFetch.map(vendor =>
-        axios.post('/api/delivery/quote', {
-          vendor,
-          dropoff_address: form.delivery_address,
-          order_value:     subtotal,
-          business_id:     businessId,
-          ...(form.customer_phone ? { customer_phone: form.customer_phone } : {}),
-        })
-          .then(r  => { results[vendor] = r.data; })
-          .catch(e => { errs[vendor]    = e.response?.data?.message || e.message || 'Failed'; })
-      )
-    );
+      const data   = r.data; // { success, mode: 'multi', quotes, cheapest, cheapest_quote }
+      const allQ   = data.quotes || {};
+      const errs   = {};
 
-    setQuotes(results);
-    setQuoteErrors(errs);
-    setQuoteFetched(true);
+      Object.entries(allQ).forEach(([v, q]) => {
+        if (!q.success) errs[v] = q.message || 'Failed';
+      });
 
-    // Auto-select: cheapest successful vendor
-    const successful = Object.keys(results).filter(v => results[v]?.success && results[v]?.fee != null);
-    if (successful.length > 0) {
-      const cheapest = successful.reduce((best, v) =>
-        (results[v].fee ?? 999) < (results[best].fee ?? 999) ? v : best
-      );
-      setSelectedQuoteVendor(cheapest);
+      setQuotes(allQ);
+      setQuoteErrors(errs);
+      if (data.cheapest) setSelectedQuoteVendor(data.cheapest);
+    } catch (e) {
+      showToast(e.response?.data?.message || e.message || 'Failed to fetch quotes', 'danger');
     }
 
+    setQuoteFetched(true);
     setQuotesLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.delivery_address, form.customer_phone, subtotal, businessId, quoteMode, specificVendor, selectedVendors]);
