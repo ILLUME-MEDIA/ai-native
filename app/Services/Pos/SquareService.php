@@ -11,7 +11,7 @@ class SquareService
     private string $appId;
     private string $appSecret;
     private string $baseUrl;
-    private string $connectUrl = 'https://connect.squareup.com';
+    private string $connectUrl;
 
     public function __construct()
     {
@@ -21,6 +21,8 @@ class SquareService
         $this->baseUrl   = $env === 'production'
             ? 'https://connect.squareup.com'
             : 'https://connect.squareupsandbox.com';
+        // connectUrl = same host (OAuth endpoints also differ between sandbox/prod)
+        $this->connectUrl = $this->baseUrl;
     }
 
     // ── OAuth ─────────────────────────────────────────────────────────────────
