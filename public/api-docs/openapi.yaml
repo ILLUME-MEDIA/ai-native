@@ -382,6 +382,47 @@ tags:
 
       `manifest_items` must be an array of **objects** with `name`, `quantity`, and `price` (in cents).
 
+  - name: DoorDash Shop & Deliver
+    description: |
+      **DoorDash Shop & Deliver** — a Dasher shops a list of items at your store and delivers them to the customer.
+
+      Requires a separate **DoorDash Shop & Deliver** developer account (different from DoorDash Drive Classic).
+
+      ### Credentials (Admin → App Secrets)
+      ```
+      DOORDASH_SHOP_DEVELOPER_ID=...
+      DOORDASH_SHOP_KEY_ID=...
+      DOORDASH_SHOP_SIGNING_SECRET=...   # base64url-encoded
+      ```
+
+      ### Flow
+      1. Create order with items in the system
+      2. `POST /api/delivery/doordash-shop/dispatch/{order}` — Dasher is assigned to shop and deliver
+      3. Poll `GET /api/delivery/doordash-shop/status/{order}` for live updates
+      4. Customer tracks via `doordash_shop_tracking_url` on the order
+      5. Webhook: `POST /api/webhooks/delivery/doordash-shop`
+
+      > **Note:** The `items` list (what to shop) is built automatically from order line items.
+
+  - name: ShipEngine Delivery
+    description: |
+      **ShipEngine Delivery** — create shipping labels (USPS, UPS, FedEx, DHL) for orders that need to be shipped by mail/courier.
+
+      Different from on-demand delivery (DoorDash/Uber Direct). Used for e-commerce orders that are packaged and shipped.
+
+      ### Credentials (Admin → App Secrets)
+      ```
+      SHIPENGINE_API_KEY=...
+      ```
+
+      ### Flow
+      1. `GET /api/delivery/shipengine/carriers` — see which carriers are connected
+      2. `POST /api/delivery/shipengine/rates/{order}` — get rate options (carrier + service + price)
+      3. `POST /api/delivery/shipengine/dispatch/{order}` — create label with chosen carrier + service code
+      4. Print the label URL from the response, attach to package
+      5. `GET /api/delivery/shipengine/status/{order}` — track shipment
+      6. `POST /api/delivery/shipengine/void/{order}` — void label if order cancelled
+
   - name: Platform Orders
     description: |
       **Unified admin view** of all incoming orders from UberEats, Instacart, and other platforms.
@@ -6361,6 +6402,352 @@ paths:
                     lng: {type: number, example: -122.4194}
       responses:
         '200': {description: Acknowledged}
+
+  # ── DOORDASH SHOP & DELIVER ───────────────────────────────────────────────────
+
+  /delivery/doordash-shop/env:
+    get:
+      tags: [DoorDash Shop & Deliver]
+      summary: Check DoorDash Shop credentials status
+      description: Returns whether DOORDASH_SHOP credentials are configured and the current environment (sandbox/production).
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Credentials status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: {type: boolean}
+                  environment: {type: string, example: "sandbox"}
+                  developer_id: {type: string, example: "abc123..."}
+
+  /delivery/doordash-shop/quote:
+    post:
+      tags: [DoorDash Shop & Deliver]
+      summary: Get a delivery quote from DoorDash Shop & Deliver
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id:       {type: integer, example: 42}
+                contains_alcohol: {type: boolean, example: false}
+      responses:
+        '200':
+          description: Quote returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:          {type: boolean}
+                  external_delivery_id: {type: string}
+                  fee:              {type: integer, description: "Fee in cents"}
+                  currency:         {type: string, example: "USD"}
+                  estimated_pickup_time:  {type: string, format: date-time}
+                  estimated_dropoff_time: {type: string, format: date-time}
+        '422': {description: Validation error or DoorDash API error}
+
+  /delivery/doordash-shop/dispatch/{order}:
+    post:
+      tags: [DoorDash Shop & Deliver]
+      summary: Dispatch a DoorDash Shop & Deliver for an order
+      description: |
+        A Dasher will be assigned to shop the order items from the merchant store and deliver them to the customer.
+
+        `items` is built automatically from the order's line items. Override via `items` body param if needed.
+
+        On success, updates `doordash_shop_delivery_id`, `doordash_shop_status`, and `doordash_shop_tracking_url` on the order.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contains_alcohol: {type: boolean, example: false}
+                items:
+                  type: array
+                  description: Override shopping list (defaults to order line items)
+                  items:
+                    type: object
+                    properties:
+                      name:          {type: string, example: "Burger"}
+                      description:   {type: string, example: "Classic beef burger"}
+                      quantity:      {type: integer, example: 1}
+                      external_id:   {type: string, example: "item-42"}
+                      price:         {type: integer, example: 1200, description: "Price in cents"}
+      responses:
+        '200':
+          description: Shop & Deliver dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:              {type: boolean}
+                  delivery_id:          {type: string}
+                  status:               {type: string, example: "created"}
+                  tracking_url:         {type: string}
+                  estimated_pickup_time:  {type: string, format: date-time}
+                  estimated_dropoff_time: {type: string, format: date-time}
+        '422': {description: Already dispatched or DoorDash API error}
+
+  /delivery/doordash-shop/status/{order}:
+    get:
+      tags: [DoorDash Shop & Deliver]
+      summary: Get live status of a DoorDash Shop & Deliver delivery
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      responses:
+        '200':
+          description: Delivery status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:      {type: boolean}
+                  delivery_id:  {type: string}
+                  status:       {type: string, example: "dasher_confirmed"}
+                  status_label: {type: string, example: "Dasher Confirmed"}
+                  tracking_url: {type: string}
+        '404': {description: No Shop delivery for this order}
+
+  /delivery/doordash-shop/cancel/{order}:
+    post:
+      tags: [DoorDash Shop & Deliver]
+      summary: Cancel a DoorDash Shop & Deliver delivery
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      responses:
+        '200':
+          description: Delivery cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean}
+                  message: {type: string}
+        '404': {description: No active Shop delivery to cancel}
+
+  /webhooks/delivery/doordash-shop:
+    post:
+      tags: [DoorDash Shop & Deliver]
+      summary: DoorDash Shop webhook receiver
+      description: |
+        Configure this URL in the DoorDash Developer Portal for Shop & Deliver webhooks.
+
+        **Webhook URL:** `POST /api/webhooks/delivery/doordash-shop`
+
+        No authentication required (DoorDash sends HMAC signature in headers).
+
+        **Status updates** are saved to `doordash_shop_status` on the order.
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                external_delivery_id: {type: string}
+                delivery_status:      {type: string, example: "dasher_confirmed"}
+      responses:
+        '200': {description: Acknowledged}
+
+  # ── SHIPENGINE DELIVERY ────────────────────────────────────────────────────────
+
+  /delivery/shipengine/carriers:
+    get:
+      tags: [ShipEngine Delivery]
+      summary: List connected ShipEngine carriers
+      description: Returns all carriers connected to your ShipEngine account (USPS, UPS, FedEx, DHL, etc.).
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Carrier list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:  {type: boolean}
+                  carriers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        carrier_id:   {type: string, example: "se-123456"}
+                        carrier_code: {type: string, example: "stamps_com"}
+                        nickname:     {type: string, example: "USPS"}
+                        friendly_name: {type: string, example: "Stamps.com"}
+                        balance:      {type: number}
+        '422': {description: ShipEngine API error}
+
+  /delivery/shipengine/rates/{order}:
+    post:
+      tags: [ShipEngine Delivery]
+      summary: Get shipping rate options for an order
+      description: |
+        Returns available carrier + service combinations with pricing, sorted by price ascending.
+
+        Use the `carrier_id` and `service_code` from the response to call `dispatch`.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                weight_oz:   {type: number, example: 16, description: "Package weight in ounces (default: 16)"}
+                length_in:   {type: number, example: 10, description: "Package length in inches (default: 10)"}
+                width_in:    {type: number, example: 8,  description: "Package width in inches (default: 8)"}
+                height_in:   {type: number, example: 4,  description: "Package height in inches (default: 4)"}
+                carrier_ids:
+                  type: array
+                  description: Filter to specific carrier IDs (empty = all carriers)
+                  items: {type: string, example: "se-123456"}
+      responses:
+        '200':
+          description: Rate options sorted by price
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean}
+                  rates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        rate_id:       {type: string}
+                        carrier_id:    {type: string, example: "se-123456"}
+                        carrier_code:  {type: string, example: "stamps_com"}
+                        service_code:  {type: string, example: "usps_priority_mail"}
+                        service_type:  {type: string, example: "Priority Mail"}
+                        shipping_amount:
+                          type: object
+                          properties:
+                            amount:   {type: number, example: 8.25}
+                            currency: {type: string, example: "usd"}
+                        delivery_days: {type: integer, example: 2}
+        '422': {description: ShipEngine API error}
+
+  /delivery/shipengine/dispatch/{order}:
+    post:
+      tags: [ShipEngine Delivery]
+      summary: Create a shipping label for an order
+      description: |
+        Creates a shipping label via ShipEngine and saves tracking info to the order.
+
+        On success, updates `shipengine_label_id`, `shipengine_tracking_number`, `shipengine_carrier_code`,
+        `shipengine_label_url`, `delivery_vendor`, and `tracking_url` on the order.
+
+        Print the `label_url` (PDF) and attach to the package.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [carrier_id, service_code]
+              properties:
+                carrier_id:   {type: string, example: "se-123456", description: "From GET /delivery/shipengine/carriers"}
+                service_code: {type: string, example: "usps_priority_mail", description: "From POST /delivery/shipengine/rates/{order}"}
+                weight_oz:    {type: number, example: 16, description: "Package weight in ounces (default: 16)"}
+                length_in:    {type: number, example: 10, description: "Package length in inches (default: 10)"}
+                width_in:     {type: number, example: 8,  description: "Package width in inches (default: 8)"}
+                height_in:    {type: number, example: 4,  description: "Package height in inches (default: 4)"}
+      responses:
+        '200':
+          description: Shipping label created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:          {type: boolean}
+                  message:          {type: string, example: "Shipping label created."}
+                  label_id:         {type: string, example: "se-label-1234"}
+                  tracking_number:  {type: string, example: "9400111899223397867944"}
+                  carrier_code:     {type: string, example: "stamps_com"}
+                  label_url:        {type: string, description: "PDF label URL to print and attach to package"}
+                  tracking_url:     {type: string, description: "Carrier tracking page URL"}
+        '422': {description: Label already exists for this order, or ShipEngine API error}
+
+  /delivery/shipengine/status/{order}:
+    get:
+      tags: [ShipEngine Delivery]
+      summary: Get shipment tracking status for an order
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      responses:
+        '200':
+          description: Tracking info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:          {type: boolean}
+                  status:           {type: string, example: "in_transit"}
+                  status_label:     {type: string, example: "In Transit"}
+                  carrier_code:     {type: string, example: "stamps_com"}
+                  tracking_number:  {type: string}
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        occurred_at:  {type: string, format: date-time}
+                        description:  {type: string}
+                        city_locality: {type: string}
+                        state_province: {type: string}
+        '404': {description: No tracking info for this order}
+        '422': {description: ShipEngine API error}
+
+  /delivery/shipengine/void/{order}:
+    post:
+      tags: [ShipEngine Delivery]
+      summary: Void (cancel) a shipping label
+      description: |
+        Voids the shipping label for an order. If approved, removes `shipengine_label_id` and `shipengine_tracking_number` from the order so a new label can be created.
+
+        Labels can typically only be voided before they are scanned by the carrier.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: order, in: path, required: true, schema: {type: integer}, description: Order ID}
+      responses:
+        '200':
+          description: Void result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:  {type: boolean}
+                  approved: {type: boolean}
+                  message:  {type: string, example: "Label void request submitted."}
+        '404': {description: No label to void for this order}
+        '422': {description: ShipEngine API error}
 
   # ── PLATFORM ORDERS (UNIFIED) ─────────────────────────────────────────────────
 

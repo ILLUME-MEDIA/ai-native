@@ -32,7 +32,7 @@ class AppSecretService
                 ->where('is_active', true)
                 ->first();
 
-            if ($secret && $secret->getPlainValue() !== null) {
+            if ($secret && $secret->getPlainValue() !== null && $secret->getPlainValue() !== '') {
                 static::$cache[$key] = $secret->getPlainValue();
                 return static::$cache[$key];
             }

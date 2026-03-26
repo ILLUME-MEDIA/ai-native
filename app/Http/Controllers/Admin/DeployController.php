@@ -129,6 +129,7 @@ class DeployController extends Controller
             '/usr/bin/node',
             '/bin/node',
             '/opt/alt/node*/bin/node',
+            '/opt/alt/alt-nodejs*/root/usr/bin/node',   // cPanel CloudLinux alt-nodejs
             '/opt/cpanel/ea-nodejs*/bin/node',
             '/opt/nodejs*/bin/node',
             $home . '/.nvm/versions/node/*/bin/node',

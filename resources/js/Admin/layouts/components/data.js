@@ -72,7 +72,7 @@ export const menuItems = [{
       }, {
         url: "/apps/ecommerce/deliveries",
         slug: "pages:apps-ecommerce-deliveries",
-        label: "DoorDash Deliveries"
+        label: "Deliveries"
       }]
     }, {
       url: "/apps/ecommerce/customers",

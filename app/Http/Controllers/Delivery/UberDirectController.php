@@ -446,21 +446,20 @@ class UberDirectController extends Controller
 
         try {
             $order->load(['business', 'items']);
+
+            // pickup_payment is REQUIRED for CPP mode — default to pay_with_uber
+            // max_amount = order total in cents (tells courier the spending limit)
+            $pickupPayment = $data['pickup_payment'] ?? [
+                'payment_method' => 'pay_with_uber',
+                'max_amount'     => (int) round($order->total * 100),
+            ];
+
             $delivery = $this->uber->createDelivery($order, [
                 'tip_cents'       => $data['tip_cents'] ?? null,
                 'pickup_action'   => 'pick_pack_pay',
-                'pickup_payment'  => $data['pickup_payment'] ?? null,
+                'pickup_payment'  => $pickupPayment,
+                'manifest_items'  => $data['manifest_items'], // CPP items with replacement_type
             ]);
-
-            // Override manifest items with CPP-specific ones
-            if (!empty($data['manifest_items'])) {
-                $payload = array_filter([
-                    'pickup_action'   => 'pick_pack_pay',
-                    'manifest_items'  => $data['manifest_items'],
-                    'pickup_payment'  => $data['pickup_payment'] ?? null,
-                ], fn($v) => $v !== null);
-                $delivery = $this->uber->updateDelivery($delivery['id'], $payload);
-            }
 
             $order->update([
                 'uber_direct_delivery_id'  => $delivery['id'],
@@ -478,7 +477,16 @@ class UberDirectController extends Controller
                 'order'    => $order->fresh(),
             ]);
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            $msg = $e->getMessage();
+            // CPP (pick_pack_pay) requires special account activation by Uber Direct.
+            // Uber returns a misleading "Pickup payment is required" error when the
+            // feature is not enabled on the account — translate it to something clear.
+            if (str_contains($msg, 'Pickup payment is required') || str_contains($msg, 'pickup_payment')) {
+                $msg = 'Uber Direct CPP (Courier Pick & Pack) is not enabled on this account. '
+                     . 'Contact your Uber Direct account manager to activate the pick_pack_pay feature. '
+                     . 'Original error: ' . $msg;
+            }
+            return response()->json(['success' => false, 'message' => $msg], 422);
         }
     }
 

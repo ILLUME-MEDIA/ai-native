@@ -261,29 +261,63 @@ class UberDirectService
             ]];
         }
 
+        // CPP: allow caller to override manifest_items (adds replacement_type, sku, etc.)
+        if (!empty($options['manifest_items'])) {
+            $manifestItems = $options['manifest_items'];
+        }
+
+        // CPP (pick_pack_pay) requires a `sku` on every manifest item
+        if (($options['pickup_action'] ?? null) === 'pick_pack_pay') {
+            foreach ($manifestItems as &$item) {
+                if (empty($item['sku'])) {
+                    // generate a stable SKU from name: "Beef Seekh Kebab" → "beef-seekh-kebab"
+                    $item['sku'] = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', trim($item['name'] ?? 'item')));
+                }
+                // CPP valid replacement_type values: no_replacement, substitute, contact_customer
+                // Normalize unsupported values to contact_customer
+                if (!isset($item['replacement_type'])) {
+                    $item['replacement_type'] = 'contact_customer';
+                }
+            }
+            unset($item);
+        }
+
         // dropoff_phone_number is required — fallback to pickup phone if missing
         $dropoffPhone = $this->normalizePhone($order->customer_phone)
             ?? $this->normalizePhone($business->phone ?? null)
             ?? '+10000000000'; // last-resort placeholder
 
-        $payload = array_filter([
-            'pickup_name'           => $business->name,
-            'pickup_address'        => $pickupAddress,
-            'pickup_phone_number'   => $this->normalizePhone($business->phone) ?? '+10000000000',
-            'pickup_instructions'   => "Pick up order {$order->order_number}",
-            'dropoff_name'          => $order->customer_name ?? 'Customer',
-            'dropoff_address'       => $dropoffAddress,
-            'dropoff_phone_number'  => $dropoffPhone,
-            'dropoff_instructions'  => $order->notes ?? null,
-            'manifest_total_value'  => (int) round($order->total * 100), // cents
-            'manifest_items'        => $manifestItems,
-            'external_id'           => $order->order_number,
-            'tip'                   => isset($options['tip_cents']) ? (int) $options['tip_cents'] : null,
-            'requires_id'           => $options['requires_id'] ?? null,
-            // CPP fields (optional)
-            'pickup_action'         => $options['pickup_action'] ?? null, // "pick_pack_pay" for CPP
-            'pickup_payment'        => $options['pickup_payment'] ?? null,
-        ], fn($v) => $v !== null);
+        $payload = [
+            'pickup_name'          => $business->name,
+            'pickup_address'       => $pickupAddress,
+            'pickup_phone_number'  => $this->normalizePhone($business->phone) ?? '+10000000000',
+            'pickup_instructions'  => "Pick up order {$order->order_number}",
+            'dropoff_name'         => $order->customer_name ?? 'Customer',
+            'dropoff_address'      => $dropoffAddress,
+            'dropoff_phone_number' => $dropoffPhone,
+            'manifest_total_value' => (int) round($order->total * 100),
+            'manifest_items'       => $manifestItems,
+            'external_id'          => $order->order_number,
+        ];
+
+        if ($order->notes) {
+            $payload['dropoff_instructions'] = $order->notes;
+        }
+        if (isset($options['tip_cents'])) {
+            $payload['tip'] = (int) $options['tip_cents'];
+        }
+        if (isset($options['requires_id'])) {
+            $payload['requires_id'] = $options['requires_id'];
+        }
+        // CPP fields — add ONLY when present to avoid Uber rejecting unexpected nulls
+        if (!empty($options['pickup_action'])) {
+            $payload['pickup_action'] = $options['pickup_action'];
+        }
+        if (!empty($options['pickup_payment'])) {
+            $payload['pickup_payment'] = $options['pickup_payment'];
+        }
+
+        Log::info('[UberDirect] createDelivery payload', ['payload' => $payload]);
 
         return $this->request('post', "/customers/{$this->customerId}/deliveries", $payload);
     }

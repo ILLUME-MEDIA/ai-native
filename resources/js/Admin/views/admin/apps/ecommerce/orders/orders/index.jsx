@@ -1,4 +1,5 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
+import TablePagination from '@admin/components/table/TablePagination';
 import Icon from '@admin/components/wrappers/Icon';
 import axios from 'axios';
 import React, { useState, useEffect, useCallback } from 'react';
@@ -33,19 +34,20 @@ export default function OrdersPage() {
     const [statusFilter, setStatusFilter] = useState('');
     const [meta, setMeta]             = useState(null);
     const [page, setPage]             = useState(1);
+    const [perPage, setPerPage]       = useState(15);
     const [expandedId, setExpandedId] = useState(null);
     const [updatingId, setUpdatingId] = useState(null);
 
-    const load = useCallback(async (pg = 1) => {
+    const load = useCallback(async (pg = 1, pp = perPage) => {
         setLoading(true);
-        const params = new URLSearchParams({ page: pg });
+        const params = new URLSearchParams({ page: pg, per_page: pp });
         if (statusFilter) params.append('status', statusFilter);
         const { data } = await api(`orders?${params}`);
         setOrders(data.data);
-        setMeta({ total: data.total, lastPage: data.last_page, currentPage: data.current_page });
+        setMeta({ total: data.total, lastPage: data.last_page, currentPage: data.current_page, perPage: pp });
         setPage(pg);
         setLoading(false);
-    }, [statusFilter]);
+    }, [statusFilter, perPage]);
 
     useEffect(() => { load(1); }, [load]);
 
@@ -115,7 +117,7 @@ export default function OrdersPage() {
                     <div className="table-responsive">
                         <table className="table table-hover align-middle mb-0">
                             <thead className="table-light">
-                                <tr><th>Order</th><th>Business</th><th>Customer</th><th>Type</th><th>Total</th><th>Status</th><th>Date</th><th></th></tr>
+                                <tr><th>Order</th><th>Business</th><th>Customer</th><th>Type</th><th>Total</th><th>Status</th><th>POS</th><th>Date</th><th></th></tr>
                             </thead>
                             <tbody>
                                 {orders.map(order => (
@@ -129,19 +131,37 @@ export default function OrdersPage() {
                                                     {order.customer_phone && <small className="text-muted d-block">{order.customer_phone}</small>}
                                                 </div>
                                             </td>
-                                            <td><span className="badge bg-secondary-subtle text-secondary">{order.order_type}</span></td>
+                                            <td>
+                                                <span className="badge bg-secondary-subtle text-secondary">{order.order_type}</span>
+                                                {order.delivery_vendor && (
+                                                    <span className="ms-1 badge bg-info-subtle text-info" style={{ fontSize: '0.7rem' }}>
+                                                        {order.delivery_vendor === 'doordash' ? 'DoorDash' : order.delivery_vendor === 'uber_direct' ? 'Uber Direct' : order.delivery_vendor}
+                                                    </span>
+                                                )}
+                                            </td>
                                             <td><strong className="text-success">${parseFloat(order.total).toFixed(2)}</strong></td>
                                             <td>
                                                 <span className={`badge ${STATUS_BADGE[order.status] || 'bg-secondary-subtle text-secondary'}`}>
                                                     {STATUS_LABEL[order.status] || order.status}
                                                 </span>
                                             </td>
+                                            <td>
+                                                {(order.pos_orders || []).length > 0
+                                                    ? (order.pos_orders || []).map(po => (
+                                                        <span key={po.id} className={`badge me-1 ${po.provider === 'square' ? 'bg-success-subtle text-success' : 'bg-warning-subtle text-warning'}`} style={{ fontSize: '0.7rem' }}>
+                                                            {po.provider === 'square' ? 'Square' : 'Clover'}
+                                                            <span className="ms-1 opacity-75 text-capitalize">{(po.pos_status || '').toLowerCase()}</span>
+                                                        </span>
+                                                    ))
+                                                    : <span className="text-muted small">—</span>
+                                                }
+                                            </td>
                                             <td><small className="text-muted">{order.created_at ? new Date(order.created_at).toLocaleDateString() : '—'}</small></td>
                                             <td><Icon icon={expandedId === order.id ? 'chevron-up' : 'chevron-down'} className="text-muted" /></td>
                                         </tr>
                                         {expandedId === order.id && (
                                             <tr key={`${order.id}-detail`}>
-                                                <td colSpan={8} className="p-0">
+                                                <td colSpan={9} className="p-0">
                                                     <div className="p-3 bg-light">
                                                         <Row>
                                                             <Col md={6}>
@@ -209,14 +229,24 @@ export default function OrdersPage() {
                     </div>
                 )}
 
-                {meta && meta.lastPage > 1 && (
-                    <CardBody className="d-flex justify-content-between align-items-center pt-3">
-                        <small className="text-muted">Page {meta.currentPage} of {meta.lastPage}</small>
-                        <div className="d-flex gap-1">
-                            <button className="btn btn-light btn-sm" disabled={meta.currentPage <= 1} onClick={() => load(meta.currentPage - 1)}>‹ Prev</button>
-                            <button className="btn btn-light btn-sm" disabled={meta.currentPage >= meta.lastPage} onClick={() => load(meta.currentPage + 1)}>Next ›</button>
-                        </div>
-                    </CardBody>
+                {meta && (
+                    <TablePagination
+                        totalItems={meta.total}
+                        start={meta.total === 0 ? 0 : (meta.currentPage - 1) * (meta.perPage || perPage) + 1}
+                        end={Math.min(meta.currentPage * (meta.perPage || perPage), meta.total)}
+                        itemsName="orders"
+                        showInfo
+                        pageIndex={meta.currentPage - 1}
+                        pageCount={meta.lastPage}
+                        setPageIndex={p => load(p + 1, perPage)}
+                        previousPage={() => load(meta.currentPage - 1, perPage)}
+                        canPreviousPage={meta.currentPage > 1}
+                        nextPage={() => load(meta.currentPage + 1, perPage)}
+                        canNextPage={meta.currentPage < meta.lastPage}
+                        perPage={perPage}
+                        onPerPageChange={n => { setPerPage(n); load(1, n); }}
+                        perPageOptions={[10, 15, 25, 50]}
+                    />
                 )}
             </Card>
         </>

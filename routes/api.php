@@ -40,6 +40,8 @@ use App\Http\Controllers\Delivery\InstacartController;
 use App\Http\Controllers\Delivery\PlatformOrderController;
 use App\Http\Controllers\Delivery\DeliveryQuoteController;
 use App\Http\Controllers\Delivery\UberDirectController;
+use App\Http\Controllers\Delivery\DoorDashShopController;
+use App\Http\Controllers\Delivery\ShipEngineDeliveryController;
 use App\Http\Controllers\Admin\AppSecretsController;
 use App\Http\Controllers\Admin\CacheController;
 use App\Http\Controllers\Admin\EcommerceSettingsController;
@@ -726,7 +728,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::post('tax',              [TaxController::class, 'calculate']);
 });
 
-// ── DoorDash Drive Delivery Routes ───────────────────────────────────────────
+// ── DoorDash Drive Classic Delivery Routes ────────────────────────────────────
 Route::prefix('delivery/doordash')->group(function () {
     Route::get('env',               [DoorDashController::class, 'env']);
     Route::post('quote',            [DoorDashController::class, 'quote']);
@@ -734,6 +736,26 @@ Route::prefix('delivery/doordash')->group(function () {
     Route::post('dispatch/{order}', [DoorDashController::class, 'dispatch']);
     Route::post('cancel/{order}',   [DoorDashController::class, 'cancel']);
     Route::post('webhook',          [DoorDashController::class, 'webhook']);
+});
+
+// ── DoorDash Drive Shop & Deliver Routes ──────────────────────────────────────
+Route::prefix('delivery/doordash-shop')->group(function () {
+    Route::get('env',               [DoorDashShopController::class, 'env']);
+    Route::post('quote',            [DoorDashShopController::class, 'quote']);
+    Route::get('status/{order}',    [DoorDashShopController::class, 'status']);
+    Route::post('dispatch/{order}', [DoorDashShopController::class, 'dispatch']);
+    Route::post('cancel/{order}',   [DoorDashShopController::class, 'cancel']);
+});
+Route::post('webhooks/delivery/doordash-shop', [DoorDashShopController::class, 'webhook'])
+    ->withoutMiddleware(['auth:sanctum']);
+
+// ── ShipEngine Delivery (Shipping Labels) Routes ──────────────────────────────
+Route::prefix('delivery/shipengine')->group(function () {
+    Route::get('carriers',           [ShipEngineDeliveryController::class, 'carriers']);
+    Route::post('rates/{order}',     [ShipEngineDeliveryController::class, 'rates']);
+    Route::post('dispatch/{order}',  [ShipEngineDeliveryController::class, 'dispatch']);
+    Route::get('status/{order}',     [ShipEngineDeliveryController::class, 'status']);
+    Route::post('void/{order}',      [ShipEngineDeliveryController::class, 'void']);
 });
 
 // ── Uber Direct (DaaS) Delivery Routes ───────────────────────────────────────

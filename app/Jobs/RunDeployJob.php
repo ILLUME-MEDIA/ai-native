@@ -247,12 +247,15 @@ class RunDeployJob implements ShouldQueue
             'UV_THREADPOOL_SIZE' => '2',   // libuv thread pool (node internals)
         ]);
 
-        // Remove nodevenv/virtualenv vars that redirect npm installs to the wrong
-        // prefix (/home/user/nodevenv/…/lib) instead of the project directory.
-        // These are set by cPanel's Node.js virtualenv activation scripts.
-        foreach (['NPM_CONFIG_PREFIX', 'npm_config_prefix', 'NPM_CONFIG_USERCONFIG', 'NODE_PATH'] as $k) {
+        // Neutralise cPanel nodevenv virtualenv vars.
+        // nodevenv writes a .npmrc with "prefix=…/nodevenv/…/lib" which makes npm
+        // install packages there instead of the project dir (causing ENOENT on package.json).
+        // Setting USERCONFIG to /dev/null stops npm loading that .npmrc entirely.
+        // Setting PREFIX to the build dir forces installs to stay local.
+        foreach (['NPM_CONFIG_PREFIX', 'npm_config_prefix', 'NODE_PATH'] as $k) {
             unset($env[$k]);
         }
+        $env['NPM_CONFIG_USERCONFIG'] = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
 
         if ($project->node_path) {
             $nodePath    = rtrim($project->node_path, '/\\');

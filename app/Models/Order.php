@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\PosOrder;
 
 class Order extends Model
 {
@@ -12,7 +13,9 @@ class Order extends Model
         'order_number','business_id','session_id','user_id','status',
         'payment_status','payment_method','stripe_payment_intent_id','paid_at',
         'doordash_delivery_id','doordash_status','doordash_tracking_url',
+        'doordash_shop_delivery_id','doordash_shop_status','doordash_shop_tracking_url',
         'uber_direct_delivery_id','uber_direct_status','uber_direct_tracking_url','uber_direct_fee',
+        'shipengine_label_id','shipengine_tracking_number','shipengine_carrier_code','shipengine_label_url',
         'subtotal','tax','delivery_fee','platform_fee','tip','total',
         'customer_name','customer_phone','customer_email',
         'delivery_address','notes','order_type',
@@ -65,5 +68,10 @@ class Order extends Model
     public function platformOrder(): BelongsTo
     {
         return $this->belongsTo(PlatformOrder::class, 'platform_order_id');
+    }
+
+    public function posOrders(): HasMany
+    {
+        return $this->hasMany(PosOrder::class);
     }
 }

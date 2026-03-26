@@ -6,7 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\PosConnection;
+use App\Models\PosOrder;
 use App\Services\DoorDashService;
+use App\Services\Pos\CloverService;
+use App\Services\Pos\SquareService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -58,11 +62,11 @@ class OrderController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $q = Order::with(['business', 'items'])->orderByDesc('id');
+        $q = Order::with(['business', 'items', 'posOrders'])->orderByDesc('id');
         if ($request->filled('business_id')) $q->where('business_id', $request->business_id);
         if ($request->filled('status'))      $q->where('status', $request->status);
         if ($request->filled('session_id'))  $q->where('session_id', $request->session_id);
-        return response()->json($q->paginate(20));
+        return response()->json($q->paginate((int) $request->get('per_page', 20)));
     }
 
     public function show(Order $order): JsonResponse
@@ -180,7 +184,10 @@ class OrderController extends Controller
         }
         CartItem::whereIn('session_id', $sidsToDelete)->where('business_id', $data['business_id'])->delete();
 
-        $order->load('business');
+        $order->load(['business', 'items']);
+
+        // ── Auto-sync to POS (Square / Clover) ───────────────────────────────
+        $this->syncOrderToPos($order);
 
         // ── Auto-accept: set preparing immediately ────────────────────────────
         if ($order->business?->auto_accept) {
@@ -269,6 +276,82 @@ class OrderController extends Controller
         }
 
         return response()->json($order->fresh()->load(['business', 'items', 'assignedDriver']));
+    }
+
+    // ── POS auto-sync ─────────────────────────────────────────────────────────
+
+    /**
+     * Silently push the new order to any active POS (Square / Clover) for this business.
+     * Errors are caught and logged — never fail the order response.
+     */
+    private function syncOrderToPos(Order $order): void
+    {
+        try {
+            $connections = PosConnection::where('business_id', $order->business_id)
+                ->where('is_active', true)
+                ->get();
+
+            foreach ($connections as $conn) {
+                // Skip if already synced for this provider
+                if (PosOrder::where('order_id', $order->id)->where('provider', $conn->provider)->exists()) {
+                    continue;
+                }
+
+                $conn->ensureAccessToken();
+                $token = $conn->decryptedAccessToken();
+
+                if ($conn->provider === 'square') {
+                    $lineItems = $order->items->map(fn ($item) => array_filter([
+                        'name'             => $item->name,
+                        'quantity'         => (string) $item->quantity,
+                        'base_price_money' => ['amount' => (int) round($item->price * 100), 'currency' => 'USD'],
+                        'note'             => $item->notes ?: null,
+                    ], fn ($v) => $v !== null))->all();
+
+                    $sq = app(SquareService::class)->createOrder(
+                        $token,
+                        $conn->location_id,
+                        $lineItems,
+                        ['local_order_id' => (string) $order->id]
+                    );
+
+                    PosOrder::create([
+                        'order_id'     => $order->id,
+                        'provider'     => 'square',
+                        'pos_order_id' => $sq['id'],
+                        'pos_status'   => $sq['state'] ?? 'OPEN',
+                        'synced_at'    => now(),
+                    ]);
+
+                    Log::info("POS Square synced for {$order->order_number}: {$sq['id']}");
+
+                } elseif ($conn->provider === 'clover') {
+                    $clover = app(CloverService::class);
+                    $co     = $clover->createOrder($token, $conn->merchant_id);
+
+                    foreach ($order->items as $item) {
+                        $clover->addLineItem($token, $conn->merchant_id, $co['id'], [
+                            'name'    => $item->name,
+                            'price'   => (int) round($item->price * 100),
+                            'unitQty' => $item->quantity * 1000,
+                            'note'    => $item->notes ?? '',
+                        ]);
+                    }
+
+                    PosOrder::create([
+                        'order_id'     => $order->id,
+                        'provider'     => 'clover',
+                        'pos_order_id' => $co['id'],
+                        'pos_status'   => 'open',
+                        'synced_at'    => now(),
+                    ]);
+
+                    Log::info("POS Clover synced for {$order->order_number}: {$co['id']}");
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error("POS auto-sync failed for {$order->order_number}: {$e->getMessage()}");
+        }
     }
 
     // ── Delivery dispatch helper ──────────────────────────────────────────────
