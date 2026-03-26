@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Plus, Folder, RefreshCw, Edit2, Trash2, MoreVertical, GitBranch, Files } from 'lucide-react';
 import { toast } from 'react-toastify';
+import Swal from 'sweetalert2';
+
+const LS_KEY = 'ce_workspace_id';
 
 export default function WorkspaceSelector({ onWorkspaceSelect, currentWorkspace, leftView = 'explorer', onOpenGit, onOpenExplorer, isDark = true }) {
     const [workspaces, setWorkspaces] = useState([]);
@@ -17,46 +20,62 @@ export default function WorkspaceSelector({ onWorkspaceSelect, currentWorkspace,
     }, []);
 
     useEffect(() => {
-        // Close menu when clicking outside
-        function handleClick() {
-            setShowMenu(null);
-        }
+        function handleClick() { setShowMenu(null); }
         document.addEventListener('click', handleClick);
         return () => document.removeEventListener('click', handleClick);
     }, []);
 
+    // Persist selected workspace to localStorage whenever it changes
+    useEffect(() => {
+        if (currentWorkspace?.id) {
+            localStorage.setItem(LS_KEY, String(currentWorkspace.id));
+        }
+    }, [currentWorkspace?.id]);
+
     async function loadWorkspaces() {
         try {
             const response = await axios.get('/api/workspaces');
-            setWorkspaces(response.data);
+            const list = response.data;
+            setWorkspaces(list);
 
-            // Auto-select first workspace if none selected
-            if (!currentWorkspace && response.data.length > 0) {
-                onWorkspaceSelect(response.data[0]);
+            if (!currentWorkspace && list.length > 0) {
+                // Restore last-used workspace from localStorage, or fall back to first
+                const savedId = localStorage.getItem(LS_KEY);
+                const toSelect = (savedId && list.find(w => String(w.id) === savedId)) || list[0];
+                onWorkspaceSelect(toSelect);
             }
 
             setLoading(false);
         } catch (error) {
-            toast.error('Failed to load workspaces');
+            const msg = error.response?.data?.message || error.message || 'Unknown error';
+            toast.error(`Failed to load workspaces: ${msg}`);
             setLoading(false);
         }
     }
 
     async function createWorkspace() {
-        if (!newWorkspace.name) {
+        if (!newWorkspace.name.trim()) {
             toast.error('Workspace name is required');
             return;
         }
 
         try {
             const response = await axios.post('/api/workspaces', newWorkspace);
-            setWorkspaces([response.data, ...workspaces]);
+            setWorkspaces(prev => [response.data, ...prev]);
             setShowCreate(false);
             setNewWorkspace({ name: '', description: '', type: 'project' });
             onWorkspaceSelect(response.data);
             toast.success('Workspace created!');
         } catch (error) {
-            toast.error('Failed to create workspace');
+            const msg = error.response?.data?.message || error.response?.data?.error || error.message || 'Unknown error';
+            Swal.fire({
+                title: 'Failed to Create Workspace',
+                html: `<code style="font-size:12px;word-break:break-all">${msg}</code>`,
+                icon: 'error',
+                confirmButtonColor: '#ff6b35',
+                background: '#161b22',
+                color: '#c9d1d9',
+            });
         }
     }
 
@@ -67,46 +86,45 @@ export default function WorkspaceSelector({ onWorkspaceSelect, currentWorkspace,
         }
 
         try {
-            const response = await axios.put(`/api/workspaces/${workspace.id}`, {
-                name: renameValue.trim()
-            });
-
-            setWorkspaces(workspaces.map(w => w.id === workspace.id ? response.data : w));
-
-            // Update current workspace if it's the one being renamed
-            if (currentWorkspace?.id === workspace.id) {
-                onWorkspaceSelect(response.data);
-            }
-
+            const response = await axios.put(`/api/workspaces/${workspace.id}`, { name: renameValue.trim() });
+            setWorkspaces(prev => prev.map(w => w.id === workspace.id ? response.data : w));
+            if (currentWorkspace?.id === workspace.id) onWorkspaceSelect(response.data);
             setShowRename(null);
             setRenameValue('');
             toast.success('Workspace renamed!');
         } catch (error) {
-            toast.error('Failed to rename workspace');
+            const msg = error.response?.data?.message || error.message || 'Unknown error';
+            toast.error(`Rename failed: ${msg}`);
         }
     }
 
     async function deleteWorkspace(workspace) {
-        const confirmed = window.confirm(
-            `Are you sure you want to delete workspace "${workspace.name}"?\n\n` +
-            `This will archive the workspace. All files will be preserved but the workspace will be hidden.`
-        );
+        const result = await Swal.fire({
+            title: `Delete "${workspace.name}"?`,
+            text: 'The workspace will be archived. All files are preserved but it will be hidden.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Archive',
+            confirmButtonColor: '#dc3545',
+            cancelButtonColor: '#6c757d',
+            background: '#161b22',
+            color: '#c9d1d9',
+        });
 
-        if (!confirmed) return;
+        if (!result.isConfirmed) return;
 
         try {
             await axios.delete(`/api/workspaces/${workspace.id}`);
-            setWorkspaces(workspaces.filter(w => w.id !== workspace.id));
-
-            // If deleting current workspace, select first available
+            const remaining = workspaces.filter(w => w.id !== workspace.id);
+            setWorkspaces(remaining);
             if (currentWorkspace?.id === workspace.id) {
-                const remaining = workspaces.filter(w => w.id !== workspace.id);
+                localStorage.removeItem(LS_KEY);
                 onWorkspaceSelect(remaining[0] || null);
             }
-
             toast.success('Workspace archived!');
         } catch (error) {
-            toast.error('Failed to delete workspace');
+            const msg = error.response?.data?.message || error.message || 'Unknown error';
+            toast.error(`Delete failed: ${msg}`);
         }
     }
 
