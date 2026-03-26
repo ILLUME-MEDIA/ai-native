@@ -41,6 +41,7 @@ import SnippetsPanel from '@/Admin/components/CodeEditor/SnippetsPanel';
 import AICodeReviewPanel from '@/Admin/components/CodeEditor/AICodeReviewPanel';
 import EnvManagerPanel from '@/Admin/components/CodeEditor/EnvManagerPanel';
 import { toast } from 'react-toastify';
+import Swal from 'sweetalert2';
 import { Code, MessageSquare, Clock, Palette, Folder, GitBranch, Search, User, AlignLeft, Columns2, X as XIcon, Zap, Wrench, Settings, Star, Maximize2, Minimize2, Keyboard, AlertTriangle, Paintbrush, PenTool, Store, BookOpen, ListTodo, Play, FileText, Key, Globe, Database, FlaskConical, Rocket, Puzzle } from 'lucide-react';
 
 export default function CodeEditor() {
@@ -619,6 +620,22 @@ export default function CodeEditor() {
         return map[extension] || 'plaintext';
     }
 
+    function requireWorkspace(fn) {
+        if (!workspace) {
+            Swal.fire({
+                title: 'No Workspace Selected',
+                text: 'Please select a workspace before opening this panel.',
+                icon: 'warning',
+                confirmButtonText: 'Select Workspace',
+                confirmButtonColor: '#ff6b35',
+                background: '#161b22',
+                color: '#c9d1d9',
+            }).then(result => { if (result.isConfirmed) setLeftView('explorer'); });
+            return;
+        }
+        fn();
+    }
+
     // null = visual divider
     const activityItems = [
         { id: 'explorer',    icon: <Folder size={16} />,     label: 'Explorer',           action: () => setLeftView('explorer'),                                                          isActive: () => leftView === 'explorer' },
@@ -627,12 +644,12 @@ export default function CodeEditor() {
         { id: 'outline',     icon: <AlignLeft size={16} />,  label: 'Outline',            action: () => setLeftView('outline'),                                                           isActive: () => leftView === 'outline' },
         { id: 'settings',    icon: <Settings size={16} />,   label: 'Settings',           action: () => setLeftView('settings'),                                                          isActive: () => leftView === 'settings' },
         null, // ── Design ──
-        { id: 'visual',      icon: <Paintbrush size={16} />, label: 'Visual Editor',      action: () => setCenterView(v => v === 'visual'      ? 'code' : 'visual'),      isActive: () => centerView === 'visual' },
-        { id: 'whiteboard',  icon: <PenTool size={16} />,    label: 'Whiteboard',         action: () => setCenterView(v => v === 'whiteboard'  ? 'code' : 'whiteboard'),  isActive: () => centerView === 'whiteboard' },
+        { id: 'visual',      icon: <Paintbrush size={16} />, label: 'Visual Editor',      action: () => requireWorkspace(() => setCenterView(v => v === 'visual'      ? 'code' : 'visual')),      isActive: () => centerView === 'visual' },
+        { id: 'whiteboard',  icon: <PenTool size={16} />,    label: 'Whiteboard',         action: () => requireWorkspace(() => setCenterView(v => v === 'whiteboard'  ? 'code' : 'whiteboard')),  isActive: () => centerView === 'whiteboard' },
         null, // ── Tools ──
-        { id: 'http-client', icon: <Globe size={16} />,      label: 'HTTP Client',        action: () => setCenterView(v => v === 'http-client' ? 'code' : 'http-client'), isActive: () => centerView === 'http-client' },
-        { id: 'database',    icon: <Database size={16} />,   label: 'Database Viewer',    action: () => setCenterView(v => v === 'database'    ? 'code' : 'database'),    isActive: () => centerView === 'database' },
-        { id: 'deploy',      icon: <Rocket size={16} />,     label: 'Deploy',             action: () => setCenterView(v => v === 'deploy'      ? 'code' : 'deploy'),      isActive: () => centerView === 'deploy' },
+        { id: 'http-client', icon: <Globe size={16} />,      label: 'HTTP Client',        action: () => requireWorkspace(() => setCenterView(v => v === 'http-client' ? 'code' : 'http-client')), isActive: () => centerView === 'http-client' },
+        { id: 'database',    icon: <Database size={16} />,   label: 'Database Viewer',    action: () => requireWorkspace(() => setCenterView(v => v === 'database'    ? 'code' : 'database')),    isActive: () => centerView === 'database' },
+        { id: 'deploy',      icon: <Rocket size={16} />,     label: 'Deploy',             action: () => requireWorkspace(() => setCenterView(v => v === 'deploy'      ? 'code' : 'deploy')),      isActive: () => centerView === 'deploy' },
         null, // ── Config ──
         { id: 'ai-rules',    icon: <BookOpen size={16} />,   label: 'AI Rules',           action: () => setLeftView(v => v === 'ai-rules'    ? 'explorer' : 'ai-rules'),    isActive: () => leftView === 'ai-rules' },
         { id: 'run-configs', icon: <Play size={16} />,       label: 'Run Configurations', action: () => setLeftView(v => v === 'run-configs' ? 'explorer' : 'run-configs'), isActive: () => leftView === 'run-configs' },
@@ -1123,34 +1140,7 @@ export default function CodeEditor() {
                                         }}
                                     />
                                 )}
-                                {centerView === 'http-client' ? (
-                                    <HttpClientPanel workspace={workspace} />
-                                ) : centerView === 'database' ? (
-                                    <DatabasePanel workspace={workspace} />
-                                ) : centerView === 'deploy' ? (
-                                    <DeployPanel workspace={workspace} />
-                                ) : centerView === 'visual' ? (
-                                    <VisualEditor
-                                        workspace={workspace}
-                                        activeTab={activeTab}
-                                    />
-                                ) : centerView === 'whiteboard' ? (
-                                    <WhiteboardPanel
-                                        workspace={workspace}
-                                        onCreateFile={({ name, content, language }) => {
-                                            const newTab = {
-                                                path: `whiteboard/${name}`,
-                                                name,
-                                                content,
-                                                language: language || 'javascript',
-                                                unsaved: true,
-                                            };
-                                            setTabs(prev => [...prev, newTab]);
-                                            setActiveTab(newTab);
-                                            setCenterView('code');
-                                        }}
-                                    />
-                                ) : !workspace ? (
+                                {!workspace ? (
                                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                         <Code size={52} />
                                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: t.text3 }}>No workspace selected</h4>
@@ -1158,7 +1148,34 @@ export default function CodeEditor() {
                                     </div>
                                 ) : (
                                     <>
-                                        {centerView === 'preview' ? (
+                                        {centerView === 'http-client' ? (
+                                            <HttpClientPanel workspace={workspace} />
+                                        ) : centerView === 'database' ? (
+                                            <DatabasePanel workspace={workspace} />
+                                        ) : centerView === 'deploy' ? (
+                                            <DeployPanel workspace={workspace} />
+                                        ) : centerView === 'visual' ? (
+                                            <VisualEditor
+                                                workspace={workspace}
+                                                activeTab={activeTab}
+                                            />
+                                        ) : centerView === 'whiteboard' ? (
+                                            <WhiteboardPanel
+                                                workspace={workspace}
+                                                onCreateFile={({ name, content, language }) => {
+                                                    const newTab = {
+                                                        path: `whiteboard/${name}`,
+                                                        name,
+                                                        content,
+                                                        language: language || 'javascript',
+                                                        unsaved: true,
+                                                    };
+                                                    setTabs(prev => [...prev, newTab]);
+                                                    setActiveTab(newTab);
+                                                    setCenterView('code');
+                                                }}
+                                            />
+                                        ) : centerView === 'preview' ? (
                                             <PreviewPanel
                                                 workspace={workspace}
                                                 activeTab={activeTab}
