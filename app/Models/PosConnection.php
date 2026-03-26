@@ -46,34 +46,90 @@ class PosConnection extends Model
     }
 
     /**
-     * For Square: refresh token if it has expired.
-     * Call before any API request.
+     * Refresh the access token if it has expired.
+     * Supports: square, spoton (OAuth refresh_token), toast/deliverect (re-auth via client credentials).
      */
     public function ensureAccessToken(): void
     {
-        if ($this->provider !== 'square') return;
         if (!$this->expires_at) return;
         if ($this->expires_at->isFuture()) return;
-        if (!$this->refresh_token) return;
 
         try {
-            $tokens = app(\App\Services\Pos\SquareService::class)
-                          ->refreshToken(decrypt($this->refresh_token));
-
-            $this->update([
-                'access_token'  => encrypt($tokens['access_token']),
-                'refresh_token' => isset($tokens['refresh_token'])
-                    ? encrypt($tokens['refresh_token'])
-                    : $this->refresh_token,
-                'expires_at'    => isset($tokens['expires_at'])
-                    ? Carbon::parse($tokens['expires_at'])
-                    : null,
-            ]);
-
-            $this->refresh();
+            match ($this->provider) {
+                'square' => $this->refreshSquareToken(),
+                'spoton' => $this->refreshSpotOnToken(),
+                'toast'  => $this->refreshToastToken(),
+                'deliverect' => $this->refreshDeliverectToken(),
+                default  => null,   // clover, poslavu: tokens don't expire
+            };
         } catch (\Throwable) {
             $this->update(['is_active' => false]);
             abort(503, 'POS token expired. Please reconnect ' . ucfirst($this->provider) . '.');
         }
+    }
+
+    // ── Provider-specific refresh logic ───────────────────────────────────────
+
+    private function refreshSquareToken(): void
+    {
+        if (!$this->refresh_token) return;
+
+        $tokens = app(\App\Services\Pos\SquareService::class)
+                      ->refreshToken(decrypt($this->refresh_token));
+
+        $this->update([
+            'access_token'  => encrypt($tokens['access_token']),
+            'refresh_token' => isset($tokens['refresh_token'])
+                ? encrypt($tokens['refresh_token'])
+                : $this->refresh_token,
+            'expires_at' => isset($tokens['expires_at']) ? Carbon::parse($tokens['expires_at']) : null,
+        ]);
+
+        $this->refresh();
+    }
+
+    private function refreshSpotOnToken(): void
+    {
+        if (!$this->refresh_token) return;
+
+        $tokens = app(\App\Services\Pos\SpotOnService::class)
+                      ->refreshToken(decrypt($this->refresh_token));
+
+        $this->update([
+            'access_token'  => encrypt($tokens['access_token']),
+            'refresh_token' => isset($tokens['refresh_token'])
+                ? encrypt($tokens['refresh_token'])
+                : $this->refresh_token,
+            'expires_at' => isset($tokens['expires_in']) ? now()->addSeconds($tokens['expires_in']) : null,
+        ]);
+
+        $this->refresh();
+    }
+
+    private function refreshToastToken(): void
+    {
+        // Toast uses machine-to-machine client credentials — just re-auth
+        $tokens = app(\App\Services\Pos\ToastService::class)->getAccessToken();
+        $token  = $tokens['accessToken'] ?? $tokens['access_token'] ?? '';
+        $expiry = now()->addSeconds($tokens['expiresIn'] ?? $tokens['expires_in'] ?? 3600);
+
+        $this->update([
+            'access_token' => encrypt($token),
+            'expires_at'   => $expiry,
+        ]);
+
+        $this->refresh();
+    }
+
+    private function refreshDeliverectToken(): void
+    {
+        $tokens = app(\App\Services\Pos\DeliverectService::class)->getAccessToken();
+
+        $this->update([
+            'access_token' => encrypt($tokens['access_token']),
+            'expires_at'   => now()->addSeconds($tokens['expires_in'] ?? 3600),
+        ]);
+
+        $this->refresh();
     }
 }

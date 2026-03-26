@@ -8,7 +8,11 @@ use App\Models\PosCatalogMap;
 use App\Models\PosConnection;
 use App\Models\PosOrder;
 use App\Services\Pos\CloverService;
+use App\Services\Pos\DeliverectService;
+use App\Services\Pos\PosLavuService;
+use App\Services\Pos\SpotOnService;
 use App\Services\Pos\SquareService;
+use App\Services\Pos\ToastService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -21,12 +25,27 @@ class PosPaymentController extends Controller
         return response()->json(PosOrder::where('order_id', $order->id)->get());
     }
 
-    // ── Create POS order + terminal checkout (Square) ─────────────────────────
+    // ── List POS orders by business + provider (for POS Orders tab) ───────────
 
-    /**
-     * POST /api/ecommerce/pos/{connection}/checkout
-     * Creates a Square/Clover order from local order, then initiates terminal checkout.
-     */
+    public function posOrdersByConnection(Request $request): JsonResponse
+    {
+        $request->validate([
+            'business_id' => 'required|integer',
+            'provider'    => 'required|string',
+        ]);
+
+        $orders = PosOrder::where('provider', $request->provider)
+            ->whereHas('order', fn ($q) => $q->where('business_id', $request->business_id))
+            ->with(['order:id,business_id,total,status,created_at'])
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        return response()->json($orders);
+    }
+
+    // ── Create POS order + terminal checkout ──────────────────────────────────
+
     public function createCheckout(Request $request, PosConnection $connection): JsonResponse
     {
         abort_unless($connection->is_active, 422, 'POS connection is inactive.');
@@ -40,35 +59,29 @@ class PosPaymentController extends Controller
         $token = $connection->decryptedAccessToken();
         $order = Order::with('items')->findOrFail($data['order_id']);
 
-        if ($connection->provider === 'square') {
-            return $this->squareCheckout($connection, $token, $order, $data['device_id'] ?? null);
-        }
-
-        if ($connection->provider === 'clover') {
-            return $this->cloverCheckout($connection, $token, $order);
-        }
-
-        return response()->json(['message' => 'Unsupported provider'], 422);
+        return match ($connection->provider) {
+            'square'     => $this->squareCheckout($connection, $token, $order, $data['device_id'] ?? null),
+            'clover'     => $this->cloverCheckout($connection, $token, $order),
+            'toast'      => $this->toastCheckout($connection, $token, $order),
+            'spoton'     => $this->spotOnCheckout($connection, $token, $order),
+            'poslavu'    => $this->posLavuCheckout($connection, $token, $order),
+            'deliverect' => $this->deliverectCheckout($connection, $token, $order),
+            default      => response()->json(['message' => 'Unsupported provider'], 422),
+        };
     }
 
     // ── Poll terminal checkout status (Square) ────────────────────────────────
 
-    /**
-     * GET /api/ecommerce/pos/{connection}/checkout/{checkoutId}/status
-     */
     public function checkoutStatus(PosConnection $connection, string $checkoutId): JsonResponse
     {
         abort_unless($connection->provider === 'square', 422, 'Status polling only available for Square.');
 
         $connection->ensureAccessToken();
-        $token    = $connection->decryptedAccessToken();
-        $checkout = app(SquareService::class)->getTerminalCheckout($token, $checkoutId);
+        $checkout = app(SquareService::class)->getTerminalCheckout($connection->decryptedAccessToken(), $checkoutId);
         $status   = $checkout['status'] ?? 'UNKNOWN';
 
         if ($status === 'COMPLETED') {
             $this->markSquarePaid($checkout);
-        } elseif (in_array($status, ['CANCELED', 'CANCEL_REQUESTED'])) {
-            // Nothing to do locally, order stays unpaid
         }
 
         return response()->json([
@@ -77,7 +90,6 @@ class PosPaymentController extends Controller
         ]);
     }
 
-    /** POST /api/ecommerce/pos/{connection}/checkout/{checkoutId}/cancel */
     public function cancelCheckout(PosConnection $connection, string $checkoutId): JsonResponse
     {
         abort_unless($connection->provider === 'square', 422);
@@ -101,12 +113,8 @@ class PosPaymentController extends Controller
         return response()->json($devices);
     }
 
-    // ── Square web payment (card nonce from Square.js) ────────────────────────
+    // ── Square web payment ─────────────────────────────────────────────────────
 
-    /**
-     * POST /api/ecommerce/pos/{connection}/pay
-     * Charges using a Square card nonce (from Square Web Payments SDK).
-     */
     public function squarePay(Request $request, PosConnection $connection): JsonResponse
     {
         abort_unless($connection->provider === 'square', 422);
@@ -114,14 +122,13 @@ class PosPaymentController extends Controller
 
         $data = $request->validate([
             'order_id'  => 'required|exists:orders,id',
-            'source_id' => 'required|string',   // card nonce from Square.js
+            'source_id' => 'required|string',
         ]);
 
         $connection->ensureAccessToken();
         $token = $connection->decryptedAccessToken();
         $order = Order::with('items')->findOrFail($data['order_id']);
 
-        // Get or create Square POS order
         $posOrder = PosOrder::where('order_id', $order->id)->where('provider', 'square')->first();
         if (!$posOrder) {
             $squareOrder = app(SquareService::class)->createOrder(
@@ -168,7 +175,9 @@ class PosPaymentController extends Controller
         ]);
     }
 
-    // ── Square helpers ────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // SQUARE checkout
+    // ══════════════════════════════════════════════════════════════════════════
 
     private function squareCheckout(PosConnection $conn, string $token, Order $order, ?string $deviceId): JsonResponse
     {
@@ -212,6 +221,10 @@ class PosPaymentController extends Controller
         ], 201);
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // CLOVER checkout
+    // ══════════════════════════════════════════════════════════════════════════
+
     private function cloverCheckout(PosConnection $conn, string $token, Order $order): JsonResponse
     {
         $clover   = app(CloverService::class);
@@ -223,10 +236,10 @@ class PosPaymentController extends Controller
 
             foreach ($order->items as $item) {
                 $clover->addLineItem($token, $conn->merchant_id, $orderId, [
-                    'name'     => $item->name,
-                    'price'    => (int) round($item->price * 100),
-                    'unitQty'  => $item->quantity * 1000,
-                    'note'     => $item->notes ?? '',
+                    'name'    => $item->name,
+                    'price'   => (int) round($item->price * 100),
+                    'unitQty' => $item->quantity * 1000,
+                    'note'    => $item->notes ?? '',
                 ]);
             }
 
@@ -246,6 +259,236 @@ class PosPaymentController extends Controller
             'amount'       => $order->total,
         ], 201);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TOAST checkout
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private function toastCheckout(PosConnection $conn, string $token, Order $order): JsonResponse
+    {
+        $toast    = app(ToastService::class);
+        $posOrder = PosOrder::where('order_id', $order->id)->where('provider', 'toast')->first();
+
+        if (!$posOrder) {
+            // Build Toast order: checks[0].selections[]
+            $selections = $order->items->map(function ($item) use ($conn) {
+                $map = PosCatalogMap::where('business_id', $conn->business_id)
+                                    ->where('provider', 'toast')
+                                    ->where('menu_item_id', $item->menu_item_id)
+                                    ->first();
+
+                $sel = [
+                    'quantity' => $item->quantity,
+                ];
+
+                if ($map?->pos_item_id) {
+                    $sel['itemGuid'] = $map->pos_item_id;
+                } else {
+                    // Fallback: ad-hoc item with price
+                    $sel['displayName']  = $item->name;
+                    $sel['preDiscountPrice'] = (int) round($item->price * 100);
+                }
+
+                if ($item->notes) {
+                    $sel['specialRequest'] = $item->notes;
+                }
+
+                return $sel;
+            })->all();
+
+            $toastOrder = $toast->createOrder($token, $conn->merchant_id, [
+                'checks' => [[
+                    'selections' => $selections,
+                ]],
+                'externalId' => 'order_' . $order->id,
+            ]);
+
+            $orderGuid = $toastOrder['guid'] ?? null;
+            $checkGuid = $toastOrder['checks'][0]['guid'] ?? null;
+
+            $posOrder = PosOrder::create([
+                'order_id'     => $order->id,
+                'provider'     => 'toast',
+                'pos_order_id' => $orderGuid,
+                'pos_status'   => $toastOrder['displayState'] ?? 'OPEN',
+                'synced_at'    => now(),
+            ]);
+
+            // Attach check GUID in checkout_id for later payment
+            if ($checkGuid) {
+                $posOrder->update(['pos_checkout_id' => $checkGuid]);
+            }
+        }
+
+        return response()->json([
+            'pos_order_id' => $posOrder->pos_order_id,
+            'check_guid'   => $posOrder->pos_checkout_id,
+            'status'       => $posOrder->pos_status,
+            'amount'       => $order->total,
+        ], 201);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SPOTON checkout
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private function spotOnCheckout(PosConnection $conn, string $token, Order $order): JsonResponse
+    {
+        $spoton   = app(SpotOnService::class);
+        $posOrder = PosOrder::where('order_id', $order->id)->where('provider', 'spoton')->first();
+
+        if (!$posOrder) {
+            $lineItems = $order->items->map(function ($item) use ($conn) {
+                $map = PosCatalogMap::where('business_id', $conn->business_id)
+                                    ->where('provider', 'spoton')
+                                    ->where('menu_item_id', $item->menu_item_id)
+                                    ->first();
+
+                return [
+                    'itemId'   => $map?->pos_item_id,
+                    'name'     => $item->name,
+                    'price'    => (int) round($item->price * 100),
+                    'quantity' => $item->quantity,
+                    'note'     => $item->notes ?? '',
+                ];
+            })->all();
+
+            $spotOnOrder = $spoton->createOrder($token, $conn->merchant_id, [
+                'externalId' => 'order_' . $order->id,
+                'total'      => (int) round($order->total * 100),
+                'items'      => $lineItems,
+            ]);
+
+            $posOrder = PosOrder::create([
+                'order_id'     => $order->id,
+                'provider'     => 'spoton',
+                'pos_order_id' => $spotOnOrder['id'],
+                'pos_status'   => $spotOnOrder['status'] ?? 'open',
+                'synced_at'    => now(),
+            ]);
+        }
+
+        return response()->json([
+            'pos_order_id' => $posOrder->pos_order_id,
+            'status'       => $posOrder->pos_status,
+            'amount'       => $order->total,
+        ], 201);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // POSLAVU checkout
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private function posLavuCheckout(PosConnection $conn, string $token, Order $order): JsonResponse
+    {
+        $lavu     = app(PosLavuService::class);
+        $posOrder = PosOrder::where('order_id', $order->id)->where('provider', 'poslavu')->first();
+
+        if (!$posOrder) {
+            $lavuOrder = $lavu->createOrder($token, $conn->merchant_id, [
+                'externalId' => 'order_' . $order->id,
+                'total'      => round($order->total, 2),
+                'status'     => 'open',
+            ]);
+
+            $orderId = $lavuOrder['id'] ?? $lavuOrder['orderId'] ?? null;
+
+            // Add line items
+            foreach ($order->items as $item) {
+                $map = PosCatalogMap::where('business_id', $conn->business_id)
+                                    ->where('provider', 'poslavu')
+                                    ->where('menu_item_id', $item->menu_item_id)
+                                    ->first();
+
+                try {
+                    $lavu->addOrderItem($token, $orderId, [
+                        'itemId'   => $map?->pos_item_id,
+                        'name'     => $item->name,
+                        'price'    => round($item->price, 2),
+                        'quantity' => $item->quantity,
+                        'note'     => $item->notes ?? '',
+                    ]);
+                } catch (\Throwable) {
+                    // Continue even if individual line item add fails
+                }
+            }
+
+            $posOrder = PosOrder::create([
+                'order_id'     => $order->id,
+                'provider'     => 'poslavu',
+                'pos_order_id' => $orderId,
+                'pos_status'   => 'open',
+                'synced_at'    => now(),
+            ]);
+        }
+
+        return response()->json([
+            'pos_order_id' => $posOrder->pos_order_id,
+            'status'       => $posOrder->pos_status,
+            'amount'       => $order->total,
+        ], 201);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // DELIVERECT checkout
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Deliverect: inject order into the platform (received orders flow).
+     * Creates an order in Deliverect so it can be dispatched to delivery channels.
+     */
+    private function deliverectCheckout(PosConnection $conn, string $token, Order $order): JsonResponse
+    {
+        $deliverect = app(DeliverectService::class);
+        $posOrder   = PosOrder::where('order_id', $order->id)->where('provider', 'deliverect')->first();
+
+        if (!$posOrder) {
+            $items = $order->items->map(function ($item) use ($conn) {
+                $map = PosCatalogMap::where('business_id', $conn->business_id)
+                                    ->where('provider', 'deliverect')
+                                    ->where('menu_item_id', $item->menu_item_id)
+                                    ->first();
+
+                return [
+                    'plu'      => $map?->pos_item_id ?? (string) $item->menu_item_id,
+                    'name'     => $item->name,
+                    'price'    => (int) round($item->price * 100),
+                    'quantity' => $item->quantity,
+                    'note'     => $item->notes ?? '',
+                ];
+            })->all();
+
+            $dlOrder = $deliverect->createOrder($token, $conn->merchant_id, [
+                'channelOrderId' => 'order_' . $order->id,
+                'status'         => 1,                         // RECEIVED
+                'orderIsAlreadyPaid' => false,
+                'payment' => [
+                    'type'   => 1,                              // Cash/online
+                    'amount' => (int) round($order->total * 100),
+                ],
+                'decimalDigits' => 2,
+                'items'         => $items,
+            ]);
+
+            $posOrder = PosOrder::create([
+                'order_id'     => $order->id,
+                'provider'     => 'deliverect',
+                'pos_order_id' => $dlOrder['_id'] ?? $dlOrder['id'] ?? null,
+                'pos_status'   => 'received',
+                'synced_at'    => now(),
+            ]);
+        }
+
+        return response()->json([
+            'pos_order_id' => $posOrder->pos_order_id,
+            'status'       => $posOrder->pos_status,
+            'amount'       => $order->total,
+        ], 201);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SQUARE helpers
+    // ══════════════════════════════════════════════════════════════════════════
 
     private function buildSquareLineItems(PosConnection $conn, Order $order): array
     {

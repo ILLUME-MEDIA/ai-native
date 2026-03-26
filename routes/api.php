@@ -857,8 +857,17 @@ Route::prefix('ecommerce/pos')->group(function () {
     // ── Literal routes first (must come before /{connection} wildcard) ────────
     Route::get('/',                                     [PosController::class, 'index']);
     Route::get('/check',                                [PosController::class, 'check']);
+    Route::get('/orders',                               [PosPaymentController::class, 'posOrdersByConnection']);
+
+    // ── OAuth-based connections ───────────────────────────────────────────────
     Route::get('/square/auth-url',                      [PosController::class, 'squareAuthUrl']);
     Route::get('/clover/auth-url',                      [PosController::class, 'cloverAuthUrl']);
+    Route::get('/spoton/auth-url',                      [PosController::class, 'spotOnAuthUrl']);
+
+    // ── Direct-credentials connections (no OAuth redirect) ───────────────────
+    Route::post('/toast/connect',                       [PosController::class, 'toastConnect']);
+    Route::post('/poslavu/connect',                     [PosController::class, 'posLavuConnect']);
+    Route::post('/deliverect/connect',                  [PosController::class, 'deliverectConnect']);
 
     // ── Dynamic connection routes ─────────────────────────────────────────────
     Route::get('/{connection}',                         [PosController::class, 'show']);
@@ -866,6 +875,7 @@ Route::prefix('ecommerce/pos')->group(function () {
     Route::delete('/{connection}',                      [PosController::class, 'disconnect']);
     Route::get('/{connection}/locations',               [PosController::class, 'locations']);
     Route::patch('/{connection}/location',              [PosController::class, 'setLocation']);
+    Route::get('/{connection}/channel-links',           [PosController::class, 'channelLinks']);
 
     // Catalog sync
     Route::get('/{connection}/catalog-maps',            [PosCatalogController::class, 'maps']);
@@ -885,8 +895,12 @@ Route::prefix('ecommerce/pos')->group(function () {
 Route::get('ecommerce/orders/{order}/pos-orders', [PosPaymentController::class, 'posOrders']);
 
 // ── POS Webhooks (no auth — verified by signature) ────────────────────────────
-Route::post('webhooks/pos/square', [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
-Route::post('webhooks/pos/clover', [PosWebhookController::class, 'clover'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/square',     [PosWebhookController::class, 'square'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/clover',     [PosWebhookController::class, 'clover'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/toast',      [PosWebhookController::class, 'toast'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/spoton',     [PosWebhookController::class, 'spotOn'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/poslavu',    [PosWebhookController::class, 'posLavu'])->withoutMiddleware(['auth:sanctum']);
+Route::post('webhooks/pos/deliverect', [PosWebhookController::class, 'deliverect'])->withoutMiddleware(['auth:sanctum']);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ── DELIVERY SYSTEM ───────────────────────────────────────────────────────────

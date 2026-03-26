@@ -1,4 +1,4 @@
-﻿<?php
+﻿﻿<?php
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SectionBuilder\SectionBuilderController;
@@ -378,6 +378,7 @@ Route::get('/run-migrations', function () {
 
 Route::get('/pos/square/callback', [PosController::class, 'squareCallback'])->name('pos.square.callback');
 Route::get('/pos/clover/callback', [PosController::class, 'cloverCallback'])->name('pos.clover.callback');
+Route::get('/pos/spoton/callback', [PosController::class, 'spotOnCallback'])->name('pos.spoton.callback');
 
 // â”€â”€ Storage fallback (serves files directly if /public/storage symlink returns 403) â”€â”€
 Route::get('/storage/{path}', function ($path) {
