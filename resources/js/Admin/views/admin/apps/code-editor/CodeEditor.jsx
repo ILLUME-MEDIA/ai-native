@@ -823,9 +823,12 @@ export default function CodeEditor() {
                         flexDirection: 'column',
                         alignItems: 'center',
                         paddingTop: '12px',
+                        paddingBottom: '8px',
                         gap: '4px',
                         flexShrink: 0,
-                        overflow: 'hidden',
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        scrollbarWidth: 'none',
                         transition: 'width 0.2s',
                     }}>
                         {activityItems.map(({ id, icon, label, action, isActive }) => {
