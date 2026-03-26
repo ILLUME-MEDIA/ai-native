@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { GitBranch, GitCommit, RefreshCw, Upload, Download, X, Plus, Check, ChevronDown, AlertCircle, Archive, Trash2 } from 'lucide-react';
+import { GitBranch, GitCommit, RefreshCw, Upload, Download, X, Plus, Check, ChevronDown, AlertCircle, Archive, Trash2, Sparkles, Loader } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useCodeEditorTheme } from './useCodeEditorTheme';
 
@@ -32,6 +32,9 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
     const [stashes, setStashes] = useState([]);
     const [stashMessage, setStashMessage] = useState('');
     const [stashLoading, setStashLoading] = useState(false);
+
+    // E-02: AI commit message generation
+    const [generating, setGenerating] = useState(false);
 
     useEffect(() => {
         if (workspace?.git_enabled) {
@@ -190,6 +193,25 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
             showMsg('Committed successfully', true);
         } catch (error) {
             showMsg(error.response?.data?.error || 'Failed to commit', false);
+        }
+    }
+
+    // E-02: AI commit message generation
+    async function generateCommitMessage() {
+        if (!workspace) return;
+        setGenerating(true);
+        try {
+            const resp = await axios.post(`/api/workspaces/${workspace.id}/ai/commit-message`);
+            const msg = resp.data?.message;
+            if (msg) {
+                setCommitMessage(msg);
+            } else {
+                showMsg('No changes found to summarise', false);
+            }
+        } catch (e) {
+            showMsg(e.response?.data?.error || 'Failed to generate commit message', false);
+        } finally {
+            setGenerating(false);
         }
     }
 
@@ -479,7 +501,34 @@ export default function GitPanel({ workspace, onClose, onTerminalAppend, embedde
 
                 {/* ── Commit Section ─────────────────────────── */}
                 <div style={S.section}>
-                    <div style={S.sectionTitle}>Commit</div>
+                    <div style={{ ...S.sectionTitle, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>Commit</span>
+                        <button
+                            onClick={generateCommitMessage}
+                            disabled={generating}
+                            title="Generate commit message with AI"
+                            style={{
+                                background: generating ? 'rgba(255,107,53,0.1)' : 'none',
+                                border: generating ? '1px solid rgba(255,107,53,0.25)' : '1px solid transparent',
+                                borderRadius: '4px',
+                                color: generating ? '#ff6b35' : '#8b949e',
+                                cursor: generating ? 'wait' : 'pointer',
+                                padding: '2px 6px',
+                                fontSize: '10px',
+                                fontFamily: 'inherit',
+                                display: 'flex', alignItems: 'center', gap: '3px',
+                                transition: 'color 0.15s, background 0.15s',
+                            }}
+                            onMouseEnter={e => { if (!generating) { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.borderColor = 'rgba(255,107,53,0.25)'; } }}
+                            onMouseLeave={e => { if (!generating) { e.currentTarget.style.color = '#8b949e'; e.currentTarget.style.borderColor = 'transparent'; } }}
+                        >
+                            {generating
+                                ? <Loader size={10} className="spinning" />
+                                : <Sparkles size={10} />
+                            }
+                            Generate
+                        </button>
+                    </div>
                     <textarea
                         className="ce-commit-textarea"
                         rows={3}

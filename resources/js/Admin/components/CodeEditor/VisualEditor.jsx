@@ -270,14 +270,17 @@ export default function VisualEditor({ workspace, activeTab }) {
     }
 
     return (
-        <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', overflow: 'hidden' }}>
             {/* iframe pane */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#ffffff' }}>
                 {!activeTab || !isSupported ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#484f58', flexDirection: 'column', gap: '12px', background: '#161b22' }}>
-                        <Eye size={48} />
-                        <p style={{ margin: 0, fontSize: '12px' }}>
-                            {!activeTab ? 'Open an HTML or CSS file to inspect' : 'Visual editor supports HTML / CSS / SCSS files'}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8b949e', flexDirection: 'column', gap: '16px', background: '#0d0f14' }}>
+                        <div style={{ background: 'rgba(255,107,53,0.1)', border: '1px solid rgba(255,107,53,0.3)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                            <Eye size={56} style={{ color: '#ff6b35' }} />
+                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#e6edf3' }}>Visual Editor</span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#8b949e', textAlign: 'center', maxWidth: '240px', lineHeight: 1.6 }}>
+                            {!activeTab ? 'Open an HTML, CSS, or SCSS file to start visual editing' : `Visual editor supports HTML / CSS / SCSS — current file is .${activeTab.path.split('.').pop()}`}
                         </p>
                     </div>
                 ) : (

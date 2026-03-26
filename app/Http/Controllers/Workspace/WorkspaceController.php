@@ -97,6 +97,80 @@ class WorkspaceController extends Controller
         return response()->json(['message' => 'Workspace archived']);
     }
 
+    // B-10: TODO / Task Tracker
+    public function scanTodos(Request $request, Workspace $workspace)
+    {
+        $this->authorize('view', $workspace);
+
+        $items = [];
+        $total = 0;
+        $this->scanTodosInDirectory($workspace->full_path, '', $items, $total);
+
+        // Sort: FIXME first, then TODO, HACK, NOTE, XXX
+        $typeOrder = ['FIXME' => 0, 'TODO' => 1, 'HACK' => 2, 'NOTE' => 3, 'XXX' => 4];
+        usort($items, function ($a, $b) use ($typeOrder) {
+            $ao = $typeOrder[$a['type']] ?? 5;
+            $bo = $typeOrder[$b['type']] ?? 5;
+            if ($ao !== $bo) return $ao - $bo;
+            return strcmp($a['file'], $b['file']);
+        });
+
+        return response()->json(['items' => $items, 'total' => $total]);
+    }
+
+    private function scanTodosInDirectory(string $basePath, string $relativePath, array &$items, int &$total, int $maxTotal = 500): void
+    {
+        if ($total >= $maxTotal) return;
+
+        $directory = $relativePath === '' ? $basePath : $basePath . DIRECTORY_SEPARATOR . $relativePath;
+        if (!$this->fs->isDirectory($directory)) return;
+
+        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot',
+            'mp3', 'mp4', 'zip', 'tar', 'gz', 'pdf', 'svg', 'webp', 'avif', 'bin',
+            'exe', 'dll', 'lock', 'map'];
+
+        foreach ($this->fs->directories($directory) as $dir) {
+            if ($total >= $maxTotal || is_link($dir)) continue;
+            $name     = basename($dir);
+            $childRel = $relativePath ? ($relativePath . '/' . $name) : $name;
+            if ($this->isExcludedPath($childRel)) continue;
+            $this->scanTodosInDirectory($basePath, $childRel, $items, $total, $maxTotal);
+        }
+
+        // Match TODO/FIXME/HACK/NOTE/XXX in line comments across languages
+        $pattern = '/(?:\/\/|#|--|;|\/\*|\*)\s*(TODO|FIXME|HACK|NOTE|XXX)\b[\s:]*(.*)/i';
+
+        foreach ($this->fs->files($directory) as $file) {
+            if ($total >= $maxTotal || is_link($file->getRealPath())) continue;
+
+            $ext = strtolower($file->getExtension());
+            if (in_array($ext, $binaryExts, true)) continue;
+            if ($file->getSize() > 512 * 1024) continue;
+
+            $name     = $file->getFilename();
+            $childRel = str_replace('\\', '/', $relativePath ? ($relativePath . '/' . $name) : $name);
+
+            try {
+                $content = $file->getContents();
+            } catch (\Exception) {
+                continue;
+            }
+
+            foreach (preg_split('/\r\n|\r|\n/', $content) as $lineIdx => $lineContent) {
+                if ($total >= $maxTotal) break;
+                if (preg_match($pattern, $lineContent, $m)) {
+                    $items[] = [
+                        'file'    => $childRel,
+                        'line'    => $lineIdx + 1,
+                        'type'    => strtoupper($m[1]),
+                        'content' => trim($m[2]),
+                    ];
+                    $total++;
+                }
+            }
+        }
+    }
+
     public function search(Request $request, Workspace $workspace)
     {
         $this->authorize('view', $workspace);
@@ -180,6 +254,124 @@ class WorkspaceController extends Controller
                         $total++;
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * D-02: Multi-file find & replace.
+     * Replaces all occurrences of a search term across workspace files.
+     */
+    public function replaceInFiles(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'query'          => 'required|string|min:1',
+            'replace'        => 'required|string',
+            'case_sensitive' => 'nullable|boolean',
+            'regex'          => 'nullable|boolean',
+            'files'          => 'nullable|array', // optional: limit to specific files
+            'files.*'        => 'string',
+        ]);
+
+        $query         = $data['query'];
+        $replacement   = $data['replace'];
+        $caseSensitive = filter_var($data['case_sensitive'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $useRegex      = filter_var($data['regex'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $targetFiles   = $data['files'] ?? null;
+
+        $totalReplacements = 0;
+        $filesChanged      = 0;
+        $basePath          = $workspace->full_path;
+
+        if ($targetFiles !== null) {
+            // Replace only in specified files
+            foreach ($targetFiles as $relPath) {
+                $relPath  = trim(str_replace('\\', '/'), '/') ?: ltrim($relPath, '/');
+                $fullPath = $basePath . DIRECTORY_SEPARATOR . $relPath;
+                if (!file_exists($fullPath) || is_dir($fullPath)) continue;
+
+                $content = file_get_contents($fullPath);
+                $count   = 0;
+                $new     = $this->performReplace($content, $query, $replacement, $caseSensitive, $useRegex, $count);
+                if ($count > 0) {
+                    file_put_contents($fullPath, $new);
+                    $totalReplacements += $count;
+                    $filesChanged++;
+                }
+            }
+        } else {
+            // Replace across all workspace files
+            $this->replaceInDirectory($basePath, '', $query, $replacement, $caseSensitive, $useRegex, $totalReplacements, $filesChanged);
+        }
+
+        return response()->json([
+            'replacements'  => $totalReplacements,
+            'files_changed' => $filesChanged,
+        ]);
+    }
+
+    private function performReplace(string $content, string $query, string $replacement, bool $caseSensitive, bool $useRegex, int &$count): string
+    {
+        if ($useRegex) {
+            $flags = $caseSensitive ? '' : 'i';
+            $new   = preg_replace_callback('/' . $query . '/' . $flags, function () use ($replacement, &$count) {
+                $count++;
+                return $replacement;
+            }, $content);
+            return $new ?? $content;
+        }
+
+        $flags = $caseSensitive ? 0 : \MB_CASE_FOLD;
+        if ($caseSensitive) {
+            $count = substr_count($content, $query);
+            return $count > 0 ? str_replace($query, $replacement, $content) : $content;
+        }
+        // Case-insensitive
+        $count = substr_count(mb_strtolower($content), mb_strtolower($query));
+        return $count > 0 ? str_ireplace($query, $replacement, $content) : $content;
+    }
+
+    private function replaceInDirectory(
+        string $basePath,
+        string $relativePath,
+        string $query,
+        string $replacement,
+        bool $caseSensitive,
+        bool $useRegex,
+        int &$totalReplacements,
+        int &$filesChanged
+    ): void {
+        $directory = $relativePath === '' ? $basePath : $basePath . DIRECTORY_SEPARATOR . $relativePath;
+        if (!$this->fs->isDirectory($directory)) return;
+
+        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'mp3', 'mp4', 'zip', 'tar', 'gz', 'pdf', 'svg', 'webp', 'avif', 'bin', 'exe', 'dll'];
+
+        foreach ($this->fs->directories($directory) as $dir) {
+            $name     = basename($dir);
+            $childRel = $relativePath ? ($relativePath . '/' . $name) : $name;
+            if ($this->isExcludedPath($childRel)) continue;
+            $this->replaceInDirectory($basePath, $childRel, $query, $replacement, $caseSensitive, $useRegex, $totalReplacements, $filesChanged);
+        }
+
+        foreach ($this->fs->files($directory) as $file) {
+            $ext = strtolower($file->getExtension());
+            if (in_array($ext, $binaryExts, true)) continue;
+            if ($file->getSize() > 1024 * 1024) continue;
+
+            try {
+                $content = $file->getContents();
+            } catch (\Exception) {
+                continue;
+            }
+
+            $count = 0;
+            $new   = $this->performReplace($content, $query, $replacement, $caseSensitive, $useRegex, $count);
+            if ($count > 0) {
+                file_put_contents($file->getRealPath(), $new);
+                $totalReplacements += $count;
+                $filesChanged++;
             }
         }
     }

@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Excalidraw, exportToSvg } from '@excalidraw/excalidraw';
+import '@excalidraw/excalidraw/index.css';
 import axios from 'axios';
 import { Trash2 } from 'lucide-react';
 import { toast } from 'react-toastify';

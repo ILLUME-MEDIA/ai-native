@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Mic, MicOff, Image, Paperclip, Plus, History } from 'lucide-react';
+import { Send, X, Zap, Check, Loader, SlidersHorizontal, ChevronDown, ChevronUp, ListChecks, HelpCircle, Code2, Building2, Eye, Bug, BookOpen, Wrench, Shield, Pin, Pause, Play, SkipForward, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useCodeEditorTheme } from './useCodeEditorTheme';
 
-export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed }) {
+export default function AIChatPanel({ workspace, currentFile, openFiles, onClose, onApplyChanges, onFileTreeRefresh, onFileTreePatch, prefill, onPrefillConsumed, pinnedContext = [], onUnpinFile }) {
     const { isDark, tokens: t } = useCodeEditorTheme();
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
@@ -21,17 +21,10 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     const [selectedModel, setSelectedModel] = useState('AUTO');
     const [isAuto, setIsAuto] = useState(true);
     const [uiTarget, setUiTarget] = useState(() => localStorage.getItem('codeEditor.uiTarget') || 'ask');
-    const [pendingClarification, setPendingClarification] = useState(null);
-    const [activePlanTasks, setActivePlanTasks] = useState(null);
-    const [hoveredTabId, setHoveredTabId] = useState(null);
-    const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
-    // Image attachments
-    const [attachedImages, setAttachedImages] = useState([]); // [{dataUrl, name}]
-    const fileInputRef = useRef(null);
-    const historyDropdownRef = useRef(null);
-    // Voice input
-    const [isListening, setIsListening] = useState(false);
-    const recognitionRef = useRef(null);
+    const [agentMode, setAgentMode] = useState(() => localStorage.getItem('codeEditor.agentMode') || 'coder');
+    const [pendingClarification, setPendingClarification] = useState(null); // { questions: [...] }
+    const [activePlanTasks, setActivePlanTasks] = useState(null); // { task_list_id, tasks: [...] }
+    const [taskOverrides, setTaskOverrides] = useState({}); // { [taskId]: 'paused'|'pending'|'skipped' }
     const messagesEndRef = useRef(null);
     const eventSourceRef = useRef(null);
     const abortRef = useRef(null);
@@ -86,6 +79,10 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     }, [uiTarget]);
 
     useEffect(() => {
+        localStorage.setItem('codeEditor.agentMode', agentMode);
+    }, [agentMode]);
+
+    useEffect(() => {
         if (selectedEndpoint) {
             loadModelsForEndpoint(selectedEndpoint);
         }
@@ -130,17 +127,6 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         return () => clearInterval(t);
     }, [loading, streamSeconds]);
 
-    // Close history dropdown when clicking outside
-    useEffect(() => {
-        if (!showHistoryDropdown) return;
-        function onClickOutside(e) {
-            if (historyDropdownRef.current && !historyDropdownRef.current.contains(e.target)) {
-                setShowHistoryDropdown(false);
-            }
-        }
-        document.addEventListener('mousedown', onClickOutside);
-        return () => document.removeEventListener('mousedown', onClickOutside);
-    }, [showHistoryDropdown]);
 
     async function loadEndpoints() {
         try {
@@ -262,73 +248,9 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         }
     }
 
-    // ── Image helpers ──────────────────────────────────────────────────────────
-    function addImageFile(file) {
-        if (!file || !file.type.startsWith('image/')) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            setAttachedImages(prev => [...prev, { dataUrl: e.target.result, name: file.name || 'image.png' }]);
-        };
-        reader.readAsDataURL(file);
-    }
-
-    function handlePaste(e) {
-        const items = e.clipboardData?.items || [];
-        for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                e.preventDefault();
-                addImageFile(item.getAsFile());
-                return;
-            }
-        }
-    }
-
-    function handleFileInput(e) {
-        Array.from(e.target.files || []).forEach(addImageFile);
-        e.target.value = '';
-    }
-
-    function removeImage(idx) {
-        setAttachedImages(prev => prev.filter((_, i) => i !== idx));
-    }
-
-    // ── Voice input ────────────────────────────────────────────────────────────
-    function toggleVoice() {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            toast.error('Voice input is not supported in this browser. Use Chrome or Edge.');
-            return;
-        }
-
-        if (isListening) {
-            recognitionRef.current?.stop();
-            setIsListening(false);
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.interimResults = true;
-        recognition.continuous = false;
-        recognitionRef.current = recognition;
-
-        recognition.onstart = () => setIsListening(true);
-        recognition.onend   = () => setIsListening(false);
-        recognition.onerror = () => { setIsListening(false); toast.error('Voice recognition failed.'); };
-
-        recognition.onresult = (event) => {
-            const transcript = Array.from(event.results)
-                .map(r => r[0].transcript)
-                .join('');
-            setInput(prev => prev + transcript);
-        };
-
-        recognition.start();
-    }
-
     // ── Send ───────────────────────────────────────────────────────────────────
     async function handleSend() {
-        if ((!input.trim() && attachedImages.length === 0) || loading) return;
+        if (!input.trim() || loading) return;
 
         if (!workspace?.id) {
             toast.error('No workspace selected. Please open or create a workspace first.');
@@ -350,15 +272,13 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         const userMessage = {
             role: 'user',
             content: input,
-            images: attachedImages.map(i => i.dataUrl),
+            images: [],
             timestamp: new Date()
         };
 
         setMessages(prev => [...prev, userMessage]);
         const userInput = input;
-        const userImages = [...attachedImages];
         setInput('');
-        setAttachedImages([]);
         setLoading(true);
         setStreamingMessage('');
         setStreamingStatus('Connecting...');
@@ -377,22 +297,12 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             // Use Server-Sent Events (SSE) for streaming
             const url = `/api/workspaces/${workspace.id}/ai/chat-stream`;
 
-            // Create FormData for POST request
-            // Build message — append image descriptions when images are attached
-            let fullMessage = userInput;
-            if (userImages.length > 0) {
-                fullMessage += `\n\n[User attached ${userImages.length} image(s). Treat them as visual context for this request.]`;
-            }
-
             const formData = new FormData();
-            formData.append('message', fullMessage);
-            // Attach images as base64 for vision-capable models
-            userImages.forEach((img, i) => {
-                formData.append(`images[${i}]`, img.dataUrl);
-            });
+            formData.append('message', userInput);
             formData.append('endpoint_id', selectedEndpoint);
             formData.append('model_id', isAuto ? 'AUTO' : selectedModel);
             formData.append('ui_target', uiTarget || 'ask');
+            formData.append('agent_mode', agentMode || 'coder');
             if (conversationId) {
                 formData.append('conversation_id', conversationId);
             }
@@ -408,6 +318,27 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 formData.append(`open_files[${idx}][content]`, f.content);
                 formData.append(`open_files[${idx}][language]`, f.language);
             });
+
+            // A-03: Pinned context — fetch content for pinned files not already open
+            if (pinnedContext.length > 0) {
+                const pinContents = await Promise.all(
+                    pinnedContext.map(async (pin) => {
+                        const openFile = openFiles.find(f => f.path === pin.path)
+                            || (currentFile?.path === pin.path ? currentFile : null);
+                        if (openFile) return { path: pin.path, content: openFile.content || '' };
+                        try {
+                            const resp = await axios.get(`/api/workspaces/${workspace.id}/files/read`, { params: { path: pin.path } });
+                            return { path: pin.path, content: resp.data?.content || '' };
+                        } catch {
+                            return { path: pin.path, content: '' };
+                        }
+                    })
+                );
+                pinContents.forEach((pin, idx) => {
+                    formData.append(`pinned_context[${idx}][path]`, pin.path);
+                    formData.append(`pinned_context[${idx}][content]`, pin.content);
+                });
+            }
 
             // Get CSRF token
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
@@ -664,6 +595,21 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         toast.success(`Applied ${changes.length} change(s) to editor`);
     }
 
+    // E-01: Task queue step controls
+    async function handleTaskAction(taskId, action) {
+        if (!workspace?.id) return;
+        // Optimistic update
+        const optimisticStatus = action === 'pause' ? 'paused' : action === 'skip' ? 'skipped' : 'pending';
+        setTaskOverrides(prev => ({ ...prev, [taskId]: optimisticStatus }));
+        try {
+            await axios.post(`/api/workspaces/${workspace.id}/ai/tasks/${taskId}/${action}`);
+        } catch {
+            // Revert optimistic update on failure
+            setTaskOverrides(prev => { const next = { ...prev }; delete next[taskId]; return next; });
+            toast.error(`Failed to ${action} task`);
+        }
+    }
+
     function scrollToBottom() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
@@ -680,218 +626,56 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 </button>
             </div>
 
-            {/* ── Conversation Tabs ─────────────────────────────────── */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'stretch',
-                borderBottom: `1px solid ${t.border}`,
-                background: t.bgTab,
-                flexShrink: 0,
-                minHeight: '32px',
-            }}>
-                {/* Scrollable tabs area */}
-                <div style={{ flex: 1, display: 'flex', alignItems: 'stretch', overflowX: 'auto', scrollbarWidth: 'none' }}>
-                    {/* Existing conversation tabs */}
-                    {conversations.map(c => {
-                        const isActive = conversationId === c.id;
-                        const isHovered = hoveredTabId === c.id;
-                        const label = c.title ? c.title.slice(0, 14) : `Chat #${c.id}`;
-                        return (
-                            <div
-                                key={c.id}
-                                onMouseEnter={() => setHoveredTabId(c.id)}
-                                onMouseLeave={() => setHoveredTabId(null)}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    padding: '0 8px 0 12px',
-                                    background: isActive ? t.bg2 : isHovered ? (isDark ? '#0a0c0f' : t.bg4) : 'transparent',
-                                    borderRight: `1px solid ${t.border}`,
-                                    borderBottom: isActive ? '2px solid #ff6b35' : '2px solid transparent',
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    flexShrink: 0,
-                                    transition: 'background 0.1s',
-                                }}
-                            >
-                                {/* Tab label */}
-                                <span
-                                    onClick={async () => { if (!loading) { setConversationId(c.id); await loadConversation(c.id); } }}
-                                    title={c.title || `Chat #${c.id}`}
-                                    style={{
-                                        color: isActive ? t.text2 : isHovered ? t.text2 : t.text3,
-                                        fontSize: '11px',
-                                        whiteSpace: 'nowrap',
-                                        maxWidth: '110px',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        userSelect: 'none',
-                                    }}
-                                >
-                                    {label}
-                                </span>
-                                {/* × close button — visible on hover */}
-                                <span
-                                    onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if (loading) return;
-                                        try {
-                                            await axios.delete(`/api/workspaces/${workspace.id}/ai/conversations/${c.id}`);
-                                        } catch (_) { /* ignore */ }
-                                        setConversations(prev => prev.filter(x => x.id !== c.id));
-                                        if (conversationId === c.id) {
-                                            setConversationId(null);
-                                            setMessages([]);
-                                        }
-                                    }}
-                                    title="Close conversation"
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        width: '14px',
-                                        height: '14px',
-                                        borderRadius: '3px',
-                                        color: isHovered || isActive ? '#6e7681' : 'transparent',
-                                        cursor: 'pointer',
-                                        fontSize: '10px',
-                                        flexShrink: 0,
-                                        transition: 'color 0.1s, background 0.1s',
-                                    }}
-                                    onMouseEnter={e => { e.currentTarget.style.color = '#f85149'; e.currentTarget.style.background = 'rgba(248,81,73,0.15)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.color = isHovered || isActive ? '#6e7681' : 'transparent'; e.currentTarget.style.background = 'transparent'; }}
-                                >
-                                    <X size={10} />
-                                </span>
-                            </div>
-                        );
-                    })}
+            <AgentModePicker mode={agentMode} onChange={setAgentMode} disabled={loading} />
 
-                    {/* "New chat" tab — active when no conversation selected */}
-                    {!conversationId && (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '0 12px',
-                            background: t.bg2,
-                            borderRight: `1px solid ${t.border}`,
-                            borderBottom: '2px solid #ff6b35',
-                            color: t.text2,
-                            fontSize: '11px',
-                            whiteSpace: 'nowrap',
-                            flexShrink: 0,
-                        }}>
-                            New chat
-                        </div>
-                    )}
-
-                    {/* "+" new chat button */}
-                    <button
-                        onClick={() => { setConversationId(null); setMessages([]); }}
-                        disabled={loading}
-                        title="New chat"
-                        style={{
-                            padding: '0 10px',
-                            background: 'transparent',
-                            border: 'none',
-                            borderBottom: '2px solid transparent',
-                            color: t.text4,
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            flexShrink: 0,
-                            display: 'flex',
-                            alignItems: 'center',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; }}
-                    >
-                        <Plus size={14} />
-                    </button>
-                </div>
-
-                {/* Right-fixed area: History + Idle */}
-                <div style={{ display: 'flex', alignItems: 'center', borderLeft: `1px solid ${t.border}`, flexShrink: 0 }}>
-                    {/* History dropdown */}
-                    <div ref={historyDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                        <button
-                            onClick={() => { const next = !showHistoryDropdown; setShowHistoryDropdown(next); if (next) refreshConversationList(); }}
-                            title="Chat history"
-                            style={{
-                                padding: '0 9px',
-                                height: '100%',
-                                background: showHistoryDropdown ? 'rgba(255,107,53,0.1)' : 'transparent',
-                                border: 'none',
-                                color: showHistoryDropdown ? '#ff6b35' : t.text4,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                            }}
-                            onMouseEnter={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = '#ff6b35'; e.currentTarget.style.background = 'rgba(255,107,53,0.08)'; } }}
-                            onMouseLeave={e => { if (!showHistoryDropdown) { e.currentTarget.style.color = t.text4; e.currentTarget.style.background = 'transparent'; } }}
-                        >
-                            <History size={13} />
-                        </button>
-
-                        {showHistoryDropdown && (
-                            <div style={{
-                                position: 'absolute',
-                                top: '100%',
-                                right: 0,
-                                zIndex: 999,
-                                background: t.bg3,
-                                border: `1px solid ${t.scrollbar}`,
-                                borderRadius: '6px',
-                                boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-                                minWidth: '220px',
-                                maxHeight: '260px',
-                                overflowY: 'auto',
-                                scrollbarWidth: 'thin',
-                            }}>
-                                <div style={{ padding: '6px 12px', fontSize: '10px', color: t.text4, borderBottom: `1px solid ${t.border}`, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                                    Conversation History
-                                </div>
-                                {conversations.length === 0 && (
-                                    <div style={{ padding: '10px 12px', color: t.text3, fontSize: '12px' }}>No conversations yet</div>
-                                )}
-                                {conversations.map(c => (
-                                    <div
-                                        key={c.id}
-                                        onClick={async () => {
-                                            setConversationId(c.id);
-                                            await loadConversation(c.id);
-                                            setShowHistoryDropdown(false);
-                                        }}
-                                        style={{
-                                            padding: '7px 12px',
-                                            cursor: 'pointer',
-                                            color: conversationId === c.id ? '#ff6b35' : t.text2,
-                                            fontSize: '12px',
-                                            background: conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent',
-                                            borderBottom: `1px solid ${t.border}`,
-                                            whiteSpace: 'nowrap',
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '6px',
-                                        }}
-                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,53,0.1)'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.background = conversationId === c.id ? 'rgba(255,107,53,0.08)' : 'transparent'; }}
-                                    >
-                                        <span style={{ opacity: 0.5, fontSize: '10px', flexShrink: 0 }}>#{c.id}</span>
-                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title || `Chat #${c.id}`}</span>
-                                        {conversationId === c.id && <Check size={11} style={{ marginLeft: 'auto', flexShrink: 0 }} />}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+            {pinnedContext.length > 0 && (
+                <div style={{
+                    padding: '5px 10px',
+                    borderBottom: '1px solid #1c2128',
+                    background: 'rgba(255,107,53,0.05)',
+                    flexShrink: 0,
+                }}>
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        marginBottom: '4px',
+                        fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em',
+                        textTransform: 'uppercase', color: '#ff6b35',
+                    }}>
+                        <Pin size={9} fill="currentColor" />
+                        Pinned Context ({pinnedContext.length})
                     </div>
-
-                    {/* Idle/timer */}
-                    <span style={{ padding: '0 10px', fontSize: '10px', color: t.text4, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
-                        {loading ? `⏱ ${streamSeconds}s` : 'Idle'}
-                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {pinnedContext.map((pin) => (
+                            <span key={pin.path} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                padding: '2px 6px', borderRadius: '10px',
+                                background: 'rgba(255,107,53,0.1)',
+                                border: '1px solid rgba(255,107,53,0.25)',
+                                fontSize: '10px', color: '#c9d1d9',
+                                fontFamily: "'JetBrains Mono', monospace",
+                                maxWidth: '100%',
+                            }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px' }} title={pin.path}>
+                                    {pin.name || pin.path.split('/').pop()}
+                                </span>
+                                {onUnpinFile && (
+                                    <button
+                                        onClick={() => onUnpinFile(pin)}
+                                        style={{
+                                            background: 'none', border: 'none', padding: 0,
+                                            cursor: 'pointer', color: '#8b949e', lineHeight: 1,
+                                            display: 'flex', alignItems: 'center',
+                                        }}
+                                        title={`Unpin ${pin.name || pin.path}`}
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                )}
+                            </span>
+                        ))}
+                    </div>
                 </div>
-            </div>
+            )}
 
             <div className="chat-controls chat-controls-compact">
                 <div className="chat-controls-bar">
@@ -1009,7 +793,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     </div>
                 )}
 
-                {renderGroupedMessages(messages, handleApply)}
+                {renderGroupedMessages(messages, handleApply, taskOverrides, handleTaskAction)}
 
                 {loading && (
                     <div className="chat-msg-row chat-msg-row--ai">
@@ -1086,39 +870,11 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     </div>
                 )}
 
-                {/* Image previews */}
-                {attachedImages.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {attachedImages.map((img, i) => (
-                            <div key={i} style={{ position: 'relative', width: '56px', height: '56px' }}>
-                                <img
-                                    src={img.dataUrl}
-                                    alt={img.name}
-                                    style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '4px', border: `1px solid ${t.scrollbar}` }}
-                                />
-                                <button
-                                    onClick={() => removeImage(i)}
-                                    style={{
-                                        position: 'absolute', top: '-4px', right: '-4px',
-                                        background: '#f85149', border: 'none', borderRadius: '50%',
-                                        width: '16px', height: '16px', cursor: 'pointer',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        padding: 0, color: '#fff',
-                                    }}
-                                >
-                                    <X size={9} />
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
                 {/* Textarea */}
                 <textarea
                     placeholder={workspace?.id ? "Ask AI… (Enter to send, Shift+Enter = new line)" : "No workspace selected…"}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onPaste={handlePaste}
                     onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
                     }}
@@ -1143,58 +899,6 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
 
                 {/* Action buttons row */}
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {/* Hidden file input */}
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        style={{ display: 'none' }}
-                        onChange={handleFileInput}
-                    />
-
-                    {/* Attach image button */}
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={loading || !workspace?.id}
-                        title="Attach image (or paste from clipboard)"
-                        style={{
-                            background: 'none', border: `1px solid ${t.scrollbar}`, borderRadius: '4px',
-                            color: t.text3, cursor: 'pointer', padding: '4px 7px',
-                            display: 'flex', alignItems: 'center',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; }}
-                    >
-                        <Paperclip size={14} />
-                    </button>
-
-                    {/* Voice input button */}
-                    <button
-                        onClick={toggleVoice}
-                        disabled={loading || !workspace?.id}
-                        title={isListening ? 'Stop recording' : 'Start voice input'}
-                        style={{
-                            background: isListening ? 'rgba(248,81,73,0.15)' : 'none',
-                            border: `1px solid ${isListening ? 'rgba(248,81,73,0.5)' : t.scrollbar}`,
-                            borderRadius: '4px',
-                            color: isListening ? '#f85149' : t.text3,
-                            cursor: 'pointer', padding: '4px 7px',
-                            display: 'flex', alignItems: 'center',
-                        }}
-                        onMouseEnter={e => { if (!isListening) { e.currentTarget.style.borderColor = '#ff6b35'; e.currentTarget.style.color = '#ff6b35'; } }}
-                        onMouseLeave={e => { if (!isListening) { e.currentTarget.style.borderColor = t.scrollbar; e.currentTarget.style.color = t.text3; } }}
-                    >
-                        {isListening ? <MicOff size={14} /> : <Mic size={14} />}
-                    </button>
-
-                    {isListening && (
-                        <span style={{ fontSize: '10px', color: '#f85149', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f85149', animation: 'pulse 1s infinite' }} />
-                            Listening…
-                        </span>
-                    )}
-
                     <div style={{ flex: 1 }} />
 
                     {/* Cancel button */}
@@ -1215,7 +919,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                     {/* Send button */}
                     <button
                         onClick={handleSend}
-                        disabled={loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id}
+                        disabled={loading || !input.trim() || !workspace?.id}
                         title="Send (Enter)"
                         style={{
                             background: 'rgba(255,107,53,0.15)',
@@ -1226,7 +930,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                             padding: '4px 12px',
                             fontSize: '11px',
                             display: 'flex', alignItems: 'center', gap: '5px',
-                            opacity: (loading || (!input.trim() && attachedImages.length === 0) || !workspace?.id) ? 0.4 : 1,
+                            opacity: (loading || !input.trim() || !workspace?.id) ? 0.4 : 1,
                         }}
                     >
                         {loading ? <Loader size={13} className="spinning" /> : <Send size={13} />}
@@ -1238,7 +942,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
     );
 }
 
-function renderGroupedMessages(messages, handleApply) {
+function renderGroupedMessages(messages, handleApply, taskOverrides = {}, onTaskAction = null) {
     const out = [];
     let systemBucket = [];
 
@@ -1267,6 +971,20 @@ function renderGroupedMessages(messages, handleApply) {
         flushSystem();
 
         if (msg.role === 'plan') {
+            const taskBtnStyle = (color) => ({
+                background: 'none',
+                border: `1px solid ${color}40`,
+                borderRadius: '3px',
+                color,
+                cursor: 'pointer',
+                fontSize: '9px',
+                padding: '1px 6px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '2px',
+                fontFamily: "'JetBrains Mono', monospace",
+                lineHeight: 1.4,
+            });
             out.push(
                 <div key={idx} className="chat-message plan-message">
                     <div className="plan-header">
@@ -1274,14 +992,50 @@ function renderGroupedMessages(messages, handleApply) {
                         <span>AI Plan — {msg.tasks.length} step{msg.tasks.length !== 1 ? 's' : ''}</span>
                     </div>
                     <ol className="plan-task-list">
-                        {msg.tasks.map((t) => (
-                            <li key={t.id} className={`plan-task plan-task--${t.status}`}>
-                                <span className="plan-task-title">{t.title}</span>
-                                {t.description && (
-                                    <span className="plan-task-desc">{t.description}</span>
-                                )}
-                            </li>
-                        ))}
+                        {msg.tasks.map((t) => {
+                            const effectiveStatus = taskOverrides[t.id] ?? t.status;
+                            return (
+                                <li key={t.id} className={`plan-task plan-task--${effectiveStatus}`}>
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6px' }}>
+                                        <div>
+                                            <span className="plan-task-title">{t.title}</span>
+                                            {t.description && (
+                                                <span className="plan-task-desc">{t.description}</span>
+                                            )}
+                                            {effectiveStatus === 'paused' && (
+                                                <span style={{ display: 'block', fontSize: '9px', color: '#d29922', marginTop: '2px' }}>⏸ Paused</span>
+                                            )}
+                                            {effectiveStatus === 'skipped' && (
+                                                <span style={{ display: 'block', fontSize: '9px', color: '#484f58', marginTop: '2px' }}>⏭ Skipped</span>
+                                            )}
+                                        </div>
+                                        {onTaskAction && (
+                                            <div style={{ display: 'flex', gap: '3px', flexShrink: 0, marginTop: '1px' }}>
+                                                {effectiveStatus === 'paused' ? (
+                                                    <button style={taskBtnStyle('#3fb950')} onClick={() => onTaskAction(t.id, 'resume')} title="Resume">
+                                                        <Play size={8} /> Resume
+                                                    </button>
+                                                ) : effectiveStatus !== 'done' && effectiveStatus !== 'skipped' ? (
+                                                    <button style={taskBtnStyle('#d29922')} onClick={() => onTaskAction(t.id, 'pause')} title="Pause before this step">
+                                                        <Pause size={8} /> Pause
+                                                    </button>
+                                                ) : null}
+                                                {effectiveStatus !== 'skipped' && effectiveStatus !== 'done' && (
+                                                    <button style={taskBtnStyle('#484f58')} onClick={() => onTaskAction(t.id, 'skip')} title="Skip this step">
+                                                        <SkipForward size={8} /> Skip
+                                                    </button>
+                                                )}
+                                                {(effectiveStatus === 'done' || effectiveStatus === 'skipped') && (
+                                                    <button style={taskBtnStyle('#388bfd')} onClick={() => onTaskAction(t.id, 'rerun')} title="Re-run this step">
+                                                        <RotateCcw size={8} /> Re-run
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </li>
+                            );
+                        })}
                     </ol>
                 </div>
             );
@@ -1358,4 +1112,68 @@ function renderGroupedMessages(messages, handleApply) {
 
     flushSystem();
     return out;
+}
+
+// ── Agent Mode Picker ─────────────────────────────────────────────────────────
+
+const AGENT_MODES = [
+    { id: 'coder',      label: 'Coder',      icon: Code2,     desc: 'Write & edit code' },
+    { id: 'architect',  label: 'Architect',  icon: Building2, desc: 'Design & plan systems' },
+    { id: 'reviewer',   label: 'Reviewer',   icon: Eye,       desc: 'Find bugs & issues' },
+    { id: 'debugger',   label: 'Debugger',   icon: Bug,       desc: 'Trace & fix root causes' },
+    { id: 'documenter', label: 'Docs',       icon: BookOpen,  desc: 'Write documentation' },
+    { id: 'refactorer', label: 'Refactor',   icon: Wrench,    desc: 'Improve without breaking' },
+    { id: 'security',   label: 'Security',   icon: Shield,    desc: 'Audit for vulnerabilities' },
+];
+
+function AgentModePicker({ mode, onChange, disabled }) {
+    const activeMode = AGENT_MODES.find(m => m.id === mode) || AGENT_MODES[0];
+
+    return (
+        <div style={{
+            borderBottom: '1px solid #1c2128',
+            background: '#0a0c0f',
+            padding: '6px 10px 0',
+            flexShrink: 0,
+        }}>
+            <div style={{
+                display: 'flex', gap: '3px', overflowX: 'auto', paddingBottom: '6px',
+                scrollbarWidth: 'none',
+            }}>
+                {AGENT_MODES.map(m => {
+                    const Icon = m.icon;
+                    const active = mode === m.id;
+                    return (
+                        <button
+                            key={m.id}
+                            onClick={() => !disabled && onChange(m.id)}
+                            title={m.desc}
+                            disabled={disabled}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                                padding: '3px 8px', borderRadius: '12px', border: 'none',
+                                cursor: disabled ? 'default' : 'pointer',
+                                fontFamily: "'JetBrains Mono', monospace",
+                                fontSize: '10px', whiteSpace: 'nowrap',
+                                transition: 'all 0.15s',
+                                background: active ? 'rgba(255,107,53,0.15)' : 'transparent',
+                                color: active ? '#ff6b35' : '#484f58',
+                                outline: active ? '1px solid rgba(255,107,53,0.3)' : '1px solid transparent',
+                                opacity: disabled ? 0.5 : 1,
+                            }}
+                        >
+                            <Icon size={10} />
+                            {m.label}
+                        </button>
+                    );
+                })}
+            </div>
+            <div style={{
+                fontSize: '9px', color: '#484f58',
+                paddingBottom: '4px', lineHeight: 1,
+            }}>
+                {activeMode.desc}
+            </div>
+        </div>
+    );
 }

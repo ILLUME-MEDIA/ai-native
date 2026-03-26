@@ -17,9 +17,9 @@ return new class extends Migration
         });
 
         // Seed from existing config
-        $platformGenres = config('platform_genres');
+        $platformGenres = config('platform_genres', []);
         $order = 0;
-        foreach ($platformGenres as $platform => $genres) {
+        foreach ((array) $platformGenres as $platform => $genres) {
             \DB::table('platform_genres')->insert([
                 'platform_name' => $platform,
                 'genres'        => json_encode($genres),

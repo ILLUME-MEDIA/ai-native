@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { useMonaco } from '@monaco-editor/react';
 import axios from 'axios';
 
 export default function MonacoEditor({
@@ -18,6 +18,8 @@ export default function MonacoEditor({
     // B-06: AI Ghost Text
     ghostTextEnabled = false,
     workspaceId = null,
+    // B-09: Workspace snippets for completion
+    snippets = [],
 }) {
     const editorRef = useRef(null);
 
@@ -29,6 +31,57 @@ export default function MonacoEditor({
     useEffect(() => { ghostTextEnabledRef.current = ghostTextEnabled; }, [ghostTextEnabled]);
     useEffect(() => { workspaceIdRef.current = workspaceId; }, [workspaceId]);
     useEffect(() => { filePathRef.current = path; }, [path]);
+
+    // B-09: Register snippet completion providers whenever snippets change
+    const monaco = useMonaco();
+    const snippetDisposablesRef = useRef([]);
+
+    useEffect(() => {
+        if (!monaco || !snippets.length) return;
+
+        // Dispose previous providers
+        snippetDisposablesRef.current.forEach(d => d.dispose());
+        snippetDisposablesRef.current = [];
+
+        // Group snippets by language
+        const byLang = {};
+        for (const s of snippets) {
+            const lang = s.language || '*';
+            if (!byLang[lang]) byLang[lang] = [];
+            byLang[lang].push(s);
+        }
+
+        for (const [lang, langSnippets] of Object.entries(byLang)) {
+            const disposable = monaco.languages.registerCompletionItemProvider(lang, {
+                provideCompletionItems: (model, position) => {
+                    const word  = model.getWordUntilPosition(position);
+                    const range = {
+                        startLineNumber: position.lineNumber,
+                        endLineNumber:   position.lineNumber,
+                        startColumn:     word.startColumn,
+                        endColumn:       word.endColumn,
+                    };
+                    return {
+                        suggestions: langSnippets.map(s => ({
+                            label:            s.trigger,
+                            kind:             monaco.languages.CompletionItemKind.Snippet,
+                            detail:           s.name,
+                            documentation:    s.description || s.name,
+                            insertText:       s.body,
+                            insertTextRules:  monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range,
+                        })),
+                    };
+                },
+            });
+            snippetDisposablesRef.current.push(disposable);
+        }
+
+        return () => {
+            snippetDisposablesRef.current.forEach(d => d.dispose());
+            snippetDisposablesRef.current = [];
+        };
+    }, [monaco, snippets]);
 
     function handleEditorDidMount(editor, monaco) {
         editorRef.current = editor;

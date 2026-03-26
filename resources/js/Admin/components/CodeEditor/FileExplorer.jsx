@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
     ChevronRight, ChevronDown, File, Folder, FolderOpen,
     Search, FolderPlus, FilePlus, Trash2, Pencil,
-    MoreVertical, RefreshCw, Copy, Link, Star, X, Clock
+    MoreVertical, RefreshCw, Copy, Link, Star, X, Clock, Pin, GitCompare
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 
@@ -29,6 +29,8 @@ function TreeNode({
     onInputKeyDown,
     bookmarkedPaths,
     onToggleBookmark,
+    pinnedPaths,
+    onTogglePin,
 }) {
     const [expanded, setExpanded] = useState(depth < 2);
     const isActive = currentFile?.path === item.path;
@@ -95,6 +97,16 @@ function TreeNode({
                     <span className="file-name">{item.name}</span>
                 )}
 
+                {!isRenaming && item.type === 'file' && onTogglePin && (
+                    <span
+                        className="file-actions-btn"
+                        onClick={(e) => { e.stopPropagation(); onTogglePin(item); }}
+                        title={pinnedPaths?.has(item.path) ? 'Unpin from AI context' : 'Pin to AI context'}
+                        style={{ opacity: pinnedPaths?.has(item.path) ? 1 : undefined, color: pinnedPaths?.has(item.path) ? '#ff6b35' : undefined }}
+                    >
+                        <Pin size={11} fill={pinnedPaths?.has(item.path) ? 'currentColor' : 'none'} />
+                    </span>
+                )}
                 {!isRenaming && item.type === 'file' && onToggleBookmark && (
                     <span
                         className="file-actions-btn"
@@ -137,6 +149,8 @@ function TreeNode({
                             onInputKeyDown={onInputKeyDown}
                             bookmarkedPaths={bookmarkedPaths}
                             onToggleBookmark={onToggleBookmark}
+                            pinnedPaths={pinnedPaths}
+                            onTogglePin={onTogglePin}
                         />
                     ))}
 
@@ -169,7 +183,7 @@ function TreeNode({
 // ──────────────────────────────────────────────────
 // Main FileExplorer component
 // ──────────────────────────────────────────────────
-export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [], isDark = true }) {
+export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [], pinnedPaths, onTogglePin, onCompareWith }) {
     const [tree, setTree] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -853,6 +867,8 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
                             onInputKeyDown={handleInputKeyDown}
                             bookmarkedPaths={bookmarkedPaths}
                             onToggleBookmark={onToggleBookmark}
+                            pinnedPaths={pinnedPaths}
+                            onTogglePin={onTogglePin}
                         />
                     ))
                 ) : (
@@ -915,6 +931,17 @@ export default function FileExplorer({ workspace, onFileSelect, currentFile, onT
                     <button onClick={() => handleCopyRelativePath(contextMenu.item)}>
                         <Link size={14} /> Copy Relative Path
                     </button>
+                    {onCompareWith && contextMenu.item.type !== 'directory' && currentFile?.path && currentFile.path !== contextMenu.item.path && (
+                        <>
+                            <div className="context-menu-divider" />
+                            <button onClick={() => {
+                                onCompareWith(currentFile.path, contextMenu.item.path);
+                                setContextMenu(null);
+                            }}>
+                                <GitCompare size={14} /> Compare with active file
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
         </div>

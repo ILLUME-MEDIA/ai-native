@@ -588,7 +588,13 @@ Route::group([], function () {
     Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files
-        Route::get('files/search', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'search']);
+        Route::get('files/search',   [\App\Http\Controllers\Workspace\WorkspaceController::class, 'search']);
+        Route::post('files/replace', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'replaceInFiles']);
+        Route::get('todos',          [\App\Http\Controllers\Workspace\WorkspaceController::class, 'scanTodos']);
+
+        // B-03: Log Viewer
+        Route::get('logs',        [\App\Http\Controllers\Workspace\LogStreamController::class, 'tail']);
+        Route::get('logs/stream', [\App\Http\Controllers\Workspace\LogStreamController::class, 'stream']);
         Route::get('files', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'files']);
         Route::get('files/list', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'listDirectory']);
         Route::get('files/read', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'readFile']);
@@ -597,6 +603,12 @@ Route::group([], function () {
         Route::delete('files/delete', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'deleteFile']);
         Route::put('files/rename', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'renameFile']);
         Route::post('files/format', [\App\Http\Controllers\Workspace\WorkspaceController::class, 'formatFile']);
+
+        // B-08: File History Snapshots
+        Route::post('files/snapshot', [\App\Http\Controllers\Workspace\FileSnapshotController::class, 'store']);
+        Route::get('files/snapshots', [\App\Http\Controllers\Workspace\FileSnapshotController::class, 'index']);
+        Route::get('files/snapshots/{snapshot}', [\App\Http\Controllers\Workspace\FileSnapshotController::class, 'show']);
+        Route::post('files/snapshots/{snapshot}/restore', [\App\Http\Controllers\Workspace\FileSnapshotController::class, 'restore']);
 
         // Terminal
         Route::post('terminal/execute', [\App\Http\Controllers\Workspace\TerminalController::class, 'execute']);
@@ -624,11 +636,30 @@ Route::group([], function () {
         Route::post('git/branch', [\App\Http\Controllers\Workspace\GitController::class, 'createBranch']);
         Route::post('git/checkout', [\App\Http\Controllers\Workspace\GitController::class, 'checkout']);
 
+        // AI Rules — workspace-scoped
+        Route::get('ai/rules',       [\App\Http\Controllers\AI\AiRuleController::class, 'workspaceIndex']);
+        Route::post('ai/rules',      [\App\Http\Controllers\AI\AiRuleController::class, 'workspaceStore']);
+        // A-01: .airules project file
+        Route::get('ai/rules-file',  [\App\Http\Controllers\AI\AiRuleController::class, 'getRulesFile']);
+        Route::put('ai/rules-file',  [\App\Http\Controllers\AI\AiRuleController::class, 'putRulesFile']);
+
+        // B-06: Environment Variables Manager
+        Route::get('env',                [\App\Http\Controllers\Workspace\EnvFileController::class, 'show']);
+        Route::put('env',                [\App\Http\Controllers\Workspace\EnvFileController::class, 'update']);
+        Route::post('env/generate-key',  [\App\Http\Controllers\Workspace\EnvFileController::class, 'generateAppKey']);
+
         // AI Commands
         Route::post('ai/chat', [\App\Http\Controllers\Workspace\AICommandController::class, 'chat']);
         Route::post('ai/chat-stream', [\App\Http\Controllers\Workspace\AICommandController::class, 'chatStream']); // SSE streaming
         Route::post('ai/complete', [\App\Http\Controllers\Workspace\AICommandController::class, 'complete']); // B-06: inline ghost text
         Route::post('ai/sketch-to-code', [\App\Http\Controllers\Workspace\AICommandController::class, 'sketchToCode']); // C-02: whiteboard AI
+        Route::post('ai/commit-message', [\App\Http\Controllers\Workspace\AICommitController::class, 'generate']);     // E-02: AI commit message
+        Route::post('ai/review',           [\App\Http\Controllers\Workspace\AICommandController::class, 'review']);        // A-04: AI code review
+        Route::post('ai/resolve-conflict', [\App\Http\Controllers\Workspace\AICommandController::class, 'resolveConflict']); // E-03
+        Route::post('ai/tasks/{task}/pause',  [\App\Http\Controllers\Workspace\AITaskController::class, 'pause']);   // E-01
+        Route::post('ai/tasks/{task}/resume', [\App\Http\Controllers\Workspace\AITaskController::class, 'resume']);  // E-01
+        Route::post('ai/tasks/{task}/skip',   [\App\Http\Controllers\Workspace\AITaskController::class, 'skip']);    // E-01
+        Route::post('ai/tasks/{task}/rerun',  [\App\Http\Controllers\Workspace\AITaskController::class, 'rerun']);   // E-01
         Route::get('ai/approvals', [\App\Http\Controllers\Workspace\AICommandController::class, 'pendingApprovals']);
         Route::get('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'index']);
         Route::post('ai/conversations', [\App\Http\Controllers\Workspace\AIConversationController::class, 'store']);
@@ -656,6 +687,39 @@ Route::group([], function () {
         Route::post('mcp/install',   [\App\Http\Controllers\Workspace\MCPController::class, 'install']);
         Route::post('mcp/uninstall', [\App\Http\Controllers\Workspace\MCPController::class, 'uninstall']);
         Route::post('mcp/configure', [\App\Http\Controllers\Workspace\MCPController::class, 'configure']);
+
+        // B-05: Run Configurations
+        Route::get('run-configs',                        [\App\Http\Controllers\Workspace\RunConfigController::class, 'index']);
+        Route::post('run-configs',                       [\App\Http\Controllers\Workspace\RunConfigController::class, 'store']);
+        Route::patch('run-configs/{runConfig}',          [\App\Http\Controllers\Workspace\RunConfigController::class, 'update']);
+        Route::delete('run-configs/{runConfig}',         [\App\Http\Controllers\Workspace\RunConfigController::class, 'destroy']);
+        Route::post('run-configs/{runConfig}/execute',   [\App\Http\Controllers\Workspace\RunConfigController::class, 'execute']);
+
+        // B-09: Snippets
+        Route::get('snippets',              [\App\Http\Controllers\Workspace\SnippetController::class, 'index']);
+        Route::post('snippets',             [\App\Http\Controllers\Workspace\SnippetController::class, 'store']);
+        Route::patch('snippets/{snippet}',  [\App\Http\Controllers\Workspace\SnippetController::class, 'update']);
+        Route::delete('snippets/{snippet}', [\App\Http\Controllers\Workspace\SnippetController::class, 'destroy']);
+
+        // B-04: Test Runner
+        Route::get('test-runner/suites', [\App\Http\Controllers\Workspace\TestRunnerController::class, 'suites']);
+        Route::get('test-runner/run',    [\App\Http\Controllers\Workspace\TestRunnerController::class, 'run']); // SSE
+
+        // B-01: HTTP Client
+        Route::post('http-client/send',                                  [\App\Http\Controllers\Workspace\HttpClientController::class, 'send']);
+        Route::get('http-client/collections',                            [\App\Http\Controllers\Workspace\HttpClientController::class, 'collectionsIndex']);
+        Route::post('http-client/collections',                           [\App\Http\Controllers\Workspace\HttpClientController::class, 'collectionsStore']);
+        Route::patch('http-client/collections/{collection}',             [\App\Http\Controllers\Workspace\HttpClientController::class, 'collectionsUpdate']);
+        Route::delete('http-client/collections/{collection}',            [\App\Http\Controllers\Workspace\HttpClientController::class, 'collectionsDestroy']);
+        Route::post('http-client/collections/{collection}/requests',                      [\App\Http\Controllers\Workspace\HttpClientController::class, 'requestsStore']);
+        Route::patch('http-client/collections/{collection}/requests/{savedRequest}',      [\App\Http\Controllers\Workspace\HttpClientController::class, 'requestsUpdate']);
+        Route::delete('http-client/collections/{collection}/requests/{savedRequest}',     [\App\Http\Controllers\Workspace\HttpClientController::class, 'requestsDestroy']);
+
+        // B-02: Database Viewer
+        Route::get('db/tables',             [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'tables']);
+        Route::get('db/tables/{table}/columns', [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'columns']);
+        Route::get('db/tables/{table}/rows',    [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'rows']);
+        Route::post('db/query',             [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'query']);
     });
 
     // AI Command Approvals

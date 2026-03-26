@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { GitMerge, Check, X, ChevronRight, AlertTriangle } from 'lucide-react';
+import axios from 'axios';
+import { GitMerge, Check, X, ChevronRight, AlertTriangle, Zap, Loader } from 'lucide-react';
+import { toast } from 'react-toastify';
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
@@ -28,9 +30,10 @@ function applyResolutions(content, conflicts, resolutions) {
         const c = conflicts[i];
         const r = resolutions[i];
         let replacement = '';
-        if (r === 'current')  replacement = c.current;
-        else if (r === 'incoming') replacement = c.incoming;
-        else if (r === 'both')    replacement = c.current + '\n' + c.incoming;
+        if (r === 'current')        replacement = c.current;
+        else if (r === 'incoming')  replacement = c.incoming;
+        else if (r === 'both')      replacement = c.current + '\n' + c.incoming;
+        else if (r?.type === 'ai')  replacement = r.content;
         result = result.slice(0, c.startIdx) + replacement + result.slice(c.startIdx + c.full.length);
     }
     return result;
@@ -115,7 +118,7 @@ function ConflictCard({ conflict, index, resolution, onResolve }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: resolved ? '#3fb950' : '#c9d1d9' }}>
                     {resolved ? <Check size={12} style={{ color: '#3fb950' }} /> : <ChevronRight size={12} style={{ color: '#8b949e' }} />}
                     <span style={{ fontWeight: '600' }}>Conflict #{index + 1}</span>
-                    {resolved && <span style={{ fontSize: '10px', color: '#3fb950' }}>({resolution === 'current' ? 'Current' : resolution === 'incoming' ? 'Incoming' : 'Both'} accepted)</span>}
+                    {resolved && <span style={{ fontSize: '10px', color: '#3fb950' }}>({resolution?.type === 'ai' ? 'AI resolved' : resolution === 'current' ? 'Current' : resolution === 'incoming' ? 'Incoming' : 'Both'} accepted)</span>}
                 </div>
                 {resolved && (
                     <button
@@ -162,15 +165,62 @@ function ConflictCard({ conflict, index, resolution, onResolve }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function MergeConflictPanel({ file, onResolved, onClose }) {
+export default function MergeConflictPanel({ file, workspace, onResolved, onClose }) {
     const conflicts = useMemo(() => parseConflicts(file?.content || ''), [file?.content]);
     const [resolutions, setResolutions] = useState({});
+    const [aiResolving, setAiResolving] = useState(false);
 
     const resolvedCount = Object.values(resolutions).filter(r => r !== null && r !== undefined).length;
     const allResolved = resolvedCount === conflicts.length && conflicts.length > 0;
 
     function handleResolve(index, choice) {
         setResolutions(prev => ({ ...prev, [index]: choice }));
+    }
+
+    async function handleAiResolveAll() {
+        if (!workspace?.id || aiResolving) return;
+        const unresolved = conflicts
+            .map((c, i) => ({ ...c, index: i }))
+            .filter(c => resolutions[c.index] === null || resolutions[c.index] === undefined);
+
+        if (unresolved.length === 0) {
+            toast.info('All conflicts already resolved');
+            return;
+        }
+
+        setAiResolving(true);
+        const content = file.content;
+        const lines = content.split('\n');
+
+        try {
+            const newResolutions = { ...resolutions };
+
+            for (const c of unresolved) {
+                // Extract surrounding context (up to 15 lines before/after)
+                const startLine = content.slice(0, c.startIdx).split('\n').length - 1;
+                const endLine = content.slice(0, c.startIdx + c.full.length).split('\n').length - 1;
+                const contextBefore = lines.slice(Math.max(0, startLine - 15), startLine).join('\n');
+                const contextAfter  = lines.slice(endLine + 1, endLine + 16).join('\n');
+
+                const resp = await axios.post(`/api/workspaces/${workspace.id}/ai/resolve-conflict`, {
+                    ours:           c.current,
+                    theirs:         c.incoming,
+                    context_before: contextBefore,
+                    context_after:  contextAfter,
+                    file_path:      file.path || file.name,
+                });
+
+                // Store AI result as a special 'ai' resolution value
+                newResolutions[c.index] = { type: 'ai', content: resp.data.resolved };
+            }
+
+            setResolutions(newResolutions);
+            toast.success(`AI resolved ${unresolved.length} conflict${unresolved.length > 1 ? 's' : ''}`);
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'AI resolution failed');
+        } finally {
+            setAiResolving(false);
+        }
     }
 
     function handleApply() {
@@ -232,6 +282,30 @@ export default function MergeConflictPanel({ file, onResolved, onClose }) {
                     <span style={{ fontSize: '10px', color: resolvedCount === conflicts.length ? '#3fb950' : '#8b949e' }}>
                         {resolvedCount}/{conflicts.length} resolved
                     </span>
+                    {workspace && (
+                        <button
+                            onClick={handleAiResolveAll}
+                            disabled={aiResolving || allResolved}
+                            style={{
+                                background: 'rgba(255,107,53,0.1)',
+                                border: '1px solid rgba(255,107,53,0.3)',
+                                borderRadius: '4px',
+                                color: aiResolving ? '#484f58' : '#ff6b35',
+                                cursor: (aiResolving || allResolved) ? 'not-allowed' : 'pointer',
+                                fontSize: '11px',
+                                fontFamily: 'inherit',
+                                padding: '4px 10px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                opacity: allResolved ? 0.4 : 1,
+                            }}
+                            title="Let AI suggest resolutions for all unresolved conflicts"
+                        >
+                            {aiResolving ? <Loader size={11} /> : <Zap size={11} />}
+                            AI Resolve
+                        </button>
+                    )}
                     <button
                         onClick={handleApply}
                         disabled={!allResolved}

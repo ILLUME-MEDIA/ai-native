@@ -13,6 +13,10 @@ use Illuminate\Support\Facades\Auth;
 
 class AIManager
 {
+    /** Set before buildSystemPrompt() — used to scope AI rules */
+    protected ?int $contextUserId = null;
+    protected ?int $contextWorkspaceId = null;
+
     protected function buildUiTargetInstructions(string $uiTarget): string
     {
         $uiTarget = strtolower(trim($uiTarget ?: 'ask'));
@@ -31,6 +35,15 @@ class AIManager
 
         return $base;
     }
+    private function formatRules(\Illuminate\Support\Collection $rules): string
+    {
+        $out = '';
+        foreach ($rules as $rule) {
+            $out .= "\n### [RULE: {$rule->name}]\n" . $rule->rule_content;
+        }
+        return $out;
+    }
+
     /**
      * @param string $prompt
      * @param array $options
@@ -100,15 +113,19 @@ class AIManager
         $prompt .= "Project Root: " . base_path() . "\n";
         $prompt .= "Current Mode: {$mode}\n";
 
-        // Inject Rules - Absolute Global Scope
-        $rules = AiRule::where('is_active', true)->orderBy('priority', 'desc')->get();
-        $rulesContent = "";
-        foreach ($rules as $rule) {
-            // Simplified condition check for porting
-            $rulesContent .= "\n### [RULE: {$rule->name}]\n" . $rule->rule_content;
-        }
-        if ($rulesContent)
-            $prompt .= "\n\n### GLOBAL RULES\n" . $rulesContent;
+        // Inject Rules — scoped to system + this user + this workspace
+        $rules = AiRule::forContext($this->contextUserId, $this->contextWorkspaceId);
+
+        $systemRules    = $rules->filter(fn ($r) => is_null($r->user_id) && is_null($r->workspace_id));
+        $globalRules    = $rules->filter(fn ($r) => !is_null($r->user_id) && is_null($r->workspace_id));
+        $workspaceRules = $rules->filter(fn ($r) => !is_null($r->workspace_id));
+
+        if ($systemRules->count())
+            $prompt .= "\n\n### SYSTEM RULES\n" . $this->formatRules($systemRules);
+        if ($globalRules->count())
+            $prompt .= "\n\n### YOUR RULES\n" . $this->formatRules($globalRules);
+        if ($workspaceRules->count())
+            $prompt .= "\n\n### PROJECT RULES\n" . $this->formatRules($workspaceRules);
 
         // Inject Duties - Absolute Global Scope
         $duties = AiDuty::where('is_active', true)->orderBy('priority', 'desc')->get();
@@ -488,9 +505,27 @@ class AIManager
      * @param array $openFiles
      * @return string
      */
-    protected function buildCodeContext($currentFile, array $openFiles): string
+    protected function buildCodeContext($currentFile, array $openFiles, array $pinnedContext = []): string
     {
         $context = "# Code Editor Context\n\n";
+
+        // Pinned context — always included regardless of open tabs
+        if (!empty($pinnedContext)) {
+            $context .= "## Pinned Context (always relevant)\n\n";
+            foreach ($pinnedContext as $pin) {
+                $type    = $pin['type'] ?? 'file';
+                $label   = $pin['label'] ?? ($pin['path'] ?? 'snippet');
+                $content = $pin['content'] ?? '';
+                $lang    = $pin['language'] ?? 'text';
+
+                $context .= "### 📌 {$label}\n";
+                if ($type === 'snippet') {
+                    $context .= "```{$lang}\n{$content}\n```\n\n";
+                } else {
+                    $context .= "**Path:** `{$label}`\n\n```{$lang}\n{$content}\n```\n\n";
+                }
+            }
+        }
 
         if ($currentFile) {
             $context .= "## Current File\n\n";
@@ -691,8 +726,13 @@ class AIManager
         $uiTarget = (string) ($data['ui_target'] ?? 'ask');
         $workspace = $data['workspace'] ?? null;
         $user = $data['user'] ?? Auth::user();
+        $pinnedContext = $data['pinned_context'] ?? [];
         $shouldStop = $data['should_stop'] ?? null;
         $extraSystem = (string) ($data['extra_system'] ?? '');
+
+        // Set context so buildSystemPrompt() can scope rules correctly
+        $this->contextUserId      = $user?->id;
+        $this->contextWorkspaceId = $workspace?->id;
 
         try {
             // Required UX protocol: show liveness immediately
@@ -710,7 +750,7 @@ class AIManager
             }
 
             // Build context
-            $context = $this->buildCodeContext($currentFile, $openFiles);
+            $context = $this->buildCodeContext($currentFile, $openFiles, $pinnedContext);
             $baseSystemPrompt = $this->buildSystemPrompt('code_editor', $message) . "\n\n" . $context;
             $baseSystemPrompt .= "\n\n" . $this->buildUiTargetInstructions($uiTarget);
 
