@@ -654,6 +654,7 @@ Route::group([], function () {
     });
 
     // Workspaces (Isolated development environments)
+    Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files
@@ -790,6 +791,7 @@ Route::group([], function () {
         Route::get('db/tables/{table}/rows',    [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'rows']);
         Route::post('db/query',             [\App\Http\Controllers\Workspace\DatabaseViewerController::class, 'query']);
     });
+    }); // end auth:sanctum workspace group
 
     // AI Command Approvals
     Route::post('approvals/{approval}/approve', [\App\Http\Controllers\Workspace\AICommandController::class, 'approve']);
