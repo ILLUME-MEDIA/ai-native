@@ -73,47 +73,57 @@ class SchemaSyncService
      */
     protected function runPendingMigrations(): void
     {
-        // Step 1: Attempt a normal bulk migrate. Works fine on clean installs.
+        // Migrations can be slow — bump the time limit to avoid a web-request timeout.
+        $prevLimit = (int) ini_get('max_execution_time');
+        set_time_limit(120);
+
         try {
-            Artisan::call('migrate', ['--force' => true]);
-            return;
-        } catch (\Illuminate\Database\QueryException $e) {
-            if (!str_contains($e->getMessage(), 'already exists') && $e->getCode() !== '42S01') {
-                throw $e;
-            }
-            // Table-exists conflict — fall through to per-migration mode.
-        }
-
-        // Step 2: Run each pending migration individually so conflicts are handled gracefully.
-        $ran      = DB::table('migrations')->pluck('migration')->toArray();
-        $maxBatch = DB::table('migrations')->max('batch') ?? 0;
-        $batch    = $maxBatch + 1;
-
-        $files = glob(database_path('migrations/*.php'));
-        sort($files);
-
-        foreach ($files as $file) {
-            $name = pathinfo($file, PATHINFO_FILENAME);
-
-            if (in_array($name, $ran)) {
-                continue;
-            }
-
+            // Step 1: Attempt a normal bulk migrate. Works fine on clean installs.
             try {
-                Artisan::call('migrate', [
-                    '--force' => true,
-                    '--path'  => 'database/migrations/' . basename($file),
-                ]);
+                Artisan::call('migrate', ['--force' => true]);
+                return;
             } catch (\Illuminate\Database\QueryException $e) {
-                if (str_contains($e->getMessage(), 'already exists') || $e->getCode() === '42S01') {
-                    // Table already existed — mark migration as run so it won't be retried.
-                    DB::table('migrations')->insertOrIgnore([
-                        'migration' => $name,
-                        'batch'     => $batch,
-                    ]);
-                } else {
+                if (!str_contains($e->getMessage(), 'already exists') && $e->getCode() !== '42S01') {
                     throw $e;
                 }
+                // Table-exists conflict — fall through to per-migration mode.
+            }
+
+            // Step 2: Run each pending migration individually so conflicts are handled gracefully.
+            $ran      = DB::table('migrations')->pluck('migration')->toArray();
+            $maxBatch = DB::table('migrations')->max('batch') ?? 0;
+            $batch    = $maxBatch + 1;
+
+            $files = glob(database_path('migrations/*.php'));
+            sort($files);
+
+            foreach ($files as $file) {
+                $name = pathinfo($file, PATHINFO_FILENAME);
+
+                if (in_array($name, $ran)) {
+                    continue;
+                }
+
+                try {
+                    Artisan::call('migrate', [
+                        '--force' => true,
+                        '--path'  => 'database/migrations/' . basename($file),
+                    ]);
+                } catch (\Illuminate\Database\QueryException $e) {
+                    if (str_contains($e->getMessage(), 'already exists') || $e->getCode() === '42S01') {
+                        // Table already existed — mark migration as run so it won't be retried.
+                        DB::table('migrations')->insertOrIgnore([
+                            'migration' => $name,
+                            'batch'     => $batch,
+                        ]);
+                    } else {
+                        throw $e;
+                    }
+                }
+            }
+        } finally {
+            if ($prevLimit > 0) {
+                set_time_limit($prevLimit);
             }
         }
     }

@@ -45,7 +45,12 @@ function reconstructOriginal(modifiedContent, hunks) {
     return result.join('\n');
 }
 
-export default function DiffViewer({ workspace, file, type = 'unstaged', commitHash, onClose }) {
+/**
+ * DiffViewer — two modes:
+ *  1. Git diff:   props { workspace, file, type, commitHash, onClose }
+ *  2. File compare: props { workspace, fileA, fileB, onClose }
+ */
+export default function DiffViewer({ workspace, file, type = 'unstaged', commitHash, fileA, fileB, onClose }) {
     const [originalContent, setOriginalContent] = useState('');
     const [modifiedContent, setModifiedContent] = useState('');
     const [diffInfo, setDiffInfo] = useState(null);
@@ -53,9 +58,31 @@ export default function DiffViewer({ workspace, file, type = 'unstaged', commitH
     const [error, setError] = useState(null);
     const [splitView, setSplitView] = useState(true);
 
+    const compareMode = !!(fileA && fileB);
+
     useEffect(() => {
-        if (workspace && file) loadDiff();
-    }, [workspace?.id, file, type, commitHash]);
+        if (!workspace) return;
+        if (compareMode) loadFileCompare();
+        else if (file) loadDiff();
+    }, [workspace?.id, file, type, commitHash, fileA, fileB]);
+
+    async function loadFileCompare() {
+        setLoading(true);
+        setError(null);
+        try {
+            const [respA, respB] = await Promise.all([
+                axios.get(`/api/workspaces/${workspace.id}/files/read`, { params: { path: fileA } }),
+                axios.get(`/api/workspaces/${workspace.id}/files/read`, { params: { path: fileB } }),
+            ]);
+            setOriginalContent(respA.data.content || '');
+            setModifiedContent(respB.data.content || '');
+            setDiffInfo(null);
+        } catch {
+            setError('Failed to load files for comparison');
+        } finally {
+            setLoading(false);
+        }
+    }
 
     async function loadDiff() {
         setLoading(true);
@@ -125,7 +152,9 @@ export default function DiffViewer({ workspace, file, type = 'unstaged', commitH
             }}>
                 <GitCompare size={13} style={{ color: '#8b949e', flexShrink: 0 }} />
                 <span style={{ fontSize: '11px', color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {file}
+                    {compareMode
+                        ? <>{fileA?.split('/').pop()} <span style={{ color: '#484f58' }}>↔</span> {fileB?.split('/').pop()}</>
+                        : file}
                 </span>
                 {diffInfo && (
                     <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexShrink: 0 }}>
@@ -166,7 +195,7 @@ export default function DiffViewer({ workspace, file, type = 'unstaged', commitH
             <div style={{ flex: 1, overflow: 'hidden' }}>
                 <DiffEditor
                     height="100%"
-                    language={detectLanguage(file)}
+                    language={detectLanguage(compareMode ? fileA : file)}
                     original={originalContent}
                     modified={modifiedContent}
                     theme="vs-dark"

@@ -24,9 +24,25 @@ import MergeConflictPanel from '@/Admin/components/CodeEditor/MergeConflictPanel
 import PresenceIndicator from '@/Admin/components/CodeEditor/PresenceIndicator';
 import VisualEditor from '@/Admin/components/CodeEditor/VisualEditor';
 import WhiteboardPanel from '@/Admin/components/CodeEditor/WhiteboardPanel';
+import TestRunnerPanel from '@/Admin/components/CodeEditor/TestRunnerPanel';
+import HttpClientPanel from '@/Admin/components/CodeEditor/HttpClientPanel';
+import DatabasePanel from '@/Admin/components/CodeEditor/DatabasePanel';
+import DeployPanel from '@/Admin/components/CodeEditor/DeployPanel';
+import CollaborationCursors from '@/Admin/components/CodeEditor/CollaborationCursors';
+import PluginManagerPanel from '@/Admin/components/CodeEditor/PluginManagerPanel';
+import { usePluginRegistry } from '@/Admin/components/CodeEditor/usePluginRegistry';
 import MCPStorePanel from '@/Admin/components/CodeEditor/MCPStorePanel';
+import AIRulesPanel from '@/Admin/components/CodeEditor/AIRulesPanel';
+import FileHistoryPanel from '@/Admin/components/CodeEditor/FileHistoryPanel';
+import TodoTrackerPanel from '@/Admin/components/CodeEditor/TodoTrackerPanel';
+import RunConfigPanel from '@/Admin/components/CodeEditor/RunConfigPanel';
+import LogViewerPanel from '@/Admin/components/CodeEditor/LogViewerPanel';
+import SnippetsPanel from '@/Admin/components/CodeEditor/SnippetsPanel';
+import AICodeReviewPanel from '@/Admin/components/CodeEditor/AICodeReviewPanel';
+import EnvManagerPanel from '@/Admin/components/CodeEditor/EnvManagerPanel';
 import { toast } from 'react-toastify';
-import { Code, MessageSquare, Clock, Palette, Folder, GitBranch, Search, User, AlignLeft, Columns2, X as XIcon, Zap, Wrench, Settings, Star, Maximize2, Minimize2, Keyboard, AlertTriangle, Paintbrush, PenTool, Store } from 'lucide-react';
+import Swal from 'sweetalert2';
+import { Code, MessageSquare, Clock, Palette, Folder, GitBranch, Search, User, AlignLeft, Columns2, X as XIcon, Zap, Wrench, Settings, Star, Maximize2, Minimize2, Keyboard, AlertTriangle, Paintbrush, PenTool, Store, BookOpen, ListTodo, Play, FileText, Key, Globe, Database, FlaskConical, Rocket, Puzzle } from 'lucide-react';
 
 export default function CodeEditor() {
     const [workspace, setWorkspace] = useState(null);
@@ -48,6 +64,10 @@ export default function CodeEditor() {
     // Diff state
     const [diffFile, setDiffFile] = useState(null);
     const [diffType, setDiffType] = useState('unstaged');
+
+    // D-01: File comparison (any two files)
+    const [compareFileA, setCompareFileA] = useState(null);
+    const [compareFileB, setCompareFileB] = useState(null);
 
     // Blame state
     const [showBlame, setShowBlame] = useState(false);
@@ -82,6 +102,9 @@ export default function CodeEditor() {
     // ── Theme (light / dark / system) ──────────────────────────────
     const { isDark, tokens: t } = useCodeEditorTheme();
 
+    // F-01: Plugin registry snapshot (plugin-contributed panels appear in activity bar)
+    const { snapshot: pluginSnapshot } = usePluginRegistry();
+
     // B-06: AI Ghost Text
     const [ghostTextEnabled, setGhostTextEnabled] = useState(() => {
         try { return JSON.parse(localStorage.getItem('ce.ghostText') || 'false'); }
@@ -100,11 +123,23 @@ export default function CodeEditor() {
         catch { return {}; }
     });
 
+    // A-03: Pinned Context — keyed by workspace ID
+    const [allPinnedContext, setAllPinnedContext] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('ce.pinnedContext') || '{}'); }
+        catch { return {}; }
+    });
+
     // B-11: Recently Opened Files — keyed by workspace ID, last 10
     const [allRecents, setAllRecents] = useState(() => {
         try { return JSON.parse(localStorage.getItem('ce.recentFiles') || '{}'); }
         catch { return {}; }
     });
+
+    // B-09: Snippets
+    const [snippets, setSnippets] = useState([]);
+
+    // B-08: File history panel
+    const [showHistory, setShowHistory] = useState(false);
 
     // B-15: Merge conflict detection
     const conflictCount = (() => {
@@ -168,6 +203,42 @@ export default function CodeEditor() {
         localStorage.setItem('ce.bookmarks', JSON.stringify(next));
     }
 
+    // A-03: Pinned context helpers
+    function getWorkspacePinnedFiles() {
+        return workspace ? (allPinnedContext[workspace.id] || []) : [];
+    }
+    function togglePinnedFile(file) {
+        if (!workspace) return;
+        const wpc = allPinnedContext[workspace.id] || [];
+        const isPinned = wpc.some(p => p.path === file.path);
+        const newWpc = isPinned
+            ? wpc.filter(p => p.path !== file.path)
+            : [...wpc, { path: file.path, name: file.name || file.path.split('/').pop() }];
+        const next = { ...allPinnedContext, [workspace.id]: newWpc };
+        setAllPinnedContext(next);
+        localStorage.setItem('ce.pinnedContext', JSON.stringify(next));
+    }
+
+    // B-05: Run Configurations — execute in terminal
+    async function handleRunConfig(cfg) {
+        if (!workspace) return;
+        setTerminalOpen(true);
+        setBottomTab('terminal');
+        appendToTerminal([{ type: 'command', content: cfg.command, dir: cfg.cwd || '/' }]);
+        try {
+            const resp = await axios.post(`/api/workspaces/${workspace.id}/terminal/execute`, {
+                command: cfg.command,
+                cwd: cfg.cwd || '',
+            });
+            const entries = [];
+            if (resp.data?.output) entries.push({ type: 'output', content: resp.data.output });
+            if (resp.data?.error)  entries.push({ type: 'stderr', content: resp.data.error });
+            if (entries.length) appendToTerminal(entries);
+        } catch (e) {
+            appendToTerminal([{ type: 'error', content: e.response?.data?.error || e.message || 'Run failed' }]);
+        }
+    }
+
     // B-09: Settings updater — applies to Monaco live
     function updateEditorSettings(newSettings) {
         setEditorSettings(newSettings);
@@ -188,6 +259,14 @@ export default function CodeEditor() {
         axios.get(`/api/workspaces/${workspace.id}/git/branches`)
             .then(r => { if (r.data.current) setCurrentBranch(r.data.current); })
             .catch(() => {});
+    }, [workspace]);
+
+    // B-09: Load snippets when workspace changes
+    useEffect(() => {
+        if (!workspace) { setSnippets([]); return; }
+        axios.get(`/api/workspaces/${workspace.id}/snippets`)
+            .then(r => setSnippets(r.data || []))
+            .catch(() => setSnippets([]));
     }, [workspace]);
 
     // Scroll to pending line when activeTab changes
@@ -290,6 +369,7 @@ export default function CodeEditor() {
     async function handleFileSelect(file) {
         if (!workspace) return;
         setLeftView('explorer');
+        setShowHistory(false);
 
         // S3-1: Route to focused pane
         if (focusedPane === 'split' && splitMode) {
@@ -372,6 +452,16 @@ export default function CodeEditor() {
     function handleOpenDiff(file, type = 'unstaged') {
         setDiffFile(file);
         setDiffType(type);
+        setCompareFileA(null);
+        setCompareFileB(null);
+        setCenterView('diff');
+    }
+
+    // D-01: Compare two arbitrary files
+    function handleCompareWith(fileA, fileB) {
+        setCompareFileA(fileA);
+        setCompareFileB(fileB);
+        setDiffFile(null);
         setCenterView('diff');
     }
 
@@ -499,6 +589,12 @@ export default function CodeEditor() {
             setTabs(prev => prev.map(tab => tab.path === activeTab.path ? { ...tab, unsaved: false } : tab));
             setActiveTab(prev => ({ ...prev, unsaved: false }));
             toast.success('File saved');
+
+            // B-08: Save snapshot (fire-and-forget)
+            axios.post(`/api/workspaces/${workspace.id}/files/snapshot`, {
+                path: activeTab.path,
+                content: finalContent,
+            }).catch(() => {});
         } catch (error) {
             toast.error(error.response?.data?.error || 'Failed to save file');
         }
@@ -524,44 +620,95 @@ export default function CodeEditor() {
         return map[extension] || 'plaintext';
     }
 
+    function requireWorkspace(fn) {
+        if (!workspace) {
+            Swal.fire({
+                title: 'No Workspace Selected',
+                text: 'Please select a workspace before opening this panel.',
+                icon: 'warning',
+                confirmButtonText: 'Select Workspace',
+                confirmButtonColor: '#ff6b35',
+                background: '#161b22',
+                color: '#c9d1d9',
+            }).then(result => { if (result.isConfirmed) setLeftView('explorer'); });
+            return;
+        }
+        fn();
+    }
+
+    // null = visual divider
     const activityItems = [
-        { id: 'explorer',   icon: <Folder size={16} />,    label: 'Explorer',       action: () => setLeftView('explorer'),              isActive: () => leftView === 'explorer' },
-        { id: 'search',     icon: <Search size={16} />,    label: 'Search',         action: () => setLeftView('search'),                isActive: () => leftView === 'search' },
-        { id: 'git',        icon: <GitBranch size={16} />, label: 'Source Control', action: () => setLeftView('git'),                   isActive: () => leftView === 'git' },
-        { id: 'outline',    icon: <AlignLeft size={16} />, label: 'Outline',        action: () => setLeftView('outline'),               isActive: () => leftView === 'outline' },
-        { id: 'settings',   icon: <Settings size={16} />,  label: 'Settings',       action: () => setLeftView('settings'),              isActive: () => leftView === 'settings' },
-        { id: 'visual',     icon: <Paintbrush size={16} />, label: 'Visual Editor', action: () => setCenterView(v => v === 'visual' ? 'code' : 'visual'), isActive: () => centerView === 'visual' },
-        { id: 'whiteboard', icon: <PenTool size={16} />,   label: 'Whiteboard',    action: () => setCenterView(v => v === 'whiteboard' ? 'code' : 'whiteboard'), isActive: () => centerView === 'whiteboard' },
-        { id: 'mcp',        icon: <Store size={16} />,     label: 'MCP Store',     action: () => setLeftView(v => v === 'mcp' ? 'explorer' : 'mcp'),         isActive: () => leftView === 'mcp' },
+        { id: 'explorer',    icon: <Folder size={16} />,     label: 'Explorer',           action: () => setLeftView('explorer'),                                                          isActive: () => leftView === 'explorer' },
+        { id: 'search',      icon: <Search size={16} />,     label: 'Search',             action: () => setLeftView('search'),                                                            isActive: () => leftView === 'search' },
+        { id: 'git',         icon: <GitBranch size={16} />,  label: 'Source Control',     action: () => setLeftView('git'),                                                               isActive: () => leftView === 'git' },
+        { id: 'outline',     icon: <AlignLeft size={16} />,  label: 'Outline',            action: () => setLeftView('outline'),                                                           isActive: () => leftView === 'outline' },
+        { id: 'settings',    icon: <Settings size={16} />,   label: 'Settings',           action: () => setLeftView('settings'),                                                          isActive: () => leftView === 'settings' },
+        null, // ── Design ──
+        { id: 'visual',      icon: <Paintbrush size={16} />, label: 'Visual Editor',      action: () => requireWorkspace(() => setCenterView(v => v === 'visual'      ? 'code' : 'visual')),      isActive: () => centerView === 'visual' },
+        { id: 'whiteboard',  icon: <PenTool size={16} />,    label: 'Whiteboard',         action: () => requireWorkspace(() => setCenterView(v => v === 'whiteboard'  ? 'code' : 'whiteboard')),  isActive: () => centerView === 'whiteboard' },
+        null, // ── Tools ──
+        { id: 'http-client', icon: <Globe size={16} />,      label: 'HTTP Client',        action: () => requireWorkspace(() => setCenterView(v => v === 'http-client' ? 'code' : 'http-client')), isActive: () => centerView === 'http-client' },
+        { id: 'database',    icon: <Database size={16} />,   label: 'Database Viewer',    action: () => requireWorkspace(() => setCenterView(v => v === 'database'    ? 'code' : 'database')),    isActive: () => centerView === 'database' },
+        { id: 'deploy',      icon: <Rocket size={16} />,     label: 'Deploy',             action: () => requireWorkspace(() => setCenterView(v => v === 'deploy'      ? 'code' : 'deploy')),      isActive: () => centerView === 'deploy' },
+        null, // ── Config ──
+        { id: 'ai-rules',    icon: <BookOpen size={16} />,   label: 'AI Rules',           action: () => setLeftView(v => v === 'ai-rules'    ? 'explorer' : 'ai-rules'),    isActive: () => leftView === 'ai-rules' },
+        { id: 'run-configs', icon: <Play size={16} />,       label: 'Run Configurations', action: () => setLeftView(v => v === 'run-configs' ? 'explorer' : 'run-configs'), isActive: () => leftView === 'run-configs' },
+        { id: 'snippets',    icon: <Zap size={16} />,        label: 'Snippets',           action: () => setLeftView(v => v === 'snippets'    ? 'explorer' : 'snippets'),    isActive: () => leftView === 'snippets' },
+        { id: 'env',         icon: <Key size={16} />,        label: 'Env Manager',        action: () => setLeftView(v => v === 'env'         ? 'explorer' : 'env'),         isActive: () => leftView === 'env' },
+        { id: 'mcp',         icon: <Store size={16} />,      label: 'MCP Store',          action: () => setLeftView(v => v === 'mcp'         ? 'explorer' : 'mcp'),         isActive: () => leftView === 'mcp' },
+        { id: 'plugins',     icon: <Puzzle size={16} />,     label: 'Plugins',            action: () => setLeftView(v => v === 'plugins'     ? 'explorer' : 'plugins'),     isActive: () => leftView === 'plugins' },
+        // F-01: Plugin-contributed left panels
+        ...pluginSnapshot.panels.filter(p => p.slot === 'left').map(p => ({
+            id: p.id, icon: p.icon ?? <Puzzle size={16} />, label: p.label,
+            action: () => setLeftView(v => v === p.id ? 'explorer' : p.id),
+            isActive: () => leftView === p.id,
+        })),
     ];
 
     const rightPanels = [
         { id: 'chat',      icon: <MessageSquare size={14} />, label: 'AI CHAT' },
+        { id: 'review',    icon: <Wrench size={14} />,        label: 'REVIEW' },
         { id: 'theme',     icon: <Palette size={14} />,       label: 'THEME' },
         { id: 'approvals', icon: <Clock size={14} />,         label: 'APPROVALS' },
     ];
 
-    const blameBtn = activeTab && workspace?.git_enabled ? (
-        <button
-            onClick={handleBlameToggle}
-            title={showBlame ? 'Hide blame' : 'Show git blame'}
-            disabled={blameLoading}
-            style={{
-                background: showBlame ? 'rgba(255,107,53,0.12)' : 'none',
-                border: showBlame ? `1px solid ${t.accentBorder}` : '1px solid transparent',
-                borderRadius: '3px',
-                color: showBlame ? t.accent : blameLoading ? t.text4 : t.text3,
-                cursor: blameLoading ? 'wait' : 'pointer',
-                padding: '2px 5px',
-                display: 'flex',
-                alignItems: 'center',
-                fontSize: '10px',
-                fontFamily: 'inherit',
-                gap: '3px',
-            }}
-        >
-            <User size={11} />
-        </button>
+    const breadcrumbBtnStyle = (active) => ({
+        background: active ? 'rgba(255,107,53,0.12)' : 'none',
+        border: active ? '1px solid rgba(255,107,53,0.3)' : '1px solid transparent',
+        borderRadius: '3px',
+        color: active ? '#ff6b35' : '#8b949e',
+        cursor: 'pointer',
+        padding: '2px 5px',
+        display: 'flex', alignItems: 'center',
+        fontSize: '10px', fontFamily: 'inherit', gap: '3px',
+    });
+
+    const blameBtn = activeTab ? (
+        <>
+            {/* B-08: File History */}
+            <button
+                onClick={() => setShowHistory(v => !v)}
+                title={showHistory ? 'Close file history' : 'Show file history'}
+                style={breadcrumbBtnStyle(showHistory)}
+            >
+                <Clock size={11} />
+            </button>
+            {/* Git Blame */}
+            {workspace?.git_enabled && (
+                <button
+                    onClick={handleBlameToggle}
+                    title={showBlame ? 'Hide blame' : 'Show git blame'}
+                    disabled={blameLoading}
+                    style={{
+                        ...breadcrumbBtnStyle(showBlame),
+                        color: showBlame ? '#ff6b35' : blameLoading ? '#484f58' : '#8b949e',
+                        cursor: blameLoading ? 'wait' : 'pointer',
+                    }}
+                >
+                    <User size={11} />
+                </button>
+            )}
+        </>
     ) : null;
 
     return (
@@ -585,6 +732,15 @@ export default function CodeEditor() {
                 visible={showShortcuts}
                 onClose={() => setShowShortcuts(false)}
             />
+
+            {/* C-02: Collaboration cursors — invisible, manages Monaco decorations */}
+            {workspace && (
+                <CollaborationCursors
+                    workspace={workspace}
+                    monacoEditorRef={monacoEditorRef}
+                    activeTab={activeTab}
+                />
+            )}
 
             {/* S3-2: AI Selection Action Bar */}
             {selectionActionBar && (
@@ -688,12 +844,19 @@ export default function CodeEditor() {
                         flexDirection: 'column',
                         alignItems: 'center',
                         paddingTop: '12px',
+                        paddingBottom: '8px',
                         gap: '4px',
                         flexShrink: 0,
-                        overflow: 'hidden',
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        scrollbarWidth: 'none',
                         transition: 'width 0.2s',
                     }}>
-                        {activityItems.map(({ id, icon, label, action, isActive }) => {
+                        {activityItems.map((item, i) => {
+                            if (!item) return (
+                                <div key={`div-${i}`} style={{ width: '24px', height: '1px', background: t.border, margin: '4px 0', flexShrink: 0 }} />
+                            );
+                            const { id, icon, label, action, isActive } = item;
                             const active = isActive();
                             return (
                                 <button
@@ -753,7 +916,9 @@ export default function CodeEditor() {
                                     bookmarks={getWorkspaceBookmarks()}
                                     onToggleBookmark={toggleBookmark}
                                     recentFiles={getWorkspaceRecents()}
-                                    isDark={isDark}
+                                    pinnedPaths={new Set(getWorkspacePinnedFiles().map(p => p.path))}
+                                    onTogglePin={togglePinnedFile}
+                                    onCompareWith={handleCompareWith}
                                 />
                             )}
 
@@ -804,6 +969,45 @@ export default function CodeEditor() {
                             {leftView === 'mcp' && (
                                 <MCPStorePanel workspace={workspace} isDark={isDark} />
                             )}
+
+                            {/* A-01: AI Rules */}
+                            {leftView === 'ai-rules' && (
+                                <AIRulesPanel workspace={workspace} />
+                            )}
+
+                            {/* B-05: Run Configurations */}
+                            {leftView === 'run-configs' && (
+                                <RunConfigPanel
+                                    workspace={workspace}
+                                    onRunConfig={handleRunConfig}
+                                />
+                            )}
+
+                            {/* B-09: Snippets */}
+                            {leftView === 'snippets' && (
+                                <SnippetsPanel
+                                    workspace={workspace}
+                                    snippets={snippets}
+                                    onSnippetsChange={setSnippets}
+                                />
+                            )}
+
+                            {/* B-06: Env Manager */}
+                            {leftView === 'env' && (
+                                <EnvManagerPanel workspace={workspace} />
+                            )}
+
+                            {/* F-01: Plugin Manager */}
+                            {leftView === 'plugins' && (
+                                <PluginManagerPanel />
+                            )}
+
+                            {/* F-01: Plugin-contributed left panels */}
+                            {pluginSnapshot.panels.filter(p => p.slot === 'left').map(p => (
+                                leftView === p.id && (
+                                    <p.component key={p.id} workspace={workspace} {...(p.props ?? {})} />
+                                )
+                            ))}
                         </div>
                     )}
 
@@ -918,7 +1122,24 @@ export default function CodeEditor() {
                                 </div>
                             )}
 
-                            <div className="editor-canvas" style={{ flex: 1, overflow: 'hidden' }}>
+                            <div className="editor-canvas" style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+                                {/* B-08: File History Overlay */}
+                                {showHistory && activeTab && (
+                                    <FileHistoryPanel
+                                        workspace={workspace}
+                                        activeTab={activeTab}
+                                        onClose={() => setShowHistory(false)}
+                                        onRestore={(content) => {
+                                            setTabs(prev => prev.map(t =>
+                                                t.path === activeTab.path
+                                                    ? { ...t, content, unsaved: true }
+                                                    : t
+                                            ));
+                                            setActiveTab(prev => ({ ...prev, content, unsaved: true }));
+                                            if (monacoEditorRef.current) monacoEditorRef.current.setValue(content);
+                                        }}
+                                    />
+                                )}
                                 {!workspace ? (
                                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                         <Code size={52} />
@@ -927,7 +1148,13 @@ export default function CodeEditor() {
                                     </div>
                                 ) : (
                                     <>
-                                        {centerView === 'visual' ? (
+                                        {centerView === 'http-client' ? (
+                                            <HttpClientPanel workspace={workspace} />
+                                        ) : centerView === 'database' ? (
+                                            <DatabasePanel workspace={workspace} />
+                                        ) : centerView === 'deploy' ? (
+                                            <DeployPanel workspace={workspace} />
+                                        ) : centerView === 'visual' ? (
                                             <VisualEditor
                                                 workspace={workspace}
                                                 activeTab={activeTab}
@@ -954,16 +1181,19 @@ export default function CodeEditor() {
                                                 activeTab={activeTab}
                                                 onClose={() => setCenterView('code')}
                                             />
-                                        ) : centerView === 'diff' && diffFile ? (
+                                        ) : centerView === 'diff' && (diffFile || (compareFileA && compareFileB)) ? (
                                             <DiffViewer
                                                 workspace={workspace}
                                                 file={diffFile}
                                                 type={diffType}
-                                                onClose={() => setCenterView('code')}
+                                                fileA={compareFileA}
+                                                fileB={compareFileB}
+                                                onClose={() => { setCenterView('code'); setCompareFileA(null); setCompareFileB(null); }}
                                             />
                                         ) : centerView === 'merge' && activeTab ? (
                                             <MergeConflictPanel
                                                 file={activeTab}
+                                                workspace={workspace}
                                                 onResolved={(newContent) => {
                                                     setTabs(prev => prev.map(t =>
                                                         t.path === activeTab.path ? { ...t, content: newContent, unsaved: true } : t
@@ -1004,7 +1234,7 @@ export default function CodeEditor() {
                                                                     settings={editorSettings}
                                                                     ghostTextEnabled={ghostTextEnabled}
                                                                     workspaceId={workspace?.id}
-                                                                    theme={t.monacoTheme}
+                                                                    snippets={snippets}
                                                                 />
                                                             </div>
                                                         </>
@@ -1100,12 +1330,19 @@ export default function CodeEditor() {
                                 {terminalOpen && (
                                     <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${t.border}`, background: t.bg2, flexShrink: 0 }}>
                                         {[
-                                            { id: 'terminal', label: 'TERMINAL', icon: null },
-                                            { id: 'problems', label: 'PROBLEMS', icon: <Wrench size={10} /> },
+                                            { id: 'terminal', label: 'TERMINAL',     icon: null },
+                                            { id: 'problems', label: 'PROBLEMS',     icon: <Wrench size={10} /> },
+                                            { id: 'todo',     label: 'TODO',         icon: <ListTodo size={10} /> },
+                                            { id: 'logs',     label: 'LOGS',         icon: <FileText size={10} /> },
+                                            { id: 'tests',    label: 'TEST RUNNER',  icon: <FlaskConical size={10} /> },
+                                            // F-01: Plugin-contributed bottom dock tabs
+                                            ...pluginSnapshot.panels.filter(p => p.slot === 'bottom').map(p => ({
+                                                id: p.id, label: p.label.toUpperCase(), icon: p.icon ?? null,
+                                            })),
                                         ].map(({ id, label, icon }) => (
                                             <button
                                                 key={id}
-                                                onClick={() => setBottomTab(id)}
+                                                onClick={() => { setBottomTab(id); setTerminalOpen(true); }}
                                                 style={{
                                                     background: 'none', border: 'none', cursor: 'pointer',
                                                     padding: '4px 12px',
@@ -1159,6 +1396,63 @@ export default function CodeEditor() {
                                             }}
                                         />
                                     )}
+                                    {bottomTab === 'todo' && (
+                                        <TodoTrackerPanel
+                                            workspace={workspace}
+                                            onJumpToFile={(path, line) => {
+                                                pendingScrollLineRef.current = line;
+                                                const existing = tabs.find(t => t.path === path);
+                                                if (existing) {
+                                                    setActiveTab(existing);
+                                                    setCenterView('code');
+                                                    setFocusedPane('main');
+                                                } else {
+                                                    handleFileSelect({ path, name: path.split('/').pop() });
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                    {/* B-03: Log Viewer */}
+                                    {bottomTab === 'logs' && (
+                                        <LogViewerPanel
+                                            workspace={workspace}
+                                            onJumpToFile={(path, line) => {
+                                                pendingScrollLineRef.current = line;
+                                                const existing = tabs.find(t => t.path === path);
+                                                if (existing) {
+                                                    setActiveTab(existing);
+                                                    setCenterView('code');
+                                                    setFocusedPane('main');
+                                                } else {
+                                                    handleFileSelect({ path, name: path.split('/').pop() });
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                    {/* B-04: Test Runner */}
+                                    {bottomTab === 'tests' && (
+                                        <TestRunnerPanel
+                                            workspace={workspace}
+                                            onJumpToFile={(path, line) => {
+                                                pendingScrollLineRef.current = line;
+                                                const existing = tabs.find(t => t.path === path);
+                                                if (existing) {
+                                                    setActiveTab(existing);
+                                                    setCenterView('code');
+                                                    setFocusedPane('main');
+                                                } else {
+                                                    handleFileSelect({ path, name: path.split('/').pop() });
+                                                }
+                                            }}
+                                            isDark={isDark}
+                                        />
+                                    )}
+                                    {/* F-01: Plugin-contributed bottom dock panels */}
+                                    {pluginSnapshot.panels.filter(p => p.slot === 'bottom').map(p => (
+                                        bottomTab === p.id && (
+                                            <p.component key={p.id} workspace={workspace} {...(p.props ?? {})} />
+                                        )
+                                    ))}
                                 </div>
                             </div>
                         </div>
@@ -1178,8 +1472,22 @@ export default function CodeEditor() {
                                 {[`⎇ ${currentBranch}`, activeTab?.language ?? 'plaintext'].map(s => (
                                     <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: t.text3 }}>{s}</span>
                                 ))}
+                                {/* F-01: Plugin-contributed left-aligned status items */}
+                                {pluginSnapshot.statusItems.filter(s => s.align === 'left').map(s => (
+                                    <span key={s.id} onClick={s.onClick} title={s.tooltip}
+                                        style={{ fontSize: '10px', color: '#8b949e', cursor: s.onClick ? 'pointer' : 'default' }}>
+                                        {s.label}
+                                    </span>
+                                ))}
                             </div>
                             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                {/* F-01: Plugin-contributed right-aligned status items */}
+                                {pluginSnapshot.statusItems.filter(s => s.align !== 'left').map(s => (
+                                    <span key={s.id} onClick={s.onClick} title={s.tooltip}
+                                        style={{ fontSize: '10px', color: '#8b949e', cursor: s.onClick ? 'pointer' : 'default' }}>
+                                        {s.label}
+                                    </span>
+                                ))}
                                 {/* B-20: Presence / Collaboration Indicators */}
                                 <PresenceIndicator
                                     workspaceId={workspace?.id}
@@ -1292,6 +1600,8 @@ export default function CodeEditor() {
                                     onFileTreePatch={applyFileTreePatch}
                                     prefill={aiChatPrefill}
                                     onPrefillConsumed={() => setAiChatPrefill(null)}
+                                    pinnedContext={getWorkspacePinnedFiles()}
+                                    onUnpinFile={togglePinnedFile}
                                     onApplyChanges={(changes) => {
                                         changes.forEach(change => {
                                             const tab = tabs.find(t => t.path === change.path);
@@ -1302,6 +1612,18 @@ export default function CodeEditor() {
                                                 }
                                             }
                                         });
+                                    }}
+                                />
+                            )}
+                            {activePanel === 'review' && (
+                                <AICodeReviewPanel
+                                    workspace={workspace}
+                                    activeFile={activeTab}
+                                    onJumpToLine={(line) => {
+                                        if (monacoEditorRef.current) {
+                                            monacoEditorRef.current.revealLineInCenter(line);
+                                            monacoEditorRef.current.setPosition({ lineNumber: line, column: 1 });
+                                        }
                                     }}
                                 />
                             )}

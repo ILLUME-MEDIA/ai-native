@@ -10,7 +10,7 @@ class WorkspacePresence extends Model
 
     protected $table = 'workspace_presence';
 
-    protected $fillable = ['workspace_id', 'user_id', 'open_file', 'last_seen_at'];
+    protected $fillable = ['workspace_id', 'user_id', 'open_file', 'cursor_line', 'cursor_col', 'last_seen_at'];
 
     protected $casts = [
         'last_seen_at' => 'datetime',

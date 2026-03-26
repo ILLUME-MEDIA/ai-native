@@ -17,12 +17,19 @@ class PresenceController extends Controller
     public function heartbeat(Request $request, Workspace $workspace): \Illuminate\Http\JsonResponse
     {
         $data = $request->validate([
-            'open_file' => 'nullable|string|max:500',
+            'open_file'   => 'nullable|string|max:500',
+            'cursor_line' => 'nullable|integer|min:1',
+            'cursor_col'  => 'nullable|integer|min:1',
         ]);
 
         WorkspacePresence::updateOrCreate(
             ['workspace_id' => $workspace->id, 'user_id' => Auth::id()],
-            ['open_file' => $data['open_file'] ?? null, 'last_seen_at' => now()]
+            [
+                'open_file'   => $data['open_file']   ?? null,
+                'cursor_line' => $data['cursor_line']  ?? null,
+                'cursor_col'  => $data['cursor_col']   ?? null,
+                'last_seen_at' => now(),
+            ]
         );
 
         return response()->json(['ok' => true]);
@@ -41,9 +48,11 @@ class PresenceController extends Controller
             ->where('user_id', '!=', Auth::id())
             ->get()
             ->map(fn($p) => [
-                'user_id'   => $p->user_id,
-                'name'      => $p->user?->name ?? 'Unknown',
-                'open_file' => $p->open_file,
+                'user_id'     => $p->user_id,
+                'name'        => $p->user?->name ?? 'Unknown',
+                'open_file'   => $p->open_file,
+                'cursor_line' => $p->cursor_line,
+                'cursor_col'  => $p->cursor_col,
             ]);
 
         return response()->json(['users' => $users]);

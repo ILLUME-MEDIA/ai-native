@@ -115,12 +115,9 @@ class AICommandController extends Controller
                 'open_files'  => [],
             ]);
 
-            $code = $result['text'] ?? '';
-            // Strip accidental markdown fences
-            $code = preg_replace('/^```[a-z]*\n?/i', '', $code);
-            $code = preg_replace('/\n?```$/i', '', $code);
+            $code = $this->stripFences($result['text'] ?? '');
 
-            return response()->json(['success' => true, 'code' => trim($code)]);
+            return response()->json(['success' => true, 'code' => $code]);
         } catch (\Exception) {
             return response()->json(['success' => false, 'code' => '', 'error' => 'AI conversion failed'], 500);
         }
@@ -176,11 +173,7 @@ EOT;
                 'open_files'  => [],
             ]);
 
-            $completion = $result['text'] ?? '';
-
-            // Strip accidental markdown fences
-            $completion = preg_replace('/^```[a-z]*\n?/i', '', $completion);
-            $completion = preg_replace('/\n?```$/i', '', $completion);
+            $completion = $this->stripFences($result['text'] ?? '');
 
             return response()->json(['success' => true, 'completion' => trim($completion)]);
         } catch (\Exception) {
@@ -202,8 +195,10 @@ EOT;
             'model_id' => 'nullable|string',
             'conversation_id' => 'nullable|integer',
             'ui_target' => 'nullable|in:ask,react,html,blade',
+            'agent_mode' => 'nullable|in:coder,architect,reviewer,debugger,documenter,refactorer,security',
             'current_file' => 'nullable|array',
-            'open_files' => 'nullable|array'
+            'open_files' => 'nullable|array',
+            'pinned_context' => 'nullable|array'
         ]);
 
         // Prevent PHP timeout for long-running AI requests
@@ -257,6 +252,24 @@ EOT;
             $classification['is_vague']
         );
 
+        // Append agent mode addendum
+        $agentMode = $request->input('agent_mode', 'coder');
+        $modeAddendum = $this->orchestrator->getModeSystemAddendum($agentMode);
+        if ($modeAddendum) {
+            $orchestratorAddendum = $modeAddendum . ($orchestratorAddendum ? "\n\n" . $orchestratorAddendum : '');
+        }
+
+        // A-01: Inject .airules project rules file if it exists
+        $airulesPath = rtrim($workspace->full_path, '/\\') . '/.airules';
+        $airulesContent = @file_get_contents($airulesPath);
+        if ($airulesContent !== false) {
+            $airulesContent = trim($airulesContent);
+            if ($airulesContent !== '') {
+                $projectRulesAddendum = "## PROJECT RULES (.airules)\nThe following rules are specific to this project and must be followed at all times:\n{$airulesContent}";
+                $orchestratorAddendum = $projectRulesAddendum . ($orchestratorAddendum ? "\n\n" . $orchestratorAddendum : '');
+            }
+        }
+
         // SSE headers
         return response()->stream(function () use ($request, $workspace, $conversation, $orchestratorAddendum) {
             // Send headers for SSE
@@ -285,6 +298,7 @@ EOT;
                     'ui_target' => $request->input('ui_target', 'ask'),
                     'current_file' => $request->current_file,
                     'open_files' => $request->open_files ?? [],
+                    'pinned_context' => $request->pinned_context ?? [],
                     'workspace' => $workspace,
                     'user' => auth()->user(),
                     'extra_system' => $orchestratorAddendum,
@@ -460,6 +474,16 @@ EOT;
     }
 
     /**
+     * Strip accidental markdown code fences from AI output.
+     */
+    private function stripFences(string $text): string
+    {
+        $text = preg_replace('/^```[a-z]*\n?/i', '', $text);
+        $text = preg_replace('/\n?```$/i', '', $text);
+        return trim($text);
+    }
+
+    /**
      * Send Server-Sent Event
      */
     protected function sendSSE(string $event, $data): void
@@ -472,6 +496,126 @@ EOT;
             ob_flush();
         }
         flush();
+    }
+
+    /**
+     * A-04: AI Code Review — returns structured findings for the given file.
+     */
+    public function review(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'path'    => 'required|string',
+            'content' => 'required|string|max:500000',
+        ]);
+
+        $systemPrompt = <<<'SYS'
+## AGENT MODE: CODE REVIEWER
+You are acting as a Senior Code Reviewer. Analyse the provided code for bugs, security vulnerabilities (OWASP Top 10), performance issues, and code smells.
+
+Return ONLY a valid JSON array of findings. Each finding must have:
+- "line": integer (line number, or null if file-level)
+- "severity": one of "critical", "error", "warning", "info"
+- "message": string (concise description of the issue)
+- "suggestion": string (how to fix it, in plain text)
+- "fix_diff": string or null (optional: show the corrected code snippet)
+
+Example output:
+[{"line":42,"severity":"error","message":"SQL injection risk","suggestion":"Use parameter binding","fix_diff":null}]
+
+Return ONLY the JSON array. No markdown fences, no preamble, no explanation outside the array.
+SYS;
+
+        $userPrompt = $systemPrompt . "\n\nReview this file and return ONLY the JSON array of findings:\n\nFile: {$data['path']}\n\n```\n" . mb_substr($data['content'], 0, 80000) . "\n```";
+
+        try {
+            $result = $this->aiManager->chatWithCode([
+                'message'     => $userPrompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $text = $this->stripFences($result['text'] ?? '');
+
+            $findings = json_decode($text, true);
+            if (!is_array($findings)) {
+                $findings = [];
+            }
+
+            return response()->json(['findings' => $findings]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage(), 'findings' => []], 500);
+        }
+    }
+
+    /**
+     * E-03: AI-Assisted Merge Conflict Resolution
+     * Takes both sides of a conflict and returns an AI-proposed merged result.
+     */
+    public function resolveConflict(Request $request, Workspace $workspace)
+    {
+        $this->authorize('update', $workspace);
+
+        $data = $request->validate([
+            'ours'           => 'required|string|max:50000',
+            'theirs'         => 'required|string|max:50000',
+            'context_before' => 'nullable|string|max:20000',
+            'context_after'  => 'nullable|string|max:20000',
+            'file_path'      => 'nullable|string|max:500',
+        ]);
+
+        $contextBefore = $data['context_before'] ?? '';
+        $contextAfter  = $data['context_after']  ?? '';
+        $filePath      = $data['file_path']       ?? 'unknown';
+
+        $prompt = <<<EOT
+You are a senior developer resolving a Git merge conflict.
+
+File: {$filePath}
+
+Context before the conflict:
+```
+{$contextBefore}
+```
+
+CURRENT branch (ours):
+```
+{$data['ours']}
+```
+
+INCOMING branch (theirs):
+```
+{$data['theirs']}
+```
+
+Context after the conflict:
+```
+{$contextAfter}
+```
+
+Provide the best merged resolution that preserves the intent of both sides. Return ONLY the merged code — no explanations, no markdown fences, no conflict markers. Just the resolved code that should replace the entire conflict block.
+EOT;
+
+        try {
+            $result = $this->aiManager->chatWithCode([
+                'message'     => $prompt,
+                'endpoint_id' => null,
+                'model_id'    => 'AUTO',
+                'ui_target'   => 'ask',
+                'workspace'   => $workspace,
+                'open_files'  => [],
+            ]);
+
+            $resolved = $this->stripFences($result['text'] ?? '');
+
+            return response()->json(['resolved' => $resolved]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     public function pendingApprovals(Workspace $workspace)
