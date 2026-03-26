@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Ecommerce;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cuisine;
+use App\Models\Muzzhub;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -34,12 +35,27 @@ class CuisineController extends Controller
             return response()->json($q->paginate($request->input('per_page', 15)));
         }
 
-        $cuisines = Cuisine::where('is_active', true)
-            ->orderBy('sort_order')
-            ->orderBy('name')
-            ->get(['id', 'name', 'slug', 'icon', 'hover_icon']);
+        $lat    = $request->filled('lat')    ? (float) $request->lat    : null;
+        $lng    = $request->filled('lng')    ? (float) $request->lng    : null;
+        $radius = $request->filled('radius') ? (float) $request->radius : 100;
 
-        return response()->json($cuisines);
+        $q = Cuisine::where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderBy('name');
+
+        if ($lat !== null && $lng !== null) {
+            // Only return cuisines linked to at least one Muzzhub within the radius
+            $haversine = "( 3959 * acos( LEAST(1, cos(radians({$lat})) * cos(radians(latitude)) * cos(radians(longitude) - radians({$lng})) + sin(radians({$lat})) * sin(radians(latitude)) ) ) )";
+
+            $nearbyIds = Muzzhub::whereNotNull('latitude')
+                ->whereNotNull('longitude')
+                ->whereRaw("{$haversine} <= ?", [$radius])
+                ->pluck('id');
+
+            $q->whereHas('muzzs', fn($sub) => $sub->whereIn('muzzhub.id', $nearbyIds));
+        }
+
+        return response()->json($q->get(['id', 'name', 'slug', 'icon', 'hover_icon']));
     }
 
     /** PUT /api/ecommerce/cuisines/activate-all — set all cuisines is_active = true */
