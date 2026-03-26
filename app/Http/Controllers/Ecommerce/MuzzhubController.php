@@ -25,7 +25,8 @@ class MuzzhubController extends Controller
 
         $useLocation = $lat !== null && $lng !== null;
 
-        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon']);
+        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon'])
+            ->whereHas('cuisines', fn($sub) => $sub->where('is_active', true));
 
         if ($useLocation) {
             // Haversine formula — distance in miles
@@ -72,7 +73,7 @@ class MuzzhubController extends Controller
                 : array_map('trim', explode(',', $request->cuisine_id));
             $ids = array_filter($ids);
             if (!empty($ids)) {
-                $q->whereHas('cuisines', fn($sub) => $sub->whereIn('cuisines.id', $ids));
+                $q->whereHas('cuisines', fn($sub) => $sub->whereIn('cuisines.id', $ids)->where('cuisines.is_active', true));
             }
         } elseif ($request->filled('cuisine')) {
             // Legacy text filter (backwards-compatible)
@@ -82,7 +83,7 @@ class MuzzhubController extends Controller
             $cuisines = array_filter($cuisines);
             if (!empty($cuisines)) {
                 $q->whereHas('cuisines', function ($sub) use ($cuisines) {
-                    $sub->where(function ($inner) use ($cuisines) {
+                    $sub->where('cuisines.is_active', true)->where(function ($inner) use ($cuisines) {
                         foreach ($cuisines as $c) {
                             $inner->orWhere('cuisines.name', 'like', '%' . $c . '%');
                         }
