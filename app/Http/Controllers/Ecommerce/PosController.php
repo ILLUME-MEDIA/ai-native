@@ -29,6 +29,63 @@ class PosController extends Controller
 
     // ── Square OAuth ──────────────────────────────────────────────────────────
 
+    /**
+     * GET /api/ecommerce/pos/check
+     * Verify that Square & Clover credentials are configured and (if connected) test the live API.
+     */
+    public function check(): JsonResponse
+    {
+        $square = [
+            'app_id'      => filled(\App\Services\AppSecretService::get('SQUARE_APP_ID',     config('services.square.app_id'))),
+            'app_secret'  => filled(\App\Services\AppSecretService::get('SQUARE_APP_SECRET', config('services.square.app_secret'))),
+            'environment' => \App\Services\AppSecretService::get('SQUARE_ENVIRONMENT', config('services.square.environment', 'sandbox')),
+        ];
+        $square['credentials_ok'] = $square['app_id'] && $square['app_secret'];
+
+        $clover = [
+            'app_id'      => filled(\App\Services\AppSecretService::get('CLOVER_APP_ID',     config('services.clover.app_id'))),
+            'app_secret'  => filled(\App\Services\AppSecretService::get('CLOVER_APP_SECRET', config('services.clover.app_secret'))),
+            'environment' => \App\Services\AppSecretService::get('CLOVER_ENVIRONMENT', config('services.clover.environment', 'sandbox')),
+        ];
+        $clover['credentials_ok'] = $clover['app_id'] && $clover['app_secret'];
+
+        // For each active connection, do a live API ping
+        $connections = PosConnection::where('is_active', true)->get();
+        $liveTests   = [];
+
+        foreach ($connections as $conn) {
+            $result = ['id' => $conn->id, 'provider' => $conn->provider, 'business_id' => $conn->business_id];
+            try {
+                if ($conn->provider === 'square') {
+                    $conn->ensureAccessToken();
+                    $locations = app(SquareService::class)->listLocations($conn->decryptedAccessToken());
+                    $result['status']    = 'ok';
+                    $result['locations'] = count($locations);
+                } elseif ($conn->provider === 'clover') {
+                    $merchant = app(CloverService::class)->getMerchant(
+                        $conn->decryptedAccessToken(), $conn->merchant_id
+                    );
+                    $result['status']   = 'ok';
+                    $result['merchant'] = $merchant['name'] ?? $conn->merchant_id;
+                }
+            } catch (\Throwable $e) {
+                $result['status'] = 'error';
+                $result['error']  = $e->getMessage();
+            }
+            $liveTests[] = $result;
+        }
+
+        return response()->json([
+            'square'      => $square,
+            'clover'      => $clover,
+            'connections' => $liveTests,
+            'oauth_callback_url' => [
+                'square' => route('pos.square.callback'),
+                'clover' => route('pos.clover.callback'),
+            ],
+        ]);
+    }
+
     /** GET /api/ecommerce/pos/square/auth-url?business_id= */
     public function squareAuthUrl(Request $request): JsonResponse
     {

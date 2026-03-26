@@ -792,6 +792,7 @@ Route::prefix('ecommerce/discovery-users/me')->group(function () {
 Route::prefix('ecommerce/pos')->group(function () {
     // ── Literal routes first (must come before /{connection} wildcard) ────────
     Route::get('/',                                     [PosController::class, 'index']);
+    Route::get('/check',                                [PosController::class, 'check']);
     Route::get('/square/auth-url',                      [PosController::class, 'squareAuthUrl']);
     Route::get('/clover/auth-url',                      [PosController::class, 'cloverAuthUrl']);
 

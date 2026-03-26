@@ -12,9 +12,9 @@ class CloverService
 
     public function __construct()
     {
-        $env             = config('services.clover.environment', 'sandbox');
-        $this->appId     = config('services.clover.app_id', '');
-        $this->appSecret = config('services.clover.app_secret', '');
+        $env             = \App\Services\AppSecretService::get('CLOVER_ENVIRONMENT', config('services.clover.environment', 'sandbox'));
+        $this->appId     = \App\Services\AppSecretService::get('CLOVER_APP_ID',     config('services.clover.app_id',     ''));
+        $this->appSecret = \App\Services\AppSecretService::get('CLOVER_APP_SECRET', config('services.clover.app_secret', ''));
         $this->baseUrl   = $env === 'production'
             ? 'https://www.clover.com'
             : 'https://sandbox.dev.clover.com';

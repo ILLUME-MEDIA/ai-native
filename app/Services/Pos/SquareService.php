@@ -15,9 +15,9 @@ class SquareService
 
     public function __construct()
     {
-        $env            = config('services.square.environment', 'sandbox');
-        $this->appId    = config('services.square.app_id', '');
-        $this->appSecret = config('services.square.app_secret', '');
+        $env             = \App\Services\AppSecretService::get('SQUARE_ENVIRONMENT', config('services.square.environment', 'sandbox'));
+        $this->appId     = \App\Services\AppSecretService::get('SQUARE_APP_ID',     config('services.square.app_id',     ''));
+        $this->appSecret = \App\Services\AppSecretService::get('SQUARE_APP_SECRET', config('services.square.app_secret', ''));
         $this->baseUrl   = $env === 'production'
             ? 'https://connect.squareup.com'
             : 'https://connect.squareupsandbox.com';

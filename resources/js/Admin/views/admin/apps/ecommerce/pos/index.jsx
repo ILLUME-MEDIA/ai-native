@@ -35,6 +35,8 @@ export default function PosPage() {
   const [connectModal, setConnectModal] = useState(false);
   const [connectForm,  setConnectForm]  = useState({ provider: 'square', business_id: '', merchant_id: '' });
   const [connecting,   setConnecting]   = useState(false);
+  const [checkResult,  setCheckResult]  = useState(null);
+  const [checking,     setChecking]     = useState(false);
 
   // Selected connection for detail / catalog / payment tabs
   const [selected, setSelected] = useState(null);
@@ -73,6 +75,18 @@ export default function PosPage() {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [loadConnections]);
+
+  const handleCheck = async () => {
+    setChecking(true); setCheckResult(null);
+    try {
+      const res = await api('/ecommerce/pos/check');
+      setCheckResult(res.data);
+    } catch (e) {
+      showFlash(e.response?.data?.message ?? 'Check failed.', 'danger');
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -132,7 +146,10 @@ export default function PosPage() {
           <h4 className="mb-0 fw-bold">POS Integration</h4>
           <small className="text-muted">Connect Square & Clover — sync menus, process payments, manage orders</small>
         </Col>
-        <Col xs="auto">
+        <Col xs="auto" className="d-flex gap-2">
+          <Button variant="outline-secondary" onClick={handleCheck} disabled={checking}>
+            {checking ? <><Spinner size="sm" className="me-1" />Checking…</> : '🔍 Check Credentials'}
+          </Button>
           <Button variant="primary" onClick={() => setConnectModal(true)}>
             + Connect POS
           </Button>
@@ -143,6 +160,75 @@ export default function PosPage() {
         <Alert variant={flash.variant} dismissible onClose={() => setFlash(null)}>
           {flash.msg}
         </Alert>
+      )}
+
+      {checkResult && (
+        <Card className="mb-4 border-0 shadow-sm">
+          <Card.Body className="py-3">
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h6 className="mb-0 fw-semibold">Credentials & Connection Status</h6>
+              <Button variant="link" size="sm" className="p-0 text-muted" onClick={() => setCheckResult(null)}>✕</Button>
+            </div>
+            <Row className="g-3">
+              {['square', 'clover'].map(prov => {
+                const d = checkResult[prov];
+                return (
+                  <Col md={3} key={prov}>
+                    <div className="border rounded p-3">
+                      <div className="fw-semibold text-capitalize mb-2">{prov}</div>
+                      <div className="small d-flex justify-content-between">
+                        <span className="text-muted">App ID</span>
+                        <span className={d.app_id ? 'text-success' : 'text-danger'}>{d.app_id ? '✓ Set' : '✗ Missing'}</span>
+                      </div>
+                      <div className="small d-flex justify-content-between">
+                        <span className="text-muted">App Secret</span>
+                        <span className={d.app_secret ? 'text-success' : 'text-danger'}>{d.app_secret ? '✓ Set' : '✗ Missing'}</span>
+                      </div>
+                      <div className="small d-flex justify-content-between">
+                        <span className="text-muted">Environment</span>
+                        <span className="text-info">{d.environment}</span>
+                      </div>
+                      <div className="mt-2">
+                        {d.credentials_ok
+                          ? <span className="badge bg-success-subtle text-success">Ready to Connect</span>
+                          : <span className="badge bg-danger-subtle text-danger">Credentials Missing</span>
+                        }
+                      </div>
+                    </div>
+                  </Col>
+                );
+              })}
+
+              {checkResult.connections?.length > 0 && (
+                <Col md={6}>
+                  <div className="border rounded p-3">
+                    <div className="fw-semibold mb-2">Live API Test</div>
+                    {checkResult.connections.map((c, i) => (
+                      <div key={i} className="small d-flex align-items-center gap-2 mb-1">
+                        <span className="text-capitalize fw-medium">{c.provider}</span>
+                        <span className="text-muted">Biz #{c.business_id}</span>
+                        {c.status === 'ok'
+                          ? <span className="badge bg-success-subtle text-success ms-auto">
+                              ✓ Live {c.locations != null ? `(${c.locations} locations)` : c.merchant ?? ''}
+                            </span>
+                          : <span className="badge bg-danger-subtle text-danger ms-auto" title={c.error}>✗ Failed</span>
+                        }
+                      </div>
+                    ))}
+                  </div>
+                </Col>
+              )}
+            </Row>
+
+            {checkResult.oauth_callback_url && (
+              <div className="mt-3 small text-muted">
+                <strong>OAuth Callback URLs</strong> (add these in developer portals):<br />
+                Square: <code>{checkResult.oauth_callback_url.square}</code><br />
+                Clover: <code>{checkResult.oauth_callback_url.clover}</code>
+              </div>
+            )}
+          </Card.Body>
+        </Card>
       )}
 
       <Row>
@@ -658,6 +744,19 @@ function LocationsPanel({ connection, onFlash, onReload }) {
 
 // ── Connect POS Modal ─────────────────────────────────────────────────────────
 function ConnectModal({ show, form, setForm, businesses, connecting, onConnect, onHide }) {
+  const [bizSearch, setBizSearch] = React.useState('');
+
+  const allBiz = Array.isArray(businesses) ? businesses : [];
+
+  const filteredBiz = React.useMemo(() => {
+    const q = bizSearch.trim().toLowerCase();
+    return q ? allBiz.filter(b => b.name.toLowerCase().includes(q)) : allBiz;
+  }, [allBiz, bizSearch]);
+
+  const selectedBiz = allBiz.find(b => String(b.id) === String(form.business_id));
+
+  React.useEffect(() => { if (!show) setBizSearch(''); }, [show]);
+
   return (
     <Modal show={show} onHide={onHide} centered>
       <Modal.Header closeButton>
@@ -683,15 +782,59 @@ function ConnectModal({ show, form, setForm, businesses, connecting, onConnect, 
 
         <Form.Group className="mb-3">
           <Form.Label className="fw-semibold">Business</Form.Label>
-          <Form.Select
-            value={form.business_id}
-            onChange={e => setForm(f => ({ ...f, business_id: e.target.value }))}
-          >
-            <option value="">— Select a business —</option>
-            {(Array.isArray(businesses) ? businesses : []).map(b => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </Form.Select>
+
+          {/* Search input */}
+          <Form.Control
+            size="sm"
+            placeholder="Search business…"
+            value={bizSearch}
+            onChange={e => {
+              setBizSearch(e.target.value);
+              // clear selection if user is typing a new search
+              if (form.business_id) setForm(f => ({ ...f, business_id: '' }));
+            }}
+            className="mb-1"
+          />
+
+          {/* Selected badge */}
+          {selectedBiz && (
+            <div className="d-flex align-items-center gap-2 px-2 py-1 mb-1 rounded bg-primary bg-opacity-10 border border-primary">
+              <span className="small fw-semibold text-primary">{selectedBiz.name}</span>
+              <button
+                type="button"
+                className="btn-close btn-close ms-auto"
+                style={{ fontSize: '0.6rem' }}
+                onClick={() => { setForm(f => ({ ...f, business_id: '' })); setBizSearch(''); }}
+              />
+            </div>
+          )}
+
+          {/* List — only show when no selection */}
+          {!selectedBiz && (
+            <div
+              className="border rounded"
+              style={{ maxHeight: 180, overflowY: 'auto', background: '#fff' }}
+            >
+              {filteredBiz.length === 0 ? (
+                <div className="px-3 py-2 text-muted small">
+                  {bizSearch ? `No results for "${bizSearch}"` : 'No businesses found'}
+                </div>
+              ) : (
+                filteredBiz.map(b => (
+                  <div
+                    key={b.id}
+                    className="px-3 py-2 small border-bottom"
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f0f4ff'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                    onClick={() => { setForm(f => ({ ...f, business_id: b.id })); setBizSearch(''); }}
+                  >
+                    {b.name}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </Form.Group>
 
         {form.provider === 'clover' && (
