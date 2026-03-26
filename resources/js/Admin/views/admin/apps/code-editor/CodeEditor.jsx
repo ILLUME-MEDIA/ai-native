@@ -1123,7 +1123,34 @@ export default function CodeEditor() {
                                         }}
                                     />
                                 )}
-                                {!workspace ? (
+                                {centerView === 'http-client' ? (
+                                    <HttpClientPanel workspace={workspace} />
+                                ) : centerView === 'database' ? (
+                                    <DatabasePanel workspace={workspace} />
+                                ) : centerView === 'deploy' ? (
+                                    <DeployPanel workspace={workspace} />
+                                ) : centerView === 'visual' ? (
+                                    <VisualEditor
+                                        workspace={workspace}
+                                        activeTab={activeTab}
+                                    />
+                                ) : centerView === 'whiteboard' ? (
+                                    <WhiteboardPanel
+                                        workspace={workspace}
+                                        onCreateFile={({ name, content, language }) => {
+                                            const newTab = {
+                                                path: `whiteboard/${name}`,
+                                                name,
+                                                content,
+                                                language: language || 'javascript',
+                                                unsaved: true,
+                                            };
+                                            setTabs(prev => [...prev, newTab]);
+                                            setActiveTab(newTab);
+                                            setCenterView('code');
+                                        }}
+                                    />
+                                ) : !workspace ? (
                                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: t.text4 }}>
                                         <Code size={52} />
                                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: t.text3 }}>No workspace selected</h4>
@@ -1131,34 +1158,7 @@ export default function CodeEditor() {
                                     </div>
                                 ) : (
                                     <>
-                                        {centerView === 'http-client' ? (
-                                            <HttpClientPanel workspace={workspace} />
-                                        ) : centerView === 'database' ? (
-                                            <DatabasePanel workspace={workspace} />
-                                        ) : centerView === 'deploy' ? (
-                                            <DeployPanel workspace={workspace} />
-                                        ) : centerView === 'visual' ? (
-                                            <VisualEditor
-                                                workspace={workspace}
-                                                activeTab={activeTab}
-                                            />
-                                        ) : centerView === 'whiteboard' ? (
-                                            <WhiteboardPanel
-                                                workspace={workspace}
-                                                onCreateFile={({ name, content, language }) => {
-                                                    const newTab = {
-                                                        path: `whiteboard/${name}`,
-                                                        name,
-                                                        content,
-                                                        language: language || 'javascript',
-                                                        unsaved: true,
-                                                    };
-                                                    setTabs(prev => [...prev, newTab]);
-                                                    setActiveTab(newTab);
-                                                    setCenterView('code');
-                                                }}
-                                            />
-                                        ) : centerView === 'preview' ? (
+                                        {centerView === 'preview' ? (
                                             <PreviewPanel
                                                 workspace={workspace}
                                                 activeTab={activeTab}
