@@ -112,6 +112,8 @@ class CuisineController extends Controller
             'name'       => 'required|string|max:100|unique:cuisines,name',
             'icon'       => 'nullable|string|max:500',
             'hover_icon' => 'nullable|string|max:500',
+            'images'     => 'nullable|array|max:3',
+            'images.*'   => 'nullable|string|max:500',
             'is_active'  => 'boolean',
             'sort_order' => 'integer',
         ]);
@@ -137,6 +139,8 @@ class CuisineController extends Controller
             'name'       => 'sometimes|string|max:100|unique:cuisines,name,' . $cuisine->id,
             'icon'       => 'nullable|string|max:500',
             'hover_icon' => 'nullable|string|max:500',
+            'images'     => 'nullable|array|max:3',
+            'images.*'   => 'nullable|string|max:500',
             'is_active'  => 'boolean',
             'sort_order' => 'integer',
         ]);

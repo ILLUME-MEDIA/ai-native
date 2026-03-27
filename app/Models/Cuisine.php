@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Cuisine extends Model
 {
-    protected $fillable = ['name', 'slug', 'icon', 'hover_icon', 'is_active', 'sort_order'];
+    protected $fillable = ['name', 'slug', 'icon', 'hover_icon', 'images', 'is_active', 'sort_order'];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'images'    => 'array',
     ];
 
     public function muzzs(): BelongsToMany

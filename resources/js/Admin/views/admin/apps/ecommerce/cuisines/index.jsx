@@ -13,7 +13,7 @@ import {
   Col, Form, FormControl, FormLabel, Modal, Row, Spinner,
 } from 'react-bootstrap';
 
-const emptyForm = { name: '', icon: '', hover_icon: '', is_active: true, sort_order: 0 };
+const emptyForm = { name: '', icon: '', hover_icon: '', images: ['', '', ''], is_active: true, sort_order: 0 };
 
 const columnHelper = createColumnHelper();
 
@@ -40,6 +40,56 @@ const IconPreview = ({ icon, hoverIcon, size = 36 }) => {
       ) : (
         <Icon icon="tools-kitchen-2" size={s * 0.5} className="text-muted" />
       )}
+    </div>
+  );
+};
+
+/** Small upload + text input combo for a banner/photo image field */
+const ImageField = ({ label, value, onChange }) => {
+  const fileRef = useRef();
+  const [uploading, setUploading] = useState(false);
+
+  const doUpload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('folder', 'cuisines');
+    try {
+      const { data } = await axios.post('/api/ecommerce/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onChange(data.url);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <FormLabel>{label}</FormLabel>
+      <div className="d-flex flex-column gap-1">
+        {value && (
+          <img src={value} alt="" className="rounded border"
+            style={{ width: '100%', height: 90, objectFit: 'cover' }} />
+        )}
+        <div className="d-flex gap-2">
+          <FormControl size="sm" value={value} onChange={e => onChange(e.target.value)}
+            placeholder="Paste image URL" className="flex-grow-1" />
+          <Button size="sm" variant="outline-secondary" onClick={() => fileRef.current?.click()}
+            disabled={uploading} style={{ whiteSpace: 'nowrap' }}>
+            {uploading ? <Spinner size="sm" /> : <><Icon icon="upload" size={12} className="me-1" />Upload</>}
+          </Button>
+          {value && (
+            <Button size="sm" variant="outline-danger" onClick={() => onChange('')}>
+              <Icon icon="x" size={12} />
+            </Button>
+          )}
+        </div>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" className="d-none"
+        onChange={e => doUpload(e.target.files?.[0])} />
     </div>
   );
 };
@@ -142,16 +192,21 @@ export default function CuisinesPage() {
   const openAdd  = () => { setEditRow(null); setForm(emptyForm); setShowModal(true); };
   const openEdit = (row) => {
     setEditRow(row);
-    setForm({ name: row.name || '', icon: row.icon || '', hover_icon: row.hover_icon || '',
-      is_active: row.is_active ?? true, sort_order: row.sort_order ?? 0 });
+    const imgs = Array.isArray(row.images) ? row.images : [];
+    setForm({
+      name: row.name || '', icon: row.icon || '', hover_icon: row.hover_icon || '',
+      images: [imgs[0] || '', imgs[1] || '', imgs[2] || ''],
+      is_active: row.is_active ?? true, sort_order: row.sort_order ?? 0,
+    });
     setShowModal(true);
   };
 
   const handleSave = () => {
     setSaving(true);
+    const payload = { ...form, images: form.images.filter(Boolean) };
     const req = editRow
-      ? axios.patch(`/api/ecommerce/cuisines/${editRow.id}`, form)
-      : axios.post('/api/ecommerce/cuisines', form);
+      ? axios.patch(`/api/ecommerce/cuisines/${editRow.id}`, payload)
+      : axios.post('/api/ecommerce/cuisines', payload);
     req.then(() => { showToast(editRow ? 'Updated!' : 'Created!'); setShowModal(false); load(); })
        .catch(e => showToast(e.response?.data?.message || 'Error saving', 'danger'))
        .finally(() => setSaving(false));
@@ -208,6 +263,22 @@ export default function CuisinesPage() {
             ? <img src={v} alt="" style={{ width: 28, height: 28, objectFit: 'contain' }} />
             : <code className="small">{v}</code>
         ) : <span className="text-muted">—</span>;
+      },
+    }),
+    columnHelper.accessor('images', {
+      header: 'Fallback Images',
+      enableSorting: false,
+      cell: ({ getValue }) => {
+        const imgs = (getValue() || []).filter(Boolean);
+        if (!imgs.length) return <span className="text-muted">—</span>;
+        return (
+          <div className="d-flex gap-1">
+            {imgs.map((src, i) => (
+              <img key={i} src={src} alt="" className="rounded border"
+                style={{ width: 32, height: 32, objectFit: 'cover' }} />
+            ))}
+          </div>
+        );
       },
     }),
     columnHelper.accessor('muzzs_count', {
@@ -340,6 +411,29 @@ export default function CuisinesPage() {
 
             <Col md={6}>
               <IconField label="Hover Icon (optional)" value={form.hover_icon} onChange={v => set('hover_icon', v)} />
+            </Col>
+
+            {/* 3 fallback images for restaurants with no cover_image */}
+            <Col xs={12}>
+              <FormLabel className="fw-semibold">
+                <Icon icon="photo" size={14} className="me-1" />
+                Fallback Images (for restaurants with no cover photo)
+              </FormLabel>
+              <Row className="g-2 mt-0">
+                {[0, 1, 2].map(i => (
+                  <Col md={4} key={i}>
+                    <ImageField
+                      label={`Image ${i + 1}`}
+                      value={form.images[i] || ''}
+                      onChange={v => {
+                        const next = [...form.images];
+                        next[i] = v;
+                        set('images', next);
+                      }}
+                    />
+                  </Col>
+                ))}
+              </Row>
             </Col>
 
             {/* Live preview */}

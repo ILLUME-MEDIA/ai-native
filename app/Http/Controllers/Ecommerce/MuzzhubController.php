@@ -25,7 +25,7 @@ class MuzzhubController extends Controller
 
         $useLocation = $lat !== null && $lng !== null;
 
-        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon'])
+        $q = Muzzhub::with(['category:id,name,slug,color,icon', 'business:id,name,slug', 'cuisines:id,name,slug,icon,hover_icon,images'])
             ->whereHas('cuisines', fn($sub) => $sub->where('is_active', true));
 
         if ($useLocation) {
@@ -94,19 +94,40 @@ class MuzzhubController extends Controller
 
         $paginated = $q->paginate($request->input('per_page', 15));
 
-        if ($useLocation) {
-            $paginated->getCollection()->transform(function ($item) {
-                $item->distance_miles = $item->distance_miles !== null ? round((float) $item->distance_miles, 2) : null;
-                return $item;
-            });
-        }
+        $paginated->getCollection()->transform(function ($item) use ($useLocation) {
+            if ($useLocation && $item->distance_miles !== null) {
+                $item->distance_miles = round((float) $item->distance_miles, 2);
+            }
+            $item->cuisine_fallback_image = $this->resolveCuisineFallback($item);
+            return $item;
+        });
 
         return response()->json($paginated);
     }
 
     public function show(Muzzhub $muzzhub): JsonResponse
     {
-        return response()->json($muzzhub->load(['category:id,name,slug,color,icon', 'business', 'cuisines:id,name,slug,icon']));
+        $muzzhub->load(['category:id,name,slug,color,icon', 'business', 'cuisines:id,name,slug,icon,images']);
+        $muzzhub->cuisine_fallback_image = $this->resolveCuisineFallback($muzzhub);
+        return response()->json($muzzhub);
+    }
+
+    /**
+     * If muzzhub has no cover_image, return the first available image
+     * from any of its linked cuisines' images array.
+     */
+    private function resolveCuisineFallback($muzzhub): ?string
+    {
+        if (!empty($muzzhub->cover_image)) {
+            return null;
+        }
+        foreach ($muzzhub->cuisines ?? [] as $cuisine) {
+            $images = is_array($cuisine->images) ? $cuisine->images : [];
+            foreach ($images as $img) {
+                if (!empty($img)) return $img;
+            }
+        }
+        return null;
     }
 
     public function store(Request $request): JsonResponse
