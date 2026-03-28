@@ -113,74 +113,26 @@ class DsPublicController extends Controller
     // ── Build nested theme payload ─────────────────────────────────────────────
 
     /**
-     * Converts a flat token map { "color.primary": "#405189", ... }
-     * into grouped nested arrays:
-     *   colors       → color.* keys
-     *   typography   → font.* keys
-     *   spacing      → spacing.* keys
-     *   borders      → radius.* + border.* keys
-     *   shadows      → shadow.* keys
-     *   animation    → animation.* keys
-     *   raw          → all tokens flat
+     * Build the theme payload using DsTheme::resolveNestedMap().
+     *
+     * Tokens are already deeply nested by dot-notation:
+     *   "color.primary"    → theme.color.primary
+     *   "font.size.sm"     → theme.font.size.sm
+     *   "spacing.md"       → theme.spacing.md
+     *
+     * We also include:
+     *   _flat  → original flat map for backward-compat
+     *   css    → full :root { } CSS variables string
      */
     private function buildThemePayload(DsTheme $theme): array
     {
-        $raw = $theme->resolveTokenMap();
-
-        $colors     = [];
-        $typography = ['fontSize' => [], 'fontWeight' => [], 'lineHeight' => [], 'letterSpacing' => []];
-        $spacing    = [];
-        $borders    = ['radius' => [], 'width' => []];
-        $shadows    = [];
-        $animation  = [];
-        $other      = [];
-
-        foreach ($raw as $name => $value) {
-            $parts    = explode('.', $name, 2);
-            $category = $parts[0];
-            $key      = $parts[1] ?? $name;
-
-            match ($category) {
-                'color'   => $colors[$key]                              = $value,
-                'font'    => $this->sortFont($typography, $key, $value),
-                'spacing' => $spacing[$key]                             = $value,
-                'radius'  => $borders['radius'][$key]                  = $value,
-                'border'  => $borders['width'][$key]                   = $value,
-                'shadow'  => $shadows[$key]                            = $value,
-                'animation' => $animation[$key]                        = $value,
-                default   => $other[$name]                             = $value,
-            };
-        }
-
-        // Clean up empty sub-arrays
-        $typography = array_filter($typography);
-        $borders    = array_filter($borders);
-
-        $nested = [
-            'colors'     => $colors,
-            'typography' => $typography,
-            'spacing'    => $spacing,
-            'borders'    => $borders,
-            'shadows'    => $shadows,
-        ];
-        if (!empty($animation)) $nested['animation'] = $animation;
-        if (!empty($other))     $nested['other']      = $other;
-        $nested['raw'] = $raw;
+        $nested = $theme->resolveNestedMap();   // deeply grouped
+        $flat   = $theme->resolveTokenMap();    // flat for _flat key
 
         return [
-            'theme' => $nested,
+            'theme' => array_merge($nested, ['_flat' => $flat]),
             'css'   => $theme->toCssVariables(),
         ];
-    }
-
-    private function sortFont(array &$typo, string $key, string $value): void
-    {
-        if (str_starts_with($key, 'size.')  || $key === 'size')   { $typo['fontSize'][str_replace('size.', '', $key)]        = $value; return; }
-        if (str_starts_with($key, 'weight.') || $key === 'weight') { $typo['fontWeight'][str_replace('weight.', '', $key)]    = $value; return; }
-        if (str_starts_with($key, 'lineHeight.'))                  { $typo['lineHeight'][str_replace('lineHeight.', '', $key)] = $value; return; }
-        if (str_starts_with($key, 'letterSpacing.'))               { $typo['letterSpacing'][str_replace('letterSpacing.', '', $key)] = $value; return; }
-        // fontFamily or other
-        $typo[$key] = $value;
     }
 
     // ── Formatters ────────────────────────────────────────────────────────────

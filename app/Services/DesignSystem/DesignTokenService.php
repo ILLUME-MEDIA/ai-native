@@ -29,8 +29,18 @@ class DesignTokenService
     public function invalidateCache(int $themeId): void
     {
         Cache::forget("ds_token_map_{$themeId}");
+        Cache::forget("ds_token_nested_{$themeId}");
         Cache::forget("ds_css_{$themeId}");
         Cache::forget("ds_components_{$themeId}");
+    }
+
+    /** Nested grouped token map { color: { primary: "#405189" }, spacing: { md: "16px" } } */
+    public function getNestedTokenMap(int $themeId): array
+    {
+        return Cache::remember("ds_token_nested_{$themeId}", self::CACHE_TTL, function () use ($themeId) {
+            $theme = DsTheme::findOrFail($themeId);
+            return $theme->resolveNestedMap();
+        });
     }
 
     // ── CSS Export ─────────────────────────────────────────────────
@@ -127,10 +137,26 @@ class DesignTokenService
 
     // ── Export ─────────────────────────────────────────────────────
 
+    /**
+     * Export theme as a nested grouped JSON structure.
+     *
+     * Returns:
+     * {
+     *   "color":   { "primary": "#405189", "secondary": "#74788d", ... },
+     *   "spacing": { "xs": "4px", "sm": "8px", "md": "16px", ... },
+     *   "radius":  { "sm": "4px", "md": "8px", "lg": "12px" },
+     *   "shadow":  { "sm": "...", "md": "...", "lg": "..." },
+     *   "font":    { "family": "Inter", "size": { "sm": "12px", ... } },
+     *   "_flat":   { "color.primary": "#405189", ... }   ← backward-compat flat map
+     * }
+     */
     public function exportJson(int $themeId): array
     {
-        $theme = DsTheme::findOrFail($themeId);
-        return $theme->resolveTokenMap();
+        $theme  = DsTheme::findOrFail($themeId);
+        $nested = $theme->resolveNestedMap();
+        $flat   = $theme->resolveTokenMap();
+
+        return array_merge($nested, ['_flat' => $flat]);
     }
 
     public function exportDesignTokenStandard(int $themeId): array
