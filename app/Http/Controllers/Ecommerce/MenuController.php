@@ -86,9 +86,13 @@ class MenuController extends Controller
         // Seller info: prefer linked Muzzhub (has amenities), fallback to Business
         // makeHidden ensures no nested relations (e.g. 'business') bleed into the seller object
         $muzzhub = $business->muzzhub;
-        $seller  = $muzzhub
-            ? array_merge($muzzhub->makeHidden(['business', 'category'])->toArray(), ['source' => 'muzzhub'])
-            : array_merge($business->makeHidden(['muzzhub'])->toArray(), ['source' => 'business', 'amenities' => null]);
+        if ($muzzhub) {
+            $muzzhub->loadMissing('cuisines:id,images');
+            $seller = array_merge($muzzhub->makeHidden(['business', 'category'])->toArray(), ['source' => 'muzzhub']);
+            $seller = $this->applyCuisineFallback($seller, $muzzhub);
+        } else {
+            $seller = array_merge($business->makeHidden(['muzzhub'])->toArray(), ['source' => 'business', 'amenities' => null]);
+        }
 
         $categories = $business->menuCategories()
             ->orderBy('sort_order')
@@ -206,13 +210,34 @@ class MenuController extends Controller
 
         // Strip the loaded 'business' relation from seller — it was only needed
         // to resolve the business_id; we don't want it nested inside seller.
+        $muzzhub->loadMissing('cuisines:id,images');
         $sellerData = $muzzhub->makeHidden(['business', 'category'])->toArray();
         $sellerData['source'] = 'muzzhub';
+        $sellerData = $this->applyCuisineFallback($sellerData, $muzzhub);
 
         return response()->json([
             'seller'     => $sellerData,
             'categories' => $categories,
             'items'      => $items,
         ]);
+    }
+
+    private function applyCuisineFallback(array $seller, Muzzhub $muzzhub): array
+    {
+        $imgs = [];
+        foreach ($muzzhub->cuisines ?? [] as $cuisine) {
+            foreach (array_filter(is_array($cuisine->images) ? $cuisine->images : []) as $img) {
+                $imgs[] = $img;
+            }
+        }
+        if (empty($imgs)) return $seller;
+
+        if (empty($seller['photo_url']))   $seller['photo_url']   = $imgs[0];
+        if (empty($seller['cover_image'])) $seller['cover_image'] = $imgs[0];
+        if (empty($seller['image_url']))   $seller['image_url']   = $imgs[0];
+        if (empty($seller['photo_url_2'])) $seller['photo_url_2'] = $imgs[1] ?? $imgs[0];
+        if (empty($seller['photo_url_3'])) $seller['photo_url_3'] = $imgs[2] ?? $imgs[1] ?? $imgs[0];
+
+        return $seller;
     }
 }

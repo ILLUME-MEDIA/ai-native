@@ -57,6 +57,8 @@ use App\Http\Controllers\Admin\DesignSystem\DsThemeController;
 use App\Http\Controllers\Admin\DesignSystem\DsTokenController;
 use App\Http\Controllers\Admin\DesignSystem\DsComponentController;
 use App\Http\Controllers\Admin\DesignSystem\DsSitesController;
+use App\Http\Controllers\Admin\DesignSystem\DsSitePagesController;
+use App\Http\Controllers\Admin\DesignSystem\DsPublicController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -216,7 +218,29 @@ Route::prefix('admin/design-system')->group(function () {
     Route::delete('/sites/{dsSite}',              [DsSitesController::class, 'destroy']);
     Route::post('/sites/{dsSite}/generate-key',   [DsSitesController::class, 'generateKey']);
     Route::post('/sites/{dsSite}/reveal-key',     [DsSitesController::class, 'revealKey']);
+
+    // Site Pages (note: reorder route before {page} wildcard)
+    Route::get('/sites/{dsSite}/pages',                     [DsSitePagesController::class, 'index']);
+    Route::post('/sites/{dsSite}/pages/reorder',            [DsSitePagesController::class, 'reorder']);
+    Route::post('/sites/{dsSite}/pages',                    [DsSitePagesController::class, 'store']);
+    Route::put('/sites/{dsSite}/pages/{page}',              [DsSitePagesController::class, 'update']);
+    Route::delete('/sites/{dsSite}/pages/{page}',           [DsSitePagesController::class, 'destroy']);
+
+    // Page Sections (reorder route before {section} wildcard)
+    Route::get('/sites/{dsSite}/pages/{page}/sections',                         [DsSitePagesController::class, 'sections']);
+    Route::post('/sites/{dsSite}/pages/{page}/sections/reorder',                [DsSitePagesController::class, 'reorderSections']);
+    Route::post('/sites/{dsSite}/pages/{page}/sections',                        [DsSitePagesController::class, 'addSection']);
+    Route::put('/sites/{dsSite}/pages/{page}/sections/{section}',               [DsSitePagesController::class, 'updateSection']);
+    Route::delete('/sites/{dsSite}/pages/{page}/sections/{section}',            [DsSitePagesController::class, 'deleteSection']);
 });
+
+// ── Public Site Pages API (no auth — for external websites/apps) ─────────────
+// Fetch all pages for a site (with nested theme: colors/typography/spacing...)
+//   GET /api/ds/{siteSlug}
+// Fetch a single page with sections + resolved theme
+//   GET /api/ds/{siteSlug}/page/{pageSlug}
+Route::get('/ds/{siteSlug}',                    [DsPublicController::class, 'site']);
+Route::get('/ds/{siteSlug}/page/{pageSlug}',    [DsPublicController::class, 'page']);
 
 // ── Public Design Tokens API (no auth — for external apps) ───────────────────
 // Usage from any app:

@@ -24,6 +24,9 @@ export const routes = [
     path: '/apps/design-system-manager',
     Component: lazy(() => import('@admin/views/admin/apps/design-system/DesignSystemManager'))
   }, {
+    path: '/apps/restaurant-demo',
+    Component: lazy(() => import('@admin/views/admin/apps/design-system/RestaurantDemo'))
+  }, {
     path: '/apps/api-keys',
     Component: lazy(() => import('@admin/views/admin/apps/api-keys'))
   }, {

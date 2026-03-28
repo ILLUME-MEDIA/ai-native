@@ -4,6 +4,7 @@ namespace App\Models\DesignSystem;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class DsSite extends Model
@@ -19,6 +20,11 @@ class DsSite extends Model
     public function theme(): BelongsTo
     {
         return $this->belongsTo(DsTheme::class, 'theme_id');
+    }
+
+    public function pages(): HasMany
+    {
+        return $this->hasMany(DsSitePage::class, 'site_id')->orderBy('sort_order');
     }
 
     /** Generate and store a new API key, returns the plain-text key */

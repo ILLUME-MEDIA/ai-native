@@ -1,4 +1,5 @@
 import PageBreadcrumb from '@admin/components/PageBreadcrumb';
+import SitePageBuilder from './SitePageBuilder';
 import { useLayoutContext } from '@admin/context/useLayoutContext';
 import Direction from '@admin/layouts/components/Customizer/components/Dir';
 import Orientation from '@admin/layouts/components/Customizer/components/Orientation';
@@ -886,6 +887,189 @@ const AnimationsTab = ({ anim, setAnim }) => {
 
 // ─── Custom CSS Tab ───────────────────────────────────────────────────────────
 
+const GLOBAL_FONT_OPTIONS = [
+  { value: '', label: '— System Default —' },
+  { value: 'Inter', label: 'Inter' }, { value: 'Poppins', label: 'Poppins' },
+  { value: 'Outfit', label: 'Outfit' }, { value: 'DM Sans', label: 'DM Sans' },
+  { value: 'Montserrat', label: 'Montserrat' }, { value: 'Roboto', label: 'Roboto' },
+  { value: 'Nunito', label: 'Nunito' }, { value: 'Raleway', label: 'Raleway' },
+  { value: 'Playfair Display', label: 'Playfair Display (Serif)' },
+  { value: 'Georgia', label: 'Georgia (Serif)' },
+];
+
+const VisualCSSBuilder = ({ onInsert }) => {
+  const [open, setOpen] = useState(false);
+  const [v, setV] = useState({
+    bodyBg: '', bodyText: '', linkColor: '', linkHover: '',
+    fontFamily: '', fontSize: '', lineHeight: '',
+    borderRadius: '', spacer: '',
+    cardBg: '', cardBorder: '', cardRadius: '', cardShadow: '',
+    headingColor: '', headingWeight: '',
+    customVar: [{ key: '', value: '' }],
+  });
+  const set = (k, val) => setV(p => ({ ...p, [k]: val }));
+
+  const buildCSS = () => {
+    const lines = [];
+    const root = [];
+    if (v.bodyBg)        root.push(`  --bs-body-bg: ${v.bodyBg};`);
+    if (v.bodyText)      root.push(`  --bs-body-color: ${v.bodyText};`);
+    if (v.linkColor)     root.push(`  --bs-link-color: ${v.linkColor};`);
+    if (v.linkHover)     root.push(`  --bs-link-hover-color: ${v.linkHover};`);
+    if (v.fontFamily)    root.push(`  --bs-body-font-family: '${v.fontFamily}', sans-serif;`);
+    if (v.fontSize)      root.push(`  --bs-body-font-size: ${v.fontSize}px;`);
+    if (v.lineHeight)    root.push(`  --bs-body-line-height: ${v.lineHeight};`);
+    if (v.borderRadius)  root.push(`  --bs-border-radius: ${v.borderRadius}rem;\n  --bs-border-radius-sm: ${(v.borderRadius*0.75).toFixed(2)}rem;\n  --bs-border-radius-lg: ${(v.borderRadius*1.5).toFixed(2)}rem;`);
+    if (v.spacer)        root.push(`  --bs-spacer: ${v.spacer}rem;`);
+    if (v.cardBg)        root.push(`  --bs-card-bg: ${v.cardBg};`);
+    if (v.cardBorder)    root.push(`  --bs-card-border-color: ${v.cardBorder};`);
+    if (v.cardRadius)    root.push(`  --bs-card-border-radius: ${v.cardRadius}rem;`);
+    v.customVar.forEach(cv => { if (cv.key && cv.value) root.push(`  --${cv.key}: ${cv.value};`); });
+    if (root.length) lines.push(':root {', ...root, '}');
+    if (v.headingColor || v.headingWeight) {
+      lines.push('', 'h1, h2, h3, h4, h5, h6 {');
+      if (v.headingColor)  lines.push(`  color: ${v.headingColor};`);
+      if (v.headingWeight) lines.push(`  font-weight: ${v.headingWeight};`);
+      lines.push('}');
+    }
+    if (v.cardShadow) lines.push('', `.card { box-shadow: ${v.cardShadow}; }`);
+    if (v.fontFamily)  lines.push('', `/* Import ${v.fontFamily} from Google Fonts */\n@import url('https://fonts.googleapis.com/css2?family=${v.fontFamily.replace(/ /g,'+')}:wght@300;400;500;600;700&display=swap');`);
+    return lines.join('\n');
+  };
+
+  const colorField = (label, key, placeholder) => (
+    <div className="col-md-4 col-6">
+      <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>{label}</label>
+      <div className="d-flex gap-1 align-items-center">
+        <input type="color" className="form-control form-control-color border" style={{ width: 34, height: 30, padding: '2px 3px', cursor: 'pointer', flexShrink: 0 }}
+          value={v[key] || '#ffffff'} onChange={e => set(key, e.target.value)} />
+        <input type="text" className="form-control form-control-sm font-monospace" placeholder={placeholder}
+          value={v[key]} onChange={e => set(key, e.target.value)} />
+        {v[key] && <button className="btn btn-sm btn-outline-secondary px-1" onClick={() => set(key, '')} style={{ fontSize: 11 }}>×</button>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="border rounded mb-4" style={{ overflow: 'hidden' }}>
+      <button type="button" className="d-flex align-items-center gap-2 w-100 p-3 border-0 bg-light fw-semibold"
+        style={{ fontSize: 13, cursor: 'pointer', textAlign: 'left' }} onClick={() => setOpen(o => !o)}>
+        <i className="ri-brush-2-line text-primary" />
+        Visual CSS Builder
+        <span className="ms-1 badge bg-primary-subtle text-primary" style={{ fontSize: 9, fontWeight: 600 }}>NEW</span>
+        <i className={`ri-arrow-${open ? 'up' : 'down'}-s-line ms-auto text-muted`} />
+      </button>
+      {open && (
+        <div className="p-3">
+          <p className="text-muted small mb-3">Set global CSS variables visually. Click <strong>"Generate & Insert CSS"</strong> to append to the raw CSS below.</p>
+
+          <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Colors</div>
+          <div className="row g-2 mb-3">
+            {colorField('Body Background', 'bodyBg', '#f6f7fb')}
+            {colorField('Body Text', 'bodyText', '#495057')}
+            {colorField('Link Color', 'linkColor', '#405189')}
+            {colorField('Link Hover', 'linkHover', '#2d3a6b')}
+            {colorField('Heading Color', 'headingColor', '#212529')}
+            {colorField('Card Background', 'cardBg', '#ffffff')}
+            {colorField('Card Border', 'cardBorder', '#e9ecef')}
+          </div>
+
+          <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Typography</div>
+          <div className="row g-2 mb-3">
+            <div className="col-md-4">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Font Family</label>
+              <select className="form-select form-select-sm" value={v.fontFamily} onChange={e => set('fontFamily', e.target.value)}>
+                {GLOBAL_FONT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Font Size (px)</label>
+              <div className="d-flex gap-2 align-items-center">
+                <input type="range" min={11} max={20} step={1} value={v.fontSize || 14}
+                  onChange={e => set('fontSize', e.target.value)} className="form-range" />
+                <span className="badge bg-secondary" style={{ minWidth: 32 }}>{v.fontSize || 14}</span>
+              </div>
+            </div>
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Line Height</label>
+              <div className="d-flex gap-2 align-items-center">
+                <input type="range" min={1.0} max={2.2} step={0.1} value={v.lineHeight || 1.5}
+                  onChange={e => set('lineHeight', parseFloat(e.target.value).toFixed(1))} className="form-range" />
+                <span className="badge bg-secondary" style={{ minWidth: 32 }}>{v.lineHeight || 1.5}</span>
+              </div>
+            </div>
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Heading Weight</label>
+              <select className="form-select form-select-sm" value={v.headingWeight} onChange={e => set('headingWeight', e.target.value)}>
+                <option value="">— Inherit —</option>
+                {['300','400','500','600','700','800','900'].map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Shape & Spacing</div>
+          <div className="row g-2 mb-3">
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Border Radius (rem)</label>
+              <div className="d-flex gap-2 align-items-center">
+                <input type="range" min={0} max={1.5} step={0.05} value={v.borderRadius || 0.3}
+                  onChange={e => set('borderRadius', parseFloat(e.target.value).toFixed(2))} className="form-range" />
+                <span className="badge bg-secondary" style={{ minWidth: 36 }}>{v.borderRadius || 0.3}rem</span>
+              </div>
+            </div>
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Base Spacer (rem)</label>
+              <div className="d-flex gap-2 align-items-center">
+                <input type="range" min={0.5} max={2.0} step={0.1} value={v.spacer || 1.0}
+                  onChange={e => set('spacer', parseFloat(e.target.value).toFixed(1))} className="form-range" />
+                <span className="badge bg-secondary" style={{ minWidth: 36 }}>{v.spacer || 1.0}rem</span>
+              </div>
+            </div>
+            <div className="col-md-4 col-6">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Card Radius (rem)</label>
+              <input type="number" className="form-control form-control-sm" step={0.05} min={0} max={2} placeholder="0.3"
+                value={v.cardRadius} onChange={e => set('cardRadius', e.target.value)} />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label fw-semibold" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: '#64748b' }}>Card Shadow</label>
+              <select className="form-select form-select-sm" value={v.cardShadow} onChange={e => set('cardShadow', e.target.value)}>
+                <option value="">— None —</option>
+                <option value="0 1px 3px rgba(0,0,0,0.08)">Subtle</option>
+                <option value="0px 1px 4px rgba(130,143,163,0.15)">Default</option>
+                <option value="0 4px 14px rgba(0,0,0,0.12)">Medium</option>
+                <option value="0 8px 30px rgba(0,0,0,0.18)">Strong</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Custom CSS Variables</div>
+          {v.customVar.map((cv, i) => (
+            <div key={i} className="d-flex gap-2 mb-2">
+              <input className="form-control form-control-sm font-monospace" placeholder="variable-name (without --)"
+                value={cv.key} onChange={e => setV(p => ({ ...p, customVar: p.customVar.map((c,j) => j===i ? {...c, key: e.target.value} : c) }))} />
+              <input className="form-control form-control-sm font-monospace" placeholder="value"
+                value={cv.value} onChange={e => setV(p => ({ ...p, customVar: p.customVar.map((c,j) => j===i ? {...c, value: e.target.value} : c) }))} />
+              <button className="btn btn-sm btn-outline-danger px-2" onClick={() => setV(p => ({ ...p, customVar: p.customVar.filter((_,j) => j!==i) }))}>×</button>
+            </div>
+          ))}
+          <button className="btn btn-sm btn-outline-secondary mb-3" onClick={() => setV(p => ({ ...p, customVar: [...p.customVar, { key: '', value: '' }] }))}>
+            <i className="ri-add-line me-1" />Add Variable
+          </button>
+
+          <div className="d-flex gap-2 pt-2 border-top">
+            <button className="btn btn-primary btn-sm" onClick={() => onInsert(buildCSS())}>
+              <i className="ri-code-line me-1" />Generate & Insert CSS
+            </button>
+            <button className="btn btn-outline-secondary btn-sm" onClick={() => { const c = buildCSS(); navigator.clipboard?.writeText(c); }}>
+              <i className="ri-clipboard-line me-1" />Copy CSS
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CustomCSSTab = ({ css, setCss }) => {
   const timerRef = useRef(null);
 
@@ -908,6 +1092,9 @@ const CustomCSSTab = ({ css, setCss }) => {
         </div>
         {css && <Button variant="outline-danger" size="sm" onClick={() => { handleChange(''); applyCustomCSSToDOM(''); }}>Clear CSS</Button>}
       </div>
+
+      {/* ── Visual CSS Builder ────────────────────────────────── */}
+      <VisualCSSBuilder onInsert={insertSnippet} />
 
       <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1.2 }}>Quick Snippets</div>
       <div className="d-flex flex-wrap gap-2 mb-3">
@@ -936,6 +1123,193 @@ const CustomCSSTab = ({ css, setCss }) => {
           <i className="ri-information-line" />
           <span>Custom CSS active — {lineCount} lines applied</span>
           <button className="btn btn-sm btn-outline-info ms-auto" style={{ fontSize: 10 }} onClick={() => applyCustomCSSToDOM(css)}>Force Apply</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Pages API Panel (per site card) ─────────────────────────────────────────
+
+const PagesApiPanel = ({ site }) => {
+  const [open, setOpen]     = useState(false);
+  const [copied, setCopied] = useState('');
+  const [tab, setTab]       = useState('urls');
+
+  const base        = window.location.origin;
+  const allPagesUrl = `${base}/api/ds/${site.slug}`;
+  const pageUrl     = `${base}/api/ds/${site.slug}/page/{pageSlug}`;
+
+  const copy = async (text, key) => {
+    try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 2000); } catch {}
+  };
+
+  const CopyBtn = ({ text, id }) => (
+    <button className={`btn btn-sm ${copied === id ? 'btn-success' : 'btn-outline-secondary'} px-2 py-0 ms-1`}
+      style={{ fontSize: 10 }} onClick={() => copy(text, id)}>
+      {copied === id ? '✓ Copied' : 'Copy'}
+    </button>
+  );
+
+  const snippets = [
+    {
+      label: 'JS — Fetch all pages + theme',
+      code: `const res = await fetch('${allPagesUrl}');
+const { site, theme, css, pages } = await res.json();
+
+// Inject CSS variables globally
+const s = document.createElement('style');
+s.textContent = css;
+document.head.appendChild(s);
+
+// Access theme tokens
+const primary = theme.colors.primary;  // "#405189"
+const font    = theme.typography.fontFamily;
+
+console.log('Pages:', pages);`,
+    },
+    {
+      label: 'JS — Fetch a specific page with sections',
+      code: `const res = await fetch('${base}/api/ds/${site.slug}/page/home');
+const { page, sections, theme, css } = await res.json();
+
+// Inject CSS
+document.head.insertAdjacentHTML('beforeend', \`<style>\${css}</style>\`);
+
+// Render sections
+sections.forEach(section => {
+  console.log(section.type, section.content, section.style);
+  // section.type    → "navbar" | "hero" | "cards" | ...
+  // section.content → { logo, links, headline, items, ... }
+  // section.style   → { bg, textColor, paddingY, ... }
+});`,
+    },
+    {
+      label: 'React — useSitePage hook',
+      code: `import { useEffect, useState } from 'react';
+
+export function useSitePage(siteSlug, pageSlug) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const url = \`/api/ds/\${siteSlug}/page/\${pageSlug}\`;
+    fetch(url)
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [siteSlug, pageSlug]);
+
+  return { ...data, loading };
+}
+
+// Usage:
+// const { sections, theme, css, loading } = useSitePage('${site.slug}', 'home');`,
+    },
+    {
+      label: 'Next.js — SSR in layout',
+      code: `// app/layout.tsx  (Server Component)
+const { theme, css } = await fetch(
+  '${allPagesUrl}', { next: { revalidate: 60 } }
+).then(r => r.json());
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <head>
+        <style dangerouslySetInnerHTML={{ __html: css }} />
+      </head>
+      <body
+        style={{ '--primary': theme.colors.primary }}
+      >{children}</body>
+    </html>
+  );
+}`,
+    },
+  ];
+
+  return (
+    <div className="mt-2 border-top pt-2">
+      <button type="button" className="d-flex align-items-center gap-2 w-100 border-0 bg-transparent p-0 py-1"
+        style={{ fontSize: 11, color: '#3b82f6', cursor: 'pointer', fontWeight: 600 }}
+        onClick={() => setOpen(o => !o)}>
+        <i className="ri-pages-line" />
+        Pages API
+        <span className="badge bg-info-subtle text-info ms-1" style={{ fontSize: 9 }}>How to fetch</span>
+        <i className={`ri-arrow-${open ? 'up' : 'down'}-s-line ms-auto text-muted`} />
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded border overflow-hidden" style={{ fontSize: 12 }}>
+          {/* Tab switcher */}
+          <div className="d-flex border-bottom bg-light">
+            {[['urls','🔗 Endpoints'],['code','</> Code']].map(([k,l]) => (
+              <button key={k} type="button"
+                className={`border-0 px-3 py-2 fw-semibold ${tab===k ? 'bg-white text-primary border-bottom border-primary' : 'bg-transparent text-muted'}`}
+                style={{ fontSize: 11, cursor: 'pointer' }} onClick={() => setTab(k)}>{l}</button>
+            ))}
+          </div>
+
+          {tab === 'urls' && (
+            <div className="p-3">
+              <div className="mb-3">
+                <div className="fw-semibold text-muted mb-1" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>All Pages + Theme</div>
+                <div className="d-flex align-items-center bg-dark rounded px-2 py-1 gap-2">
+                  <span className="badge bg-success" style={{ fontSize: 9 }}>GET</span>
+                  <code className="text-success flex-grow-1 text-truncate" style={{ fontSize: 11 }}>{allPagesUrl}</code>
+                  <CopyBtn text={allPagesUrl} id="allpages" />
+                </div>
+                <div className="text-muted mt-1" style={{ fontSize: 10 }}>Returns: site, theme (colors/typography/spacing/css), pages[]</div>
+              </div>
+
+              <div className="mb-3">
+                <div className="fw-semibold text-muted mb-1" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>Single Page + Sections</div>
+                <div className="d-flex align-items-center bg-dark rounded px-2 py-1 gap-2">
+                  <span className="badge bg-success" style={{ fontSize: 9 }}>GET</span>
+                  <code className="text-warning flex-grow-1 text-truncate" style={{ fontSize: 11 }}>{pageUrl}</code>
+                  <CopyBtn text={`${base}/api/ds/${site.slug}/page/home`} id="page" />
+                </div>
+                <div className="text-muted mt-1" style={{ fontSize: 10 }}>Replace <code>&#123;pageSlug&#125;</code> with: home, about, contact, etc. Returns: page, sections[], theme, css</div>
+              </div>
+
+              <div className="border-top pt-2 mt-2">
+                <div className="fw-bold text-muted mb-1" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>Response Shape</div>
+                <pre className="bg-dark text-light rounded p-2 mb-0" style={{ fontSize: 10 }}>{`{
+  "theme": {
+    "colors":     { "primary": "#405189", ... },
+    "typography": { "fontFamily": "...", "fontSize": {...} },
+    "spacing":    { "xs": "4px", "md": "16px", ... },
+    "borders":    { "radius": {...}, "width": {...} },
+    "shadows":    { "sm": "...", "md": "..." },
+    "css":        ":root { --color-primary: #405189; ... }"
+  },
+  "sections": [
+    {
+      "type":    "navbar",
+      "content": { "logo": "...", "links": [...] },
+      "style":   { "bg": "#1e293b", "paddingY": "16px" }
+    }
+  ]
+}`}</pre>
+              </div>
+            </div>
+          )}
+
+          {tab === 'code' && (
+            <div className="p-3">
+              {snippets.map((s, i) => (
+                <div key={i} className="mb-3">
+                  <div className="d-flex align-items-center justify-content-between mb-1">
+                    <span className="fw-semibold" style={{ fontSize: 11 }}>{s.label}</span>
+                    <CopyBtn text={s.code} id={`snippet-${i}`} />
+                  </div>
+                  <pre className="bg-dark text-light rounded p-2 mb-0" style={{ fontSize: 10, overflowX: 'auto', maxHeight: 200 }}>
+                    <code>{s.code}</code>
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -984,36 +1358,51 @@ function callDS(path, opts = {}) {
 
 const SaveIndicator = ({ name, saving, saved }) => (
   saving === name
-    ? <div className="spinner-border flex-shrink-0" style={{ width: 10, height: 10, borderWidth: 2, color: 'var(--bs-primary)' }} />
+    ? <div className="spinner-border flex-shrink-0" style={{ width: 10, height: 10, borderWidth: 2, color: '#3b82f6' }} />
     : saved === name
-      ? <span className="text-success flex-shrink-0" style={{ fontSize: 10 }}>✓</span>
+      ? <span style={{ color: '#16a34a', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>✓</span>
       : null
 );
 
 const ColorRow = ({ token, compact, vals, handleChange, setVals, saving, saved }) => {
-  const v   = vals[token.name] || '';
-  const hex = v.startsWith('#') ? v : '#cccccc';
+  const v     = vals[token.name] || '';
+  const hex   = v.startsWith('#') ? v : '#cccccc';
   const label = token.name.split('.').pop();
   return (
-    <div className="border rounded p-2" style={{ backgroundColor: '#fff', color: '#212529', marginBottom: compact ? 0 : 8 }}>
+    <div style={{
+      backgroundColor: '#fff', border: '1.5px solid #e2e8f0', borderRadius: 8,
+      padding: compact ? '6px 8px' : '10px 12px', marginBottom: compact ? 0 : 8,
+      transition: 'border-color 0.15s',
+    }}>
       {!compact && (
-        <div className="d-flex align-items-center gap-2 mb-2">
-          <div className="rounded border flex-shrink-0" style={{ width: 24, height: 24, backgroundColor: hex, transition: 'background .15s' }} />
-          <div className="flex-grow-1">
-            <div className="fw-semibold" style={{ fontSize: 12, color: '#212529' }}>{label.charAt(0).toUpperCase()+label.slice(1)}</div>
-            <div className="font-monospace" style={{ fontSize: 10, color: '#666' }}>{token.name}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div style={{
+            position: 'relative', width: 34, height: 34, borderRadius: 6,
+            backgroundColor: hex, border: '2px solid rgba(0,0,0,0.10)',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.15)', flexShrink: 0,
+            cursor: 'pointer', overflow: 'hidden',
+          }}>
+            <input type="color" value={hex} onChange={e => handleChange(token.name, e.target.value)}
+              style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', border: 'none', padding: 0 }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{label.charAt(0).toUpperCase()+label.slice(1)}</div>
+            <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{token.name}</div>
           </div>
           <SaveIndicator name={token.name} saving={saving} saved={saved} />
         </div>
       )}
-      <div className={`input-group input-group-sm ${compact ? 'd-flex align-items-center gap-1' : ''}`}>
-        {compact && <div className="rounded border flex-shrink-0" style={{ width: 20, height: 20, backgroundColor: hex, minWidth: 20 }} />}
-        <input type="color" className="form-control form-control-color border-end-0 flex-shrink-0"
-          style={{ maxWidth: 30, padding: '2px 2px', cursor: 'pointer' }}
-          value={hex}
-          onChange={e => handleChange(token.name, e.target.value)} />
-        <input type="text" className="form-control font-monospace"
-          style={{ fontSize: 10, color: '#212529', backgroundColor: '#fff' }}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {compact && (
+          <div style={{ position: 'relative', width: 26, height: 26, borderRadius: 5, backgroundColor: hex, border: '1.5px solid rgba(0,0,0,0.12)', flexShrink: 0, cursor: 'pointer', overflow: 'hidden' }}>
+            <input type="color" value={hex} onChange={e => handleChange(token.name, e.target.value)}
+              style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', border: 'none', padding: 0 }} />
+          </div>
+        )}
+        <input type="color" value={hex} onChange={e => handleChange(token.name, e.target.value)}
+          style={{ width: 32, height: 28, border: '1.5px solid #e2e8f0', borderRadius: 5, padding: '2px 3px', cursor: 'pointer', flexShrink: 0, backgroundColor: '#f8fafc' }} />
+        <input type="text"
+          style={{ flex: 1, fontSize: 11, fontFamily: 'monospace', padding: '5px 8px', border: '1.5px solid #e2e8f0', borderRadius: 5, outline: 'none', color: '#0f172a', backgroundColor: '#fff', fontWeight: 500 }}
           value={v} maxLength={7} placeholder="#000000"
           onChange={e => {
             const x = e.target.value;
@@ -1032,20 +1421,24 @@ const TextTokenRow = ({ token, label, type = 'text', min, max, step, unit = '', 
   const v    = vals[token.name] || '';
   const numV = parseFloat(v) || 0;
   return (
-    <div className="border rounded px-3 py-2 d-flex align-items-center gap-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
-      <div className="flex-grow-1" style={{ minWidth: 0 }}>
-        <div className="fw-semibold" style={{ fontSize: 11, color: '#212529' }}>{label || token.name.split('.').pop()}</div>
-        <div className="font-monospace" style={{ fontSize: 9, color: '#666' }}>{token.name}</div>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '7px 12px', backgroundColor: '#fff',
+      border: '1.5px solid #e2e8f0', borderRadius: 7,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{label || token.name.split('.').pop()}</div>
+        <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{token.name}</div>
       </div>
       {type === 'range' ? (
-        <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 180 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, width: 180 }}>
           <input type="range" className="form-range flex-grow-1" min={min} max={max} step={step}
             value={numV} onChange={e => handleChange(token.name, `${parseFloat(e.target.value).toFixed(step < 0.1 ? 3 : 2)}${unit}`)} />
-          <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 44 }}>{v || '—'}</span>
+          <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 600, color: '#0f172a', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4, padding: '2px 6px', minWidth: 48, textAlign: 'center' }}>{v || '—'}</span>
         </div>
       ) : (
-        <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
-          style={{ maxWidth: 140, fontSize: 11, color: '#212529', backgroundColor: '#fff' }}
+        <input type="text"
+          style={{ width: 140, fontSize: 11, fontFamily: 'monospace', padding: '5px 8px', border: '1.5px solid #e2e8f0', borderRadius: 5, outline: 'none', color: '#0f172a', backgroundColor: '#fff', fontWeight: 500, flexShrink: 0 }}
           value={v} onChange={e => handleChange(token.name, e.target.value)} />
       )}
       <SaveIndicator name={token.name} saving={saving} saved={saved} />
@@ -1166,32 +1559,35 @@ const SiteTokenEditor = ({ site, onClose }) => {
         <div className="modal-content" style={{ backgroundColor: '#fff', color: '#212529' }}>
 
           {/* Header */}
-          <div className="modal-header border-bottom py-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
-            <div>
-              <h5 className="modal-title fw-bold mb-0" style={{ fontSize: 15 }}>
-                Token Editor — {site.name}
-              </h5>
-              <div className="text-muted mt-1" style={{ fontSize: 11 }}>
-                Theme: <strong>{activeThemeName || site.resolved_theme_name || 'Default'}</strong>
-                <span className="ms-3 text-success">
-                  <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
-                  {' '}Auto-saves · API updates instantly · Broadcasts to all tabs
-                </span>
+          <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #e2e8f0', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>🎨</div>
+              <div>
+                <h5 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+                  Token Editor — <span style={{ color: '#3b82f6' }}>{site.name}</span>
+                </h5>
+                <div style={{ marginTop: 3, fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>Theme: <strong style={{ color: '#334155' }}>{activeThemeName || site.resolved_theme_name || 'Default'}</strong></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#16a34a', fontWeight: 600 }}>
+                    <svg width="7" height="7" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
+                    Auto-saves · API updates instantly
+                  </span>
+                </div>
               </div>
             </div>
-            <button className="btn-close" onClick={onClose} />
+            <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: '50%', border: '1.5px solid #e2e8f0', background: '#f8fafc', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', flexShrink: 0 }}>×</button>
           </div>
 
           {loading ? (
-            <div className="modal-body text-center py-5">
-              <div className="spinner-border text-primary" />
-              <div className="text-muted mt-2 small">Loading {activeThemeName || site.resolved_theme_name || 'theme'} tokens…</div>
+            <div style={{ padding: '60px 20px', textAlign: 'center', backgroundColor: '#fff' }}>
+              <div className="spinner-border" style={{ color: '#3b82f6', width: 32, height: 32 }} />
+              <div style={{ marginTop: 12, fontSize: 13, color: '#64748b', fontWeight: 500 }}>Loading {activeThemeName || site.resolved_theme_name || 'theme'} tokens…</div>
             </div>
           ) : !activeThemeId ? (
-            <div className="modal-body text-center py-5">
-              <i className="ri-palette-line fs-1 text-muted opacity-50 d-block mb-2" />
-              <div className="fw-semibold mb-1">No themes found</div>
-              <div className="text-muted small">Create a theme first from the Themes tab, then tokens will load here.</div>
+            <div style={{ padding: '60px 20px', textAlign: 'center', backgroundColor: '#fff' }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎨</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>No themes found</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>Create a theme first from the Themes tab, then tokens will load here.</div>
             </div>
           ) : (
             <div className="modal-body p-0">
@@ -1200,16 +1596,31 @@ const SiteTokenEditor = ({ site, onClose }) => {
                 {/* LEFT: Tabbed editors */}
                 <div className="col-lg-7 border-end d-flex flex-column" style={{ backgroundColor: '#fff' }}>
                   {/* Tab nav */}
-                  <div className="border-bottom px-3 pt-2 d-flex gap-0 overflow-auto" style={{ flexShrink: 0, backgroundColor: '#f8f9fa' }}>
-                    {TABS.map(t => (
-                      <button key={t.key}
-                        className={`btn btn-sm border-0 border-bottom border-2 rounded-0 me-1 pb-2 ${tab === t.key ? 'border-primary text-primary fw-semibold' : 'border-transparent'}`}
-                        style={{ fontSize: 12, whiteSpace: 'nowrap', color: tab === t.key ? undefined : '#555' }}
-                        onClick={() => setTab(t.key)}>
-                        {t.label}
-                        <span className="ms-1 badge" style={{ fontSize: 9, backgroundColor: tab === t.key ? 'var(--bs-primary)' : '#dee2e6', color: tab === t.key ? '#fff' : '#666' }}>{t.count}</span>
-                      </button>
-                    ))}
+                  <div style={{ display: 'flex', gap: 2, padding: '10px 12px 0', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', flexShrink: 0, overflowX: 'auto' }}>
+                    {TABS.map(t => {
+                      const active = tab === t.key;
+                      return (
+                        <button key={t.key}
+                          onClick={() => setTab(t.key)}
+                          style={{
+                            padding: '7px 12px 9px', border: 'none', background: 'none',
+                            cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap',
+                            fontWeight: active ? 700 : 500,
+                            color: active ? '#1d4ed8' : '#64748b',
+                            borderBottom: active ? '2px solid #3b82f6' : '2px solid transparent',
+                            marginBottom: -1, borderRadius: '6px 6px 0 0',
+                            display: 'flex', alignItems: 'center', gap: 5,
+                            transition: 'color 0.15s',
+                          }}>
+                          {t.label}
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 8,
+                            background: active ? '#dbeafe' : '#e2e8f0',
+                            color: active ? '#1d4ed8' : '#64748b',
+                          }}>{t.count}</span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {/* Tab content */}
@@ -1218,7 +1629,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* COLORS */}
                     {tab === 'colors' && (
                       <>
-                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Semantic Colors</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>Semantic Colors</div>
                         <div className="row g-2 mb-4">
                           {semanticColors.map(t => (
                             <div key={t.id} className="col-6"><ColorRow token={t} vals={vals} handleChange={handleChange} setVals={setVals} saving={saving} saved={saved} /></div>
@@ -1226,7 +1637,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                         </div>
                         {Object.entries(paletteMap).map(([grp, list]) => (
                           <div key={grp} className="mb-3">
-                            <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>
                               {grp.replace('color.', '')} Palette
                             </div>
                             <div className="d-flex flex-wrap gap-1 p-2 border rounded bg-light">
@@ -1269,7 +1680,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                           if (!list.length) return null;
                           return (
                             <div key={group} className="mb-4">
-                              <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>{group}</div>
+                              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>{group}</div>
                               <div className="d-flex flex-column gap-1">
                                 {list.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                               </div>
@@ -1282,7 +1693,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* SHAPE & DEPTH */}
                     {tab === 'shape' && (
                       <>
-                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Border Radius</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>Border Radius</div>
                         <div className="row g-2 mb-4">
                           {radiusTokens.map(t => {
                             const v = vals[t.name] || '0rem';
@@ -1290,23 +1701,23 @@ const SiteTokenEditor = ({ site, onClose }) => {
                             const label = t.name.split('.').pop();
                             return (
                               <div key={t.id} className="col-6">
-                                <div className="border rounded p-2">
-                                  <div className="d-flex align-items-center justify-content-between mb-1">
-                                    <span className="fw-semibold" style={{ fontSize: 11 }}>{label}</span>
-                                    <span className="badge bg-secondary" style={{ fontSize: 9 }}>{v}</span>
+                                <div style={{ border: '1.5px solid #e2e8f0', borderRadius: 8, padding: '10px 12px', backgroundColor: '#fff' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{label}</span>
+                                    <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 600, color: '#3b82f6', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px' }}>{v}</span>
                                     <SaveIndicator name={t.name} saving={saving} saved={saved} />
                                   </div>
-                                  <input type="range" className="form-range mb-1"
+                                  <input type="range" className="form-range mb-2"
                                     min={0} max={2} step={0.05} value={numV}
                                     onChange={e => handleChange(t.name, `${parseFloat(e.target.value).toFixed(2)}rem`)} />
-                                  <div className="bg-primary" style={{ height: 20, borderRadius: `${numV}rem`, opacity: 0.35 }} />
+                                  <div style={{ height: 22, borderRadius: `${numV}rem`, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', opacity: 0.5 }} />
                                 </div>
                               </div>
                             );
                           })}
                         </div>
 
-                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Shadows</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>Shadows</div>
                         <div className="d-flex flex-column gap-1">
                           {shadowTokens.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                         </div>
@@ -1316,7 +1727,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* SPACING */}
                     {tab === 'spacing' && (
                       <>
-                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Spacing Scale</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>Spacing Scale</div>
                         <div className="d-flex flex-column gap-1">
                           {spacingTokens.sort((a,b) => {
                             const na = parseFloat(a.name.split('.').pop()) || 0;
@@ -1327,12 +1738,12 @@ const SiteTokenEditor = ({ site, onClose }) => {
                             const numV = parseFloat(v) || 0;
                             const pxV = v.includes('rem') ? numV * 16 : numV;
                             return (
-                              <div key={t.id} className="border rounded px-2 py-1 d-flex align-items-center gap-2">
-                                <span className="fw-semibold font-monospace text-muted flex-shrink-0" style={{ fontSize: 10, width: 60 }}>{t.name.split('.').slice(1).join('.')}</span>
-                                <div className="bg-primary flex-shrink-0" style={{ height: 14, width: Math.min(pxV * 2, 120), borderRadius: 2, opacity: 0.4, transition: 'width .2s' }} />
-                                <input type="text" className="form-control form-control-sm font-monospace flex-shrink-0"
-                                  style={{ maxWidth: 90, fontSize: 10, color: '#212529', backgroundColor: '#fff' }} value={v}
-                                  onChange={e => handleChange(t.name, e.target.value)} />
+                              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', border: '1.5px solid #e2e8f0', borderRadius: 7, backgroundColor: '#fff' }}>
+                                <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 600, color: '#475569', flexShrink: 0, width: 60 }}>{t.name.split('.').slice(1).join('.')}</span>
+                                <div style={{ height: 12, width: Math.min(pxV * 2, 120), borderRadius: 3, background: '#3b82f6', opacity: 0.5, flexShrink: 0, transition: 'width .2s' }} />
+                                <input type="text"
+                                  style={{ width: 88, fontSize: 11, fontFamily: 'monospace', padding: '4px 7px', border: '1.5px solid #e2e8f0', borderRadius: 5, outline: 'none', color: '#0f172a', backgroundColor: '#fff', fontWeight: 500, flexShrink: 0 }}
+                                  value={v} onChange={e => handleChange(t.name, e.target.value)} />
                                 <SaveIndicator name={t.name} saving={saving} saved={saved} />
                               </div>
                             );
@@ -1344,7 +1755,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* ANIMATION */}
                     {tab === 'animation' && (
                       <>
-                        <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>Animation Tokens</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>Animation Tokens</div>
                         <div className="d-flex flex-column gap-1">
                           {animTokens.map(t => <TextTokenRow key={t.id} token={t} vals={vals} handleChange={handleChange} saving={saving} saved={saved} />)}
                         </div>
@@ -1360,26 +1771,34 @@ const SiteTokenEditor = ({ site, onClose }) => {
                           { label: 'Other',   list: otherTokens },
                         ].filter(g => g.list.length > 0).map(({ label, list }) => (
                           <div key={label} className="mb-4">
-                            <div className="text-uppercase fw-bold text-muted mb-2" style={{ fontSize: 10, letterSpacing: 1 }}>{label}</div>
+                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', marginBottom: 8 }}>{label}</div>
                             <div className="d-flex flex-column gap-1">
                               {list.map(t => {
                                 const v = vals[t.name] || '';
                                 const isOpacity = t.category === 'opacity';
                                 if (isOpacity) {
                                   return (
-                                    <div key={t.id} className="border rounded px-3 py-2 d-flex align-items-center gap-2">
-                                      <div className="flex-grow-1">
-                                        <div className="fw-semibold" style={{ fontSize: 11 }}>{t.name.split('.').pop()}</div>
-                                        <div className="text-muted font-monospace" style={{ fontSize: 9 }}>{t.name}</div>
+                                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: '1.5px solid #e2e8f0', borderRadius: 8, backgroundColor: '#fff' }}>
+                                      {/* Visual opacity strip */}
+                                      <div style={{
+                                        width: 36, height: 36, borderRadius: 7, flexShrink: 0,
+                                        backgroundImage: 'linear-gradient(45deg, #cbd5e1 25%, transparent 25%), linear-gradient(-45deg, #cbd5e1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #cbd5e1 75%), linear-gradient(-45deg, transparent 75%, #cbd5e1 75%)',
+                                        backgroundSize: '8px 8px', backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0',
+                                        position: 'relative', overflow: 'hidden',
+                                      }}>
+                                        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#6366f1', opacity: parseFloat(v) || 0, borderRadius: 7, transition: 'opacity .2s' }} />
                                       </div>
-                                      <div className="d-flex align-items-center gap-2 flex-shrink-0" style={{ width: 160 }}>
-                                        <input type="range" className="form-range flex-grow-1"
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                          <span style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{t.name.split('.').pop()}</span>
+                                          <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 700, color: '#3b82f6', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px' }}>{v}</span>
+                                          <SaveIndicator name={t.name} saving={saving} saved={saved} />
+                                        </div>
+                                        <input type="range"
                                           min={0} max={1} step={0.05} value={parseFloat(v) || 0}
-                                          onChange={e => handleChange(t.name, parseFloat(e.target.value).toFixed(2))} />
-                                        <span className="badge bg-secondary" style={{ fontSize: 9, minWidth: 32 }}>{v}</span>
-                                        <div className="rounded" style={{ width: 18, height: 18, backgroundColor: 'var(--bs-primary)', opacity: parseFloat(v) || 1, border: '1px solid #ccc' }} />
+                                          onChange={e => handleChange(t.name, parseFloat(e.target.value).toFixed(2))}
+                                          style={{ width: '100%', accentColor: '#6366f1', cursor: 'pointer' }} />
                                       </div>
-                                      <SaveIndicator name={t.name} saving={saving} saved={saved} />
                                     </div>
                                   );
                                 }
@@ -1393,13 +1812,13 @@ const SiteTokenEditor = ({ site, onClose }) => {
                   </div>
                 </div>
 
-                {/* RIGHT: Live Preview — fully reactive to ALL token changes */}
-                <div className="col-lg-5 d-flex flex-column" style={{ background: '#f3f4f6', color: '#212529' }}>
-                  <div className="px-3 pt-2 pb-1 border-bottom d-flex align-items-center justify-content-between" style={{ flexShrink: 0, backgroundColor: '#f8f9fa' }}>
-                    <span className="fw-bold" style={{ fontSize: 10, letterSpacing: 1, color: '#555', textTransform: 'uppercase' }}>Live Preview</span>
-                    <span className="text-success" style={{ fontSize: 10 }}>
+                {/* RIGHT: Live Preview */}
+                <div className="col-lg-5 d-flex flex-column" style={{ background: '#f8fafc' }}>
+                  <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid #e2e8f0', background: '#fff', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.07em' }}>👁 Live Preview</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4, background: '#dcfce7', padding: '2px 8px', borderRadius: 10 }}>
                       <svg width="7" height="7" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="5" r="5"/></svg>
-                      {' '}live
+                      Live
                     </span>
                   </div>
 
@@ -1407,7 +1826,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Semantic Colors ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>COLORS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>COLORS</div>
                       <div className="d-flex gap-1 flex-wrap">
                         {SEMANTIC.map(name => {
                           const v = pv(name);
@@ -1424,7 +1843,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Buttons ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>BUTTONS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>BUTTONS</div>
                       <div className="d-flex flex-wrap gap-1 mb-2">
                         {['primary','success','danger','warning'].map(name => (
                           <button key={name} className="btn btn-sm"
@@ -1457,7 +1876,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Badges & Alerts ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>BADGES & ALERTS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>BADGES & ALERTS</div>
                       <div className="d-flex flex-wrap gap-1 mb-2">
                         {SEMANTIC.map(name => {
                           const v = pv(name);
@@ -1474,7 +1893,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Typography ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>TYPOGRAPHY</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>TYPOGRAPHY</div>
                       {[
                         { label: 'h1', size: vals['font.size.4xl'] || vals['font.size.3xl'] || '2rem',   weight: vals['font.weight.bold'] || '700' },
                         { label: 'h2', size: vals['font.size.2xl'] || '1.5rem',  weight: vals['font.weight.semibold'] || vals['font.weight.bold'] || '600' },
@@ -1484,8 +1903,8 @@ const SiteTokenEditor = ({ site, onClose }) => {
                         { label: 'xs', size: vals['font.size.xs']  || '0.75rem', weight: vals['font.weight.normal'] || '400' },
                       ].map(({ label, size, weight }) => (
                         <div key={label} className="d-flex align-items-baseline gap-2 mb-1" style={{ transition: 'all .2s' }}>
-                          <span className="text-muted flex-shrink-0 font-monospace" style={{ fontSize: 9, width: 18 }}>{label}</span>
-                          <span className="text-muted flex-shrink-0" style={{ fontSize: 8, width: 32 }}>{size}</span>
+                          <span style={{ fontSize: 9, color: '#94a3b8', fontFamily: 'monospace', flexShrink: 0, width: 18 }}>{label}</span>
+                          <span style={{ fontSize: 8, color: '#94a3b8', flexShrink: 0, width: 32 }}>{size}</span>
                           <span style={{
                             fontSize: size,
                             fontWeight: weight,
@@ -1503,7 +1922,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Card with Shadow + Radius ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>CARD — SHADOW + RADIUS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>CARD — SHADOW + RADIUS</div>
                       <div style={{
                         borderRadius: rVal,
                         boxShadow: vals['shadow.md'] || vals['shadow.default'] || '0 2px 8px rgba(0,0,0,0.08)',
@@ -1528,7 +1947,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Form Elements ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>FORM ELEMENTS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>FORM ELEMENTS</div>
                       <div className="mb-2">
                         <label style={{ fontSize: 11, fontWeight: vals['font.weight.medium'] || '500', fontFamily: vals['font.family.base'] || undefined, marginBottom: vals['spacing.1'] || '0.25rem', display: 'block', color: '#374151' }}>
                           Label
@@ -1545,7 +1964,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
 
                     {/* ── Radius Scale ── */}
                     <div className="mb-3 p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>RADIUS SCALE</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>RADIUS SCALE</div>
                       <div className="d-flex gap-2 flex-wrap">
                         {radiusTokens.sort((a,b) => (parseFloat(vals[a.name])||0) - (parseFloat(vals[b.name])||0)).map(t => {
                           const v = vals[t.name] || '0rem';
@@ -1564,15 +1983,23 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* ── Shadow Scale ── */}
                     {shadowTokens.length > 0 && (
                       <div className="mb-3 p-3 bg-white rounded border">
-                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>SHADOW SCALE</div>
-                        <div className="d-flex flex-column gap-2">
+                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 10, textTransform: 'uppercase' }}>SHADOW SCALE</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                           {shadowTokens.slice(0,6).map(t => {
                             const v = vals[t.name] || 'none';
                             const label = t.name.split('.').pop();
                             return (
-                              <div key={t.id} className="d-flex align-items-center gap-2">
-                                <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: 9, width: 32 }}>{label}</span>
-                                <div style={{ flex: 1, height: 28, borderRadius: rVal, boxShadow: v, backgroundColor: '#fff', border: '1px solid #e5e7eb', transition: 'box-shadow .2s' }} />
+                              <div key={t.id} style={{ textAlign: 'center', flex: '1 1 60px' }}>
+                                <div style={{
+                                  height: 44, borderRadius: 8,
+                                  boxShadow: v, backgroundColor: '#fff',
+                                  border: '1px solid #f1f5f9',
+                                  transition: 'box-shadow .2s',
+                                  marginBottom: 6, display: 'flex',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 16,
+                                }}>🎴</div>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: '#334155' }}>{label}</div>
                               </div>
                             );
                           })}
@@ -1583,8 +2010,8 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* ── Spacing Scale ── */}
                     {spacingTokens.length > 0 && (
                       <div className="mb-3 p-3 bg-white rounded border">
-                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>SPACING SCALE</div>
-                        <div className="d-flex flex-column gap-1">
+                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 10, textTransform: 'uppercase' }}>SPACING SCALE</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                           {spacingTokens.filter(t => {
                             const n = parseFloat(t.name.split('.').pop());
                             return [1,2,3,4,6,8,10,12].includes(n);
@@ -1592,11 +2019,20 @@ const SiteTokenEditor = ({ site, onClose }) => {
                             const v = vals[t.name] || '0';
                             const pxV = v.includes('rem') ? parseFloat(v) * 16 : parseFloat(v);
                             const label = t.name.split('.').pop();
+                            const pct = Math.min((pxV / 200) * 100, 100);
+                            const color = pv('primary') || '#6366f1';
                             return (
-                              <div key={t.id} className="d-flex align-items-center gap-2">
-                                <span className="text-muted font-monospace flex-shrink-0" style={{ fontSize: 8, width: 16 }}>{label}</span>
-                                <div style={{ height: 12, width: Math.min(pxV * 2, 140), backgroundColor: pv('primary') || '#6366f1', borderRadius: 2, opacity: 0.5, transition: 'width .2s', minWidth: 2 }} />
-                                <span className="text-muted" style={{ fontSize: 8 }}>{v}</span>
+                              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 700, color: '#475569', flexShrink: 0, width: 20, textAlign: 'right' }}>{label}</span>
+                                <div style={{ flex: 1, height: 14, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
+                                  <div style={{
+                                    height: '100%', width: `${pct}%`,
+                                    background: `linear-gradient(90deg, ${color}aa, ${color})`,
+                                    borderRadius: 4, transition: 'width .25s ease',
+                                    minWidth: 4,
+                                  }} />
+                                </div>
+                                <span style={{ fontSize: 9, fontFamily: 'monospace', color: '#64748b', flexShrink: 0, width: 36, textAlign: 'right' }}>{v}</span>
                               </div>
                             );
                           })}
@@ -1604,19 +2040,30 @@ const SiteTokenEditor = ({ site, onClose }) => {
                       </div>
                     )}
 
-                    {/* ── Opacity ── */}
+                    {/* ── Opacity Scale ── */}
                     {opacityTokens.length > 0 && (
                       <div className="mb-3 p-3 bg-white rounded border">
-                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>OPACITY SCALE</div>
-                        <div className="d-flex gap-1 flex-wrap">
+                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 10, textTransform: 'uppercase' }}>OPACITY SCALE</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           {opacityTokens.map(t => {
-                            const v = parseFloat(vals[t.name]) || 1;
+                            const v = parseFloat(vals[t.name] ?? 1);
                             const label = t.name.split('.').pop();
+                            const color = pv('primary') || '#6366f1';
                             return (
-                              <div key={t.id} className="text-center">
-                                <div style={{ width: 28, height: 28, backgroundColor: pv('primary') || '#6366f1', opacity: v, borderRadius: rVal, transition: 'opacity .2s', margin: '0 auto 2px', border: '1px solid #e5e7eb' }} />
-                                <div style={{ fontSize: 8, color: '#6b7280' }}>{label}</div>
-                                <div style={{ fontSize: 7, color: '#9ca3af' }}>{v}</div>
+                              <div key={t.id} style={{ textAlign: 'center', minWidth: 36 }}>
+                                {/* Checkerboard + color overlay */}
+                                <div style={{
+                                  width: 36, height: 36, borderRadius: 6, margin: '0 auto 4px',
+                                  backgroundImage: 'linear-gradient(45deg,#e2e8f0 25%,transparent 25%),linear-gradient(-45deg,#e2e8f0 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e2e8f0 75%),linear-gradient(-45deg,transparent 75%,#e2e8f0 75%)',
+                                  backgroundSize: '8px 8px',
+                                  backgroundPosition: '0 0,0 4px,4px -4px,-4px 0',
+                                  position: 'relative', overflow: 'hidden',
+                                  border: '1px solid #e2e8f0',
+                                }}>
+                                  <div style={{ position: 'absolute', inset: 0, backgroundColor: color, opacity: v, transition: 'opacity .2s', borderRadius: 6 }} />
+                                </div>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: '#334155' }}>{label}</div>
+                                <div style={{ fontSize: 8, color: '#94a3b8', fontFamily: 'monospace' }}>{v}</div>
                               </div>
                             );
                           })}
@@ -1627,7 +2074,7 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     {/* ── Animation ── */}
                     {animTokens.length > 0 && (
                       <div className="mb-3 p-3 bg-white rounded border">
-                        <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>ANIMATION</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>ANIMATION</div>
                         <div className="d-flex gap-2 flex-wrap">
                           {animTokens.filter(t => t.name.includes('duration')).map(t => {
                             const v = vals[t.name] || '200ms';
@@ -1649,13 +2096,21 @@ const SiteTokenEditor = ({ site, onClose }) => {
                     )}
 
                     {/* ── API Endpoints ── */}
-                    <div className="p-3 bg-white rounded border">
-                      <div className="text-muted mb-2" style={{ fontSize: 9, letterSpacing: 0.8, fontWeight: 600 }}>API ENDPOINTS</div>
-                      {[{ label: 'JSON', url: site.endpoints?.tokens }, { label: 'CSS', url: site.endpoints?.css }].map(({ label, url }) => (
-                        <div key={label} className="d-flex align-items-center gap-2 mb-1">
-                          <span className="badge bg-primary" style={{ fontSize: 8, minWidth: 28 }}>{label}</span>
+                    <div style={{ padding: '12px 14px', background: '#fff', borderRadius: 10, border: '1.5px solid #e2e8f0' }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: '#64748b', marginBottom: 10, textTransform: 'uppercase' }}>API ENDPOINTS</div>
+                      {[
+                        { label: 'JSON',  url: site.endpoints?.tokens, color: '#1d4ed8', bg: '#dbeafe' },
+                        { label: 'CSS',   url: site.endpoints?.css,    color: '#7e22ce', bg: '#f3e8ff' },
+                        { label: 'Theme', url: site.endpoints?.theme,  color: '#065f46', bg: '#dcfce7' },
+                      ].map(({ label, url, color, bg }) => (
+                        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: bg, color, flexShrink: 0, minWidth: 36, textAlign: 'center' }}>{label}</span>
                           <a href={url} target="_blank" rel="noreferrer"
-                            className="text-truncate text-decoration-none text-muted font-monospace" style={{ fontSize: 9 }}>{url}</a>
+                            style={{ fontSize: 9, fontFamily: 'monospace', color: '#475569', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
+                            title={url}>{url}</a>
+                          <button onClick={() => navigator.clipboard.writeText(url || '')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#94a3b8', flexShrink: 0, padding: '0 2px' }}
+                            title="Copy URL">⎘</button>
                         </div>
                       ))}
                     </div>
@@ -1665,12 +2120,15 @@ const SiteTokenEditor = ({ site, onClose }) => {
             </div>
           )}
 
-          <div className="modal-footer border-top py-2" style={{ backgroundColor: '#fff', color: '#212529' }}>
-            <span className="me-auto" style={{ fontSize: 11, color: '#666' }}>
-              <svg width="8" height="8" viewBox="0 0 10 10" fill="#0ab39c"><circle cx="5" cy="5" r="5"/></svg>
-              {' '}Auto-saves on change · Broadcasts to all connected apps via API
+          <div style={{ backgroundColor: '#fff', borderTop: '1px solid #e2e8f0', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="8" height="8" viewBox="0 0 10 10" fill="#16a34a"><circle cx="5" cy="5" r="5"/></svg>
+              Auto-saves on change · Broadcasts to all connected apps via API
             </span>
-            <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
+            <button onClick={onClose}
+              style={{ padding: '7px 20px', background: '#f1f5f9', border: '1.5px solid #e2e8f0', borderRadius: 7, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#334155' }}>
+              Close
+            </button>
           </div>
         </div>
       </div>
@@ -1689,6 +2147,7 @@ const SitesTab = () => {
   const [active, setActive]     = useState(null);   // site being edited / viewed
   const [revealed, setRevealed] = useState({});     // { siteId: plainKey }
   const [editorSite, setEditorSite] = useState(null); // site open in token editor
+  const [pageBuilderSite, setPageBuilderSite] = useState(null); // site open in page builder
   const [form, setForm]         = useState({ name: '', slug: '', domain: '', theme_id: '', description: '', is_active: true });
   const [err, setErr]           = useState('');
 
@@ -1765,10 +2224,13 @@ const SitesTab = () => {
       // Instantly patch local state so UI updates without waiting for re-fetch
       if (isEdit) {
         setSites(prev => prev.map(s => s.id === site.id ? site : s));
+        setModal(null);
       } else {
         setSites(prev => [...prev, site]);
+        setModal(null);
+        // After creating a new site, open the Page Builder immediately
+        setPageBuilderSite(site);
       }
-      setModal(null);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -1854,6 +2316,7 @@ const SitesTab = () => {
                     </div>
                   </div>
                   <div className="d-flex gap-1 flex-shrink-0">
+                    <Button variant="outline-info"      size="sm" title="Page Builder" onClick={() => setPageBuilderSite(site)} style={{ fontSize: 10, padding: '2px 7px' }}>Pages</Button>
                     <Button variant="outline-success"   size="sm" title="Edit Tokens"  onClick={() => openTokenEditor(site)}><SvgTokens /></Button>
                     <Button variant="outline-secondary" size="sm" title="Code snippet" onClick={() => openSnippet(site)}><SvgCode /></Button>
                     <Button variant="outline-primary"   size="sm" title="Edit site"    onClick={() => openEdit(site)}><SvgEdit /></Button>
@@ -1898,6 +2361,9 @@ const SitesTab = () => {
                     {site.is_active ? 'Disable' : 'Enable'}
                   </button>
                 </div>
+
+                {/* Pages API Panel */}
+                <PagesApiPanel site={site} />
               </div>
             </div>
           ))}
@@ -1963,6 +2429,15 @@ const SitesTab = () => {
 
       {/* Token Editor */}
       {editorSite && <SiteTokenEditor site={editorSite} onClose={() => setEditorSite(null)} />}
+
+      {/* Page Builder (full-screen overlay) */}
+      {pageBuilderSite && (
+        <SitePageBuilder
+          site={pageBuilderSite}
+          themes={themes}
+          onClose={() => setPageBuilderSite(null)}
+        />
+      )}
 
       {/* Code Snippet Modal */}
       {modal === 'snippet' && active && (

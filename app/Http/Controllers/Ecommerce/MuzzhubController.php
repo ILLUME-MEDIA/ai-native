@@ -21,7 +21,7 @@ class MuzzhubController extends Controller
 
         $lat    = $request->filled('lat')    ? (float) $request->lat    : null;
         $lng    = $request->filled('lng')    ? (float) $request->lng    : null;
-        $radius = $request->filled('radius') ? (float) $request->radius : 100;
+        $radius = $request->filled('radius') ? (float) $request->radius : 25;
 
         $useLocation = $lat !== null && $lng !== null;
 
@@ -94,11 +94,13 @@ class MuzzhubController extends Controller
 
         $paginated = $q->paginate($request->input('per_page', 15));
 
-        $paginated->getCollection()->transform(function ($item) use ($useLocation) {
+        $roundRobinIdx = 0;
+
+        $paginated->getCollection()->transform(function ($item) use ($useLocation, &$roundRobinIdx) {
             if ($useLocation && $item->distance_miles !== null) {
                 $item->distance_miles = round((float) $item->distance_miles, 2);
             }
-            $item->cuisine_fallback_image = $this->resolveCuisineFallback($item);
+            $this->applyPhotoFallbacks($item, $roundRobinIdx);
             return $item;
         });
 
@@ -108,26 +110,49 @@ class MuzzhubController extends Controller
     public function show(Muzzhub $muzzhub): JsonResponse
     {
         $muzzhub->load(['category:id,name,slug,color,icon', 'business', 'cuisines:id,name,slug,icon,images']);
-        $muzzhub->cuisine_fallback_image = $this->resolveCuisineFallback($muzzhub);
+        $this->applyPhotoFallbacks($muzzhub);
         return response()->json($muzzhub);
     }
 
     /**
-     * If muzzhub has no cover_image, return the first available image
-     * from any of its linked cuisines' images array.
+     * Collect all cuisine images from all linked cuisines into a flat array.
+     * Cuisine 1 images come first, then cuisine 2 images fill remaining slots.
+     * e.g. cuisine1=[A,B], cuisine2=[C,D] → [A,B,C,D]
      */
-    private function resolveCuisineFallback($muzzhub): ?string
+    private function getCuisineImages($muzzhub): array
     {
-        if (!empty($muzzhub->cover_image)) {
-            return null;
-        }
+        $all = [];
         foreach ($muzzhub->cuisines ?? [] as $cuisine) {
-            $images = is_array($cuisine->images) ? $cuisine->images : [];
-            foreach ($images as $img) {
-                if (!empty($img)) return $img;
+            foreach (array_filter(is_array($cuisine->images) ? $cuisine->images : []) as $img) {
+                $all[] = $img;
             }
         }
-        return null;
+        return $all;
+    }
+
+    /**
+     * Apply cuisine image fallbacks:
+     *   photo_url / cover_image / image_url → round-robin across restaurants (if $rrIdx passed)
+     *   photo_url_2                         → images[1] per record (cuisine 2 fills if needed)
+     *   photo_url_3                         → images[2] per record (cuisine 2 fills if needed)
+     *
+     * @param int|null &$rrIdx  Round-robin counter (passed by ref from index(); null for show())
+     */
+    private function applyPhotoFallbacks($muzzhub, ?int &$rrIdx = null): void
+    {
+        $imgs = $this->getCuisineImages($muzzhub);
+        if (empty($imgs)) return;
+
+        $total   = count($imgs);
+        // Round-robin: cycle index across restaurants in the list; single record always uses [0]
+        $primary = $rrIdx !== null ? $imgs[$rrIdx % $total] : $imgs[0];
+        if ($rrIdx !== null) $rrIdx++;
+
+        if (empty($muzzhub->photo_url))   $muzzhub->photo_url   = $primary;
+        if (empty($muzzhub->cover_image)) $muzzhub->cover_image = $primary;
+        if (empty($muzzhub->image_url))   $muzzhub->image_url   = $primary;
+        if (empty($muzzhub->photo_url_2)) $muzzhub->photo_url_2 = $imgs[1] ?? $imgs[0];
+        if (empty($muzzhub->photo_url_3)) $muzzhub->photo_url_3 = $imgs[2] ?? $imgs[1] ?? $imgs[0];
     }
 
     public function store(Request $request): JsonResponse
