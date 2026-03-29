@@ -400,7 +400,7 @@ function RoiEditor({ content, onChange }) {
       <Form.Group className="mb-3">
         <Form.Label className="fw-semibold" style={{ fontSize: '0.78rem' }}>Body / Impact Description</Form.Label>
         <Editor
-          apiKey="jskpspufidaq4lur64d5se6fsad1c7d6adqbod38hinjldf5"
+          apiKey="1sfzxm1s0wav9yrxfp1zi9d3fhorw99wx3n3y7hlly9mod1f"
           value={content.body ?? ''}
           init={{
             height: 220,
