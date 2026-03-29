@@ -40,11 +40,11 @@ export function useBlocks(siteId, pageId) {
 
     // ── Add block to a column ───────────────────────────────────────
 
-    const addBlock = useCallback(async (sectionId, columnIndex, blockType) => {
+    const addBlock = useCallback(async (sectionId, columnIndex, blockType, options = {}) => {
         try {
             const block = await dsCall(blockPath(sectionId), {
                 method: 'POST',
-                body: { block_type: blockType, column_index: columnIndex },
+                body: { block_type: blockType, column_index: columnIndex, ...options },
             });
             setBlocksBySectionId(prev => {
                 const grouped = { ...(prev[sectionId] ?? {}) };

@@ -118,16 +118,20 @@ class DsSitePagesController extends Controller
         abort_if($page->site_id !== $dsSite->id, 404);
 
         $data = $request->validate([
-            'section_type' => 'required|string|in:navbar,hero,carousel,cards,features,testimonials,cta,footer',
+            'section_type' => 'nullable|string|max:50',
+            'layout'       => 'nullable|string|in:1col,2col,3col,4col,sidebar-left,sidebar-right',
             'label'        => 'nullable|string|max:100',
             'settings'     => 'nullable|array',
+            'sort_order'   => 'nullable|integer|min:0',
             'is_visible'   => 'boolean',
         ]);
 
         $data['page_id']    = $page->id;
-        $data['sort_order'] = DsPageSection::where('page_id', $page->id)->max('sort_order') + 1;
+        $data['section_type'] = $data['section_type'] ?? 'layout';
+        $data['layout']     = $data['layout'] ?? '1col';
+        $data['sort_order'] = $data['sort_order'] ?? DsPageSection::where('page_id', $page->id)->max('sort_order') + 1;
 
-        // Merge incoming settings over defaults
+        // Merge incoming settings over defaults (only for known legacy types)
         $defaults = DsPageSection::defaultsFor($data['section_type']);
         $data['settings'] = array_merge($defaults, $data['settings'] ?? []);
 
@@ -143,6 +147,7 @@ class DsSitePagesController extends Controller
 
         $data = $request->validate([
             'label'      => 'nullable|string|max:100',
+            'layout'     => 'nullable|string|in:1col,2col,3col,4col,sidebar-left,sidebar-right',
             'settings'   => 'nullable|array',
             'is_visible' => 'boolean',
             'sort_order' => 'nullable|integer|min:0',
@@ -198,6 +203,7 @@ class DsSitePagesController extends Controller
             'id'           => $section->id,
             'page_id'      => $section->page_id,
             'section_type' => $section->section_type,
+            'layout'       => $section->layout ?? '1col',
             'label'        => $section->label,
             'sort_order'   => $section->sort_order,
             'settings'     => $section->resolved_settings,

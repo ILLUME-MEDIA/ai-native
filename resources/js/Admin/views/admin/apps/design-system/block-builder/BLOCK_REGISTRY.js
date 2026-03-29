@@ -6,9 +6,11 @@ import {
     Type, AlignLeft, Image, MousePointer2, ArrowUpDown, Minus,
     GalleryHorizontal, Play, Code2, Quote, List, Star,
     Layout, Columns, Columns2, Columns3, PanelLeft, PanelRight,
+    Search, Tag, Mail, Store, Mountain, SlidersHorizontal, Navigation,
 } from 'lucide-react';
 
 export const BLOCK_TYPES = {
+    // ── Core content ─────────────────────────────────────────────────────────
     heading: {
         label:    'Heading',
         Icon:     Type,
@@ -105,6 +107,123 @@ export const BLOCK_TYPES = {
         category: 'interactive',
         defaultContent: { name: 'Star', size: 48, color: '', link_url: '', align: 'center' },
     },
+
+    // ── Navigation & Layout blocks ────────────────────────────────────────────
+    navbar: {
+        label:    'Navbar',
+        Icon:     Navigation,
+        color:    '#3b82f6',
+        bg:       '#eff6ff',
+        category: 'navigation',
+        defaultContent: {
+            logo_text:  'Brand',
+            logo_url:   '/',
+            logo_image: '',
+            nav_links:  [
+                { label: 'Home',     url: '/',        open_new_tab: false },
+                { label: 'About',    url: '/about',   open_new_tab: false },
+                { label: 'Services', url: '/services',open_new_tab: false },
+                { label: 'Contact',  url: '/contact', open_new_tab: false },
+            ],
+            cta: { label: 'Get Started', url: '#', show: true, variant: 'primary' },
+            sticky: false,
+            bg_color: '#ffffff',
+        },
+    },
+
+    // ── Ecommerce block types ─────────────────────────────────────────────────
+    hero_banner: {
+        label:    'Hero Banner',
+        Icon:     Mountain,
+        color:    '#8b5cf6',
+        bg:       '#f5f3ff',
+        category: 'ecommerce',
+        defaultContent: {
+            promo_tag:  'Limited time offer',
+            headline:   'Order Delivery Near You',
+            subtext:    '',
+            bg_image:   '',
+            bg_overlay: 'rgba(0,0,0,0.5)',
+            text_align: 'left',
+            buttons:    [{ label: 'Get Started', url: '#', icon: '', style: 'outline' }],
+        },
+    },
+    search_bar: {
+        label:    'Search Bar',
+        Icon:     Search,
+        color:    '#0ea5e9',
+        bg:       '#f0f9ff',
+        category: 'ecommerce',
+        defaultContent: {
+            placeholder_restaurant: 'Search restaurants...',
+            placeholder_location:   'City, State',
+            button_text:            'Search',
+            button_bg:              '#1e293b',
+            show_location:          true,
+        },
+    },
+    cuisine_tabs: {
+        label:    'Cuisine Filter',
+        Icon:     SlidersHorizontal,
+        color:    '#f59e0b',
+        bg:       '#fffbeb',
+        category: 'ecommerce',
+        defaultContent: {
+            active_id:  'all',
+            categories: [
+                { id: 'all',     label: 'All',     count: null },
+                { id: 'pizza',   label: 'Pizza',   count: '120' },
+                { id: 'burgers', label: 'Burgers', count: '85' },
+                { id: 'sushi',   label: 'Sushi',   count: '40' },
+            ],
+        },
+    },
+    restaurant_card: {
+        label:    'Restaurant Card',
+        Icon:     Store,
+        color:    '#10b981',
+        bg:       '#ecfdf5',
+        category: 'ecommerce',
+        defaultContent: {
+            name:         'Restaurant Name',
+            address:      '123 Main St, City, State',
+            tags:         ['American'],
+            rating:       4.0,
+            review_count: 0,
+            photo_count:  0,
+            image_url:    '',
+            badge:        '',
+        },
+    },
+    deal_card: {
+        label:    'Deal Card',
+        Icon:     Tag,
+        color:    '#ef4444',
+        bg:       '#fef2f2',
+        category: 'ecommerce',
+        defaultContent: {
+            title:         '$5 off your first order',
+            delivery_info: 'Delivery by 6:15am',
+            expiry:        'Expires soon',
+            image_url:     '',
+            cta_text:      'Shop Now',
+            cta_url:       '#',
+            cta_bg:        '#0f172a',
+        },
+    },
+    email_subscribe: {
+        label:    'Email Subscribe',
+        Icon:     Mail,
+        color:    '#f97316',
+        bg:       '#fff7ed',
+        category: 'ecommerce',
+        defaultContent: {
+            placeholder: 'Enter your email',
+            button_text: 'Subscribe now',
+            disclaimer:  'I agree that my submitted data is being collected and stored.',
+            button_bg:   '#f59e0b',
+        },
+    },
 };
 
 export const BLOCK_CATEGORIES = {
@@ -112,6 +231,8 @@ export const BLOCK_CATEGORIES = {
     media:       { label: 'Media',       color: '#0891b2' },
     interactive: { label: 'Interactive', color: '#2563eb' },
     layout:      { label: 'Layout',      color: '#64748b' },
+    navigation:  { label: 'Navigation',  color: '#3b82f6' },
+    ecommerce:   { label: 'Ecommerce',   color: '#10b981' },
 };
 
 export const COLUMN_LAYOUTS = {
