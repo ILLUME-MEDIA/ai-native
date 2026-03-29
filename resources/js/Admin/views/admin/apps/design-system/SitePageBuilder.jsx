@@ -968,13 +968,16 @@ export default function SitePageBuilder({ site, themes = [], onClose }) {
         markSaving();
     };
 
-    const handleAddSection = async (sectionType) => {
-        if (!activePage) return;
-        const sec = await dsCall(`/sites/${site.id}/pages/${activePage.id}/sections`, { method: 'POST', body: { section_type: sectionType } });
+    const handleAddSection = async (layout = '1col', label = 'New Section', settings = {}) => {
+        if (!activePage) return null;
+        const sec = await dsCall(`/sites/${site.id}/pages/${activePage.id}/sections`, {
+            method: 'POST',
+            body: { section_type: 'layout', label, sort_order: sections.length + 1, layout, settings },
+        });
         setSections(prev => [...prev, sec]);
         setSectionCounts(c => ({ ...c, [activePage.id]: (c[activePage.id] ?? 0) + 1 }));
-        setActiveSection(sec);
         markSaving();
+        return sec;
     };
 
     const handleUpdateSection = useCallback(async (sectionId, data) => {
@@ -992,7 +995,7 @@ export default function SitePageBuilder({ site, themes = [], onClose }) {
     };
 
     const handleDeleteSection = async (section) => {
-        if (!confirm(`Delete "${SECTION_TYPES[section.section_type]?.label ?? section.section_type}" section?`)) return;
+        if (!confirm(`Delete section "${section.label || 'this section'}"?`)) return;
         await dsCall(`/sites/${site.id}/pages/${activePage.id}/sections/${section.id}`, { method: 'DELETE' });
         setSections(prev => prev.filter(s => s.id !== section.id));
         setSectionCounts(c => ({ ...c, [activePage.id]: Math.max(0, (c[activePage.id] ?? 1) - 1) }));
@@ -1009,6 +1012,14 @@ export default function SitePageBuilder({ site, themes = [], onClose }) {
         await dsCall(`/sites/${site.id}/pages/${activePage.id}/sections/reorder`, { method: 'POST', body: { items: list.map((s, i) => ({ id: s.id, sort_order: i })) } });
         markSaving();
     };
+
+    // Called by BlockBuilderCanvas when sections are drag-reordered inside the canvas
+    const handleReorderSections = useCallback(async (newOrder) => {
+        if (!activePage) return;
+        setSections(newOrder);
+        await dsCall(`/sites/${site.id}/pages/${activePage.id}/sections/reorder`, { method: 'POST', body: { items: newOrder.map((s, i) => ({ id: s.id, sort_order: i })) } });
+        markSaving();
+    }, [site.id, activePage?.id]);
 
     const globalTheme = themes.find(t => t.id === site.resolved_theme_id) ?? themes.find(t => t.is_default) ?? themes[0];
     const pageTheme   = activePage?.theme_id ? themes.find(t => t.id === activePage.theme_id) : null;
@@ -1147,11 +1158,12 @@ export default function SitePageBuilder({ site, themes = [], onClose }) {
                                 onSectionUpdate={handleUpdateSection}
                                 onSectionDelete={handleDeleteSection}
                                 onSectionToggle={handleToggleSection}
-                                onAddSection={() => handleAddSection('layout')}
+                                onAddSection={handleAddSection}
+                                onReorderSections={handleReorderSections}
                             />
                         )}
                     </div>
-                )
+                )}
             </div>
         </div>
     );
