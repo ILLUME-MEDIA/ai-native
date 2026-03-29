@@ -1,0 +1,124 @@
+/**
+ * BLOCK_REGISTRY — single source of truth for all block types.
+ * Used by BlockPalette, BlockCard, BlockInspector, and useBlocks hook.
+ */
+import {
+    Type, AlignLeft, Image, MousePointer2, ArrowUpDown, Minus,
+    GalleryHorizontal, Play, Code2, Quote, List, Star,
+    Layout, Columns, Columns2, Columns3, PanelLeft, PanelRight,
+} from 'lucide-react';
+
+export const BLOCK_TYPES = {
+    heading: {
+        label:    'Heading',
+        Icon:     Type,
+        color:    '#7c3aed',
+        bg:       '#f5f3ff',
+        category: 'content',
+        defaultContent: { text: 'Section Heading', level: 'h2', align: 'left' },
+    },
+    paragraph: {
+        label:    'Paragraph',
+        Icon:     AlignLeft,
+        color:    '#0f172a',
+        bg:       '#f8fafc',
+        category: 'content',
+        defaultContent: { text: 'Start writing your content here.', align: 'left' },
+    },
+    image: {
+        label:    'Image',
+        Icon:     Image,
+        color:    '#0891b2',
+        bg:       '#ecfeff',
+        category: 'media',
+        defaultContent: { url: '', alt: '', caption: '', link_url: '', object_fit: 'cover', width: '100%', height: 'auto', rounded: false },
+    },
+    button: {
+        label:    'Button',
+        Icon:     MousePointer2,
+        color:    '#2563eb',
+        bg:       '#eff6ff',
+        category: 'interactive',
+        defaultContent: { label: 'Click Here', url: '#', variant: 'primary', size: 'md', align: 'left', open_new_tab: false, icon: '' },
+    },
+    spacer: {
+        label:    'Spacer',
+        Icon:     ArrowUpDown,
+        color:    '#94a3b8',
+        bg:       '#f1f5f9',
+        category: 'layout',
+        defaultContent: { height: 40 },
+    },
+    divider: {
+        label:    'Divider',
+        Icon:     Minus,
+        color:    '#64748b',
+        bg:       '#f8fafc',
+        category: 'layout',
+        defaultContent: { line_style: 'solid', color: '#e2e8f0', thickness: 1, width_percent: 100, align: 'center' },
+    },
+    gallery: {
+        label:    'Gallery',
+        Icon:     GalleryHorizontal,
+        color:    '#d97706',
+        bg:       '#fffbeb',
+        category: 'media',
+        defaultContent: { images: [], columns: 3, gap: 12, lightbox: true, rounded: false },
+    },
+    video: {
+        label:    'Video',
+        Icon:     Play,
+        color:    '#dc2626',
+        bg:       '#fef2f2',
+        category: 'media',
+        defaultContent: { url: '', autoplay: false, muted: true, loop: false, show_controls: true, aspect_ratio: '16:9' },
+    },
+    html: {
+        label:    'HTML',
+        Icon:     Code2,
+        color:    '#059669',
+        bg:       '#ecfdf5',
+        category: 'content',
+        defaultContent: { code: '<p>Custom HTML content</p>' },
+    },
+    quote: {
+        label:    'Quote',
+        Icon:     Quote,
+        color:    '#7c3aed',
+        bg:       '#f5f3ff',
+        category: 'content',
+        defaultContent: { text: 'A meaningful quote goes here.', author: 'Author Name', author_title: '', author_image_url: '', align: 'center' },
+    },
+    list: {
+        label:    'List',
+        Icon:     List,
+        color:    '#0f766e',
+        bg:       '#f0fdfa',
+        category: 'content',
+        defaultContent: { items: [{ text: 'First item' }, { text: 'Second item' }, { text: 'Third item' }], list_style: 'unordered', icon: '' },
+    },
+    icon: {
+        label:    'Icon',
+        Icon:     Star,
+        color:    '#f59e0b',
+        bg:       '#fffbeb',
+        category: 'interactive',
+        defaultContent: { name: 'Star', size: 48, color: '', link_url: '', align: 'center' },
+    },
+};
+
+export const BLOCK_CATEGORIES = {
+    content:     { label: 'Content',     color: '#7c3aed' },
+    media:       { label: 'Media',       color: '#0891b2' },
+    interactive: { label: 'Interactive', color: '#2563eb' },
+    layout:      { label: 'Layout',      color: '#64748b' },
+};
+
+export const COLUMN_LAYOUTS = {
+    '1col':          { label: '1 Column',      columns: 1, Icon: Layout,      gridTemplate: '1fr' },
+    '2col':          { label: '2 Columns',     columns: 2, Icon: Columns2,    gridTemplate: '1fr 1fr' },
+    '3col':          { label: '3 Columns',     columns: 3, Icon: Columns3,    gridTemplate: '1fr 1fr 1fr' },
+    '4col':          { label: '4 Columns',     columns: 4, Icon: Columns,     gridTemplate: '1fr 1fr 1fr 1fr' },
+    'sidebar-left':  { label: 'Sidebar Left',  columns: 2, Icon: PanelLeft,   gridTemplate: '280px 1fr' },
+    'sidebar-right': { label: 'Sidebar Right', columns: 2, Icon: PanelRight,  gridTemplate: '1fr 280px' },
+};

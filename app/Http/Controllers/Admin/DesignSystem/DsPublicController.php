@@ -76,7 +76,12 @@ class DsPublicController extends Controller
         $page = DsSitePage::where('site_id', $site->id)
             ->where('slug', $pageSlug)
             ->where('is_active', true)
-            ->with(['sections' => fn($q) => $q->where('is_visible', true)->orderBy('sort_order'), 'theme'])
+            ->with([
+                'theme',
+                'sections' => fn($q) => $q->where('is_visible', true)->orderBy('sort_order'),
+                'sections.blocks' => fn($q) => $q->where('is_visible', true)
+                    ->orderBy('column_index')->orderBy('sort_order'),
+            ])
             ->firstOrFail();
 
         // Resolve theme cascade: page theme → site theme → default theme
@@ -157,13 +162,31 @@ class DsPublicController extends Controller
         $style    = $settings['_style'] ?? [];
         unset($settings['_style']);
 
+        // Group blocks by column_index
+        $blocks = [];
+        if ($section->relationLoaded('blocks')) {
+            foreach ($section->blocks as $block) {
+                $col = (string) $block->column_index;
+                $blocks[$col][] = [
+                    'id'         => $block->id,
+                    'type'       => $block->block_type,
+                    'label'      => $block->label,
+                    'sort_order' => $block->sort_order,
+                    'content'    => $block->resolved_content,
+                    'style'      => $block->style ?? [],
+                ];
+            }
+        }
+
         return [
-            'id'           => $section->id,
-            'type'         => $section->section_type,
-            'label'        => $section->label,
-            'sort_order'   => $section->sort_order,
-            'content'      => $settings,   // all content settings (logo, links, items, etc.)
-            'style'        => $style,       // CSS overrides for this section
+            'id'         => $section->id,
+            'type'       => $section->section_type,
+            'layout'     => $section->layout ?? '1col',
+            'label'      => $section->label,
+            'sort_order' => $section->sort_order,
+            'content'    => $settings,
+            'style'      => $style,
+            'blocks'     => $blocks,  // { "0": [...], "1": [...] }
         ];
     }
 }

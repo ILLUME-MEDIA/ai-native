@@ -17,6 +17,7 @@ import {
     AlignLeft, AlignCenter, AlignRight, AlignJustify,
     Maximize2, MoveHorizontal, Zap, Blend, FlipHorizontal2,
 } from 'lucide-react';
+import BlockBuilderCanvas from './block-builder/BlockBuilderCanvas';
 
 // ── API ───────────────────────────────────────────────────────────────────────
 const DS_BASE = '/api/admin/design-system';
@@ -1098,109 +1099,59 @@ export default function SitePageBuilder({ site, themes = [], onClose }) {
                     </div>
 
                     {showAddPage && <AddPageForm themes={themes} onAdd={handleAddPage} onCancel={() => setShowAddPage(false)} />}
-
-                    {/* palette */}
-                    {activePage && !showAddPage && (
-                        <>
-                            <div style={{ padding: '10px 12px 6px', borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                <Blocks size={13} color={C.textMuted} />
-                                <span style={{ fontSize: 10.5, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 }}>Add Section</span>
-                            </div>
-                            <div style={{ overflowY: 'auto', padding: '0 8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {Object.entries(SECTION_TYPES).map(([key, type]) => (
-                                    <PaletteItem key={key} typeKey={key} type={type} onClick={handleAddSection} />
-                                ))}
-                            </div>
-                        </>
-                    )}
                 </div>
 
-                {/* ── Center Panel ── */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-                    {!activePage ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 14, padding: 32 }}>
-                            <div style={{ width: 64, height: 64, borderRadius: 16, background: C.panel, border: `1.5px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <LayoutGrid size={28} color={C.textLight} />
+                {/* ── Center + Right: Block Builder ── */}
+                {!activePage ? (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, padding: 32, color: C.textMuted }}>
+                        <div style={{ width: 64, height: 64, borderRadius: 16, background: C.panel, border: `1.5px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <LayoutGrid size={28} color={C.textLight} />
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: C.textSub, marginBottom: 5 }}>No page selected</div>
+                            <div style={{ fontSize: 12.5 }}>Create a page on the left to start building.</div>
+                        </div>
+                    </div>
+                ) : (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+                        {/* Page sub-header */}
+                        <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, background: C.panel, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                            <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <FileText size={13} color={C.accent} />
                             </div>
-                            <div style={{ textAlign: 'center' }}>
-                                <div style={{ fontSize: 15, fontWeight: 700, color: C.textSub, marginBottom: 5 }}>No page selected</div>
-                                <div style={{ fontSize: 12.5, color: C.textMuted }}>Create a page on the left to start building.</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activePage.name}</div>
+                                <div style={{ fontSize: 10, color: C.textMuted }}>/{activePage.slug} · {sections.length} section{sections.length !== 1 ? 's' : ''}</div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                <Palette size={12} color={C.textMuted} />
+                                <span style={{ fontSize: 11, color: C.textMuted }}>Theme:</span>
+                                <select value={activePage.theme_id || ''} onChange={e => handlePageThemeChange(e.target.value)}
+                                    style={{ fontSize: 11, padding: '3px 7px', border: `1.5px solid ${C.border}`, borderRadius: C.radiusSm, outline: 'none', color: C.text, background: '#fff', cursor: 'pointer', maxWidth: 160 }}>
+                                    <option value="">— Global ({globalTheme?.name ?? 'Default'}) —</option>
+                                    {themes.map(t => <option key={t.id} value={t.id}>{t.name}{t.is_default ? ' ★' : ''}</option>)}
+                                </select>
                             </div>
                         </div>
-                    ) : (
-                        <>
-                            {/* page header */}
-                            <div style={{ padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.panel, display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: C.shadow }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                                    <div style={{ width: 30, height: 30, borderRadius: 7, background: C.accentSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                        <FileText size={14} color={C.accent} />
-                                    </div>
-                                    <div style={{ minWidth: 0 }}>
-                                        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activePage.name}</div>
-                                        <div style={{ fontSize: 10.5, color: C.textMuted }}>/{activePage.slug} · {sections.length} section{sections.length !== 1 ? 's' : ''}</div>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-                                    <Palette size={13} color={C.textMuted} />
-                                    <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: 'nowrap' }}>Page Theme:</span>
-                                    <select value={activePage.theme_id || ''} onChange={e => handlePageThemeChange(e.target.value)}
-                                        style={{ fontSize: 11.5, padding: '4px 8px', border: `1.5px solid ${C.border}`, borderRadius: C.radiusSm, outline: 'none', color: C.text, background: '#fff', cursor: 'pointer', maxWidth: 180 }}>
-                                        <option value="">— Inherit global ({globalTheme?.name ?? 'Default'}) —</option>
-                                        {themes.map(t => <option key={t.id} value={t.id}>{t.name}{t.is_default ? ' ★' : ''}</option>)}
-                                    </select>
-                                    {pageTheme && (
-                                        <span style={{ fontSize: 10, padding: '2px 8px', background: '#e0e7ff', color: '#4f46e5', borderRadius: 10, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}>
-                                            <ShieldCheck size={10} /> {pageTheme.name}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
 
-                            {/* sections */}
-                            <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px' }}>
-                                {loadingSec ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', padding: '48px 0', fontSize: 13, color: C.textMuted }}>
-                                        <Loader2 size={18} /> Loading sections…
-                                    </div>
-                                ) : sections.length === 0 ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 52, color: C.textMuted, border: `2px dashed ${C.border}`, borderRadius: C.radiusLg, background: C.panel }}>
-                                        <div style={{ width: 52, height: 52, borderRadius: 14, background: C.panelDark, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-                                            <Blocks size={22} color={C.textLight} />
-                                        </div>
-                                        <div style={{ fontSize: 14, fontWeight: 700, color: C.textSub, marginBottom: 5 }}>No sections yet</div>
-                                        <div style={{ fontSize: 12, textAlign: 'center', lineHeight: 1.6 }}>Use the <strong>Add Section</strong> panel on the left<br />to build this page.</div>
-                                    </div>
-                                ) : (
-                                    <DragDropContext onDragEnd={onSectionsDragEnd}>
-                                        <Droppable droppableId="sections">
-                                            {(prov) => (
-                                                <div ref={prov.innerRef} {...prov.droppableProps}>
-                                                    {sections.map((sec, idx) => (
-                                                        <Draggable key={sec.id} draggableId={`sec-${sec.id}`} index={idx}>
-                                                            {(prov) => (
-                                                                <div ref={prov.innerRef} {...prov.draggableProps}>
-                                                                    <SectionCard section={sec} isActive={activeSection?.id === sec.id}
-                                                                        onSelect={setActiveSection} onDelete={handleDeleteSection}
-                                                                        onToggle={handleToggleSection} dragHandleProps={prov.dragHandleProps} />
-                                                                </div>
-                                                            )}
-                                                        </Draggable>
-                                                    ))}
-                                                    {prov.placeholder}
-                                                </div>
-                                            )}
-                                        </Droppable>
-                                    </DragDropContext>
-                                )}
+                        {/* Block builder fills the rest */}
+                        {loadingSec ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', flex: 1, fontSize: 13, color: C.textMuted }}>
+                                <Loader2 size={18} /> Loading…
                             </div>
-                        </>
-                    )}
-                </div>
-
-                {/* ── Right Panel: Settings (300px) ── */}
-                <div style={{ width: 300, flexShrink: 0, background: C.panel, borderLeft: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    <SettingsPanel section={activeSection} onUpdate={handleUpdateSection} onClose={() => setActiveSection(null)} />
-                </div>
+                        ) : (
+                            <BlockBuilderCanvas
+                                site={site}
+                                page={activePage}
+                                sections={sections}
+                                onSectionUpdate={handleUpdateSection}
+                                onSectionDelete={handleDeleteSection}
+                                onSectionToggle={handleToggleSection}
+                                onAddSection={() => handleAddSection('layout')}
+                            />
+                        )}
+                    </div>
+                )
             </div>
         </div>
     );

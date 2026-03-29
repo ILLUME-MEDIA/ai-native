@@ -10,7 +10,7 @@ class DsPageSection extends Model
     protected $table = 'ds_page_sections';
 
     protected $fillable = [
-        'page_id', 'section_type', 'label', 'sort_order', 'settings', 'is_visible',
+        'page_id', 'section_type', 'layout', 'label', 'sort_order', 'settings', 'is_visible',
     ];
 
     protected $casts = [
@@ -21,6 +21,13 @@ class DsPageSection extends Model
     public function page(): BelongsTo
     {
         return $this->belongsTo(DsSitePage::class, 'page_id');
+    }
+
+    public function blocks(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(DsPageBlock::class, 'section_id')
+                    ->orderBy('column_index')
+                    ->orderBy('sort_order');
     }
 
     /** Merge stored settings over the type's defaults */

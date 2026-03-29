@@ -59,6 +59,7 @@ use App\Http\Controllers\Admin\DesignSystem\DsComponentController;
 use App\Http\Controllers\Admin\DesignSystem\DsSitesController;
 use App\Http\Controllers\Admin\DesignSystem\DsSitePagesController;
 use App\Http\Controllers\Admin\DesignSystem\DsPublicController;
+use App\Http\Controllers\Admin\DesignSystem\DsPageBlocksController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -232,6 +233,14 @@ Route::prefix('admin/design-system')->group(function () {
     Route::post('/sites/{dsSite}/pages/{page}/sections',                        [DsSitePagesController::class, 'addSection']);
     Route::put('/sites/{dsSite}/pages/{page}/sections/{section}',               [DsSitePagesController::class, 'updateSection']);
     Route::delete('/sites/{dsSite}/pages/{page}/sections/{section}',            [DsSitePagesController::class, 'deleteSection']);
+
+    // Page Blocks (reorder before {block} wildcard)
+    $bp = '/sites/{dsSite}/pages/{page}/sections/{section}/blocks';
+    Route::get   ($bp,                  [DsPageBlocksController::class, 'index']);
+    Route::post  ($bp . '/reorder',     [DsPageBlocksController::class, 'reorder']);
+    Route::post  ($bp,                  [DsPageBlocksController::class, 'store']);
+    Route::put   ($bp . '/{block}',     [DsPageBlocksController::class, 'update']);
+    Route::delete($bp . '/{block}',     [DsPageBlocksController::class, 'destroy']);
 });
 
 // ── Public Site Pages API (no auth — for external websites/apps) ─────────────
