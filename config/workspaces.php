@@ -43,6 +43,8 @@ return [
     */
     'terminal_timeout' => env('WORKSPACE_TERMINAL_TIMEOUT', 300),
     'terminal_max_length' => env('WORKSPACE_TERMINAL_MAX_LENGTH', 4096),
+    // On Windows, use Git Bash for Unix command support (ls, grep, npm, etc.)
+    'git_bash_path' => env('GIT_BASH_PATH', 'C:\\Program Files\\Git\\bin\\bash.exe'),
 
     // Empty array means allow all commands. Add prefixes to restrict.
     'terminal_allowlist' => [],

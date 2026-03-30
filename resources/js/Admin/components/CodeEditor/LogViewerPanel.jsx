@@ -171,13 +171,16 @@ export default function LogViewerPanel({ workspace, onJumpToFile }) {
 
         setConnected(false);
 
+        const fetchHeaders = {
+            'Accept': 'text/event-stream',
+            'X-Requested-With': 'XMLHttpRequest',
+        };
+        if (csrfToken) fetchHeaders['X-CSRF-TOKEN'] = csrfToken;
+        if (window.__SITE_API_KEY__) fetchHeaders['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
+
         fetch(url, {
             method: 'GET',
-            headers: {
-                'Accept': 'text/event-stream',
-                'X-CSRF-TOKEN': csrfToken,
-                'X-Requested-With': 'XMLHttpRequest',
-            },
+            headers: fetchHeaders,
             credentials: 'same-origin',
             signal: controller.signal,
         }).then(async (response) => {

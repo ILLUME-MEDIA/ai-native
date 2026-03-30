@@ -17,8 +17,6 @@ class SectionBuilderController extends Controller
      */
     public function index(Request $request, SchemaSyncService $schemaSyncService)
     {
-        \Log::info('Admin route hit, Auth check: ' . (auth()->check() ? 'true' : 'false') . ', User: ' . (auth()->id() ?? 'null') . ', Session ID: ' . $request->session()->getId());
-
         // Ensure DB tables & Section Editor stay in sync, at most once per 5 minutes.
         $schemaSyncService->syncIfStale();
 

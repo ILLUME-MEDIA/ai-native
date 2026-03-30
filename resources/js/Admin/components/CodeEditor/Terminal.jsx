@@ -95,14 +95,17 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
             const controller = new AbortController();
             abortRef.current = controller;
 
+            const fetchHeaders = {
+                'Accept': 'text/event-stream',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            };
+            if (csrfToken) fetchHeaders['X-CSRF-TOKEN'] = csrfToken;
+            if (window.__SITE_API_KEY__) fetchHeaders['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
+
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Accept': 'text/event-stream',
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
+                headers: fetchHeaders,
                 body: JSON.stringify({
                     command: cmd,
                     cwd: currentDir === '/' ? undefined : currentDir,

@@ -37,6 +37,13 @@ return Application::configure(basePath: dirname(__DIR__))
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
 
+        // Release the PHP session file lock before any controller (especially SSE
+        // streams) runs. Without this, long-lived SSE connections block every
+        // other request from the same browser session, causing refresh loops.
+        $middleware->api(append: [
+            \App\Http\Middleware\ReleaseSession::class,
+        ]);
+
         // Exclude all API routes from CSRF — they use Bearer token auth, not cookies.
         // This prevents 419 errors when calling API routes from Swagger UI or external sites
         // that share the same domain (which triggers Sanctum's stateful middleware + CSRF check).
@@ -57,10 +64,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->alias([
-            'mcp.check'    => \App\Http\Middleware\CheckMcpPermissions::class,
-            'mcp.auth'     => \App\Http\Middleware\McpOrSanctumAuth::class,
-            'otp.admin'    => \App\Http\Middleware\OtpAdminAuth::class,
-            'site.api.key' => \App\Http\Middleware\ValidateSiteApiKey::class,
+            'mcp.check'      => \App\Http\Middleware\CheckMcpPermissions::class,
+            'mcp.auth'       => \App\Http\Middleware\McpOrSanctumAuth::class,
+            'otp.admin'      => \App\Http\Middleware\OtpAdminAuth::class,
+            'site.api.key'   => \App\Http\Middleware\ValidateSiteApiKey::class,
+            'workspace.auth' => \App\Http\Middleware\WorkspaceAuth::class,
         ]);
 
         //

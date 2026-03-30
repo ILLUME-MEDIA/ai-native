@@ -25,11 +25,13 @@ echo.
 echo ================================================
 echo    Server is starting...
 echo    URL: http://localhost:8000
+echo    Workers: 4 (concurrent requests enabled)
 echo ================================================
 echo.
 echo Press Ctrl+C to stop the server
 echo.
 
+set PHP_CLI_SERVER_WORKERS=4
 php artisan serve
 
 pause

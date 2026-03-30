@@ -1576,12 +1576,13 @@
 
         .btn-icon-sm {
             padding: 2px;
-            opacity: 0.3;
+            opacity: 0.6;
             transition: opacity 0.2s;
         }
     }
 
-    &:hover .workspace-menu-trigger .btn-icon-sm {
+    &:hover .workspace-menu-trigger .btn-icon-sm,
+    &.active .workspace-menu-trigger .btn-icon-sm {
         opacity: 1;
     }
 
@@ -1589,10 +1590,10 @@
         position: absolute;
         top: 100%;
         right: 0;
-        background: white;
-        border: 1px solid var(--bs-border-color);
+        background: #1c2128;
+        border: 1px solid #30363d;
         border-radius: 4px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         min-width: 120px;
         z-index: 1000;
         padding: 4px 0;
@@ -1603,6 +1604,7 @@
             padding: 8px 12px;
             border: none;
             background: none;
+            color: #c9d1d9;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -1611,12 +1613,15 @@
             transition: background 0.15s;
 
             &:hover {
-                background: var(--bs-secondary-bg, #f8f9fa);
+                background: rgba(255,255,255,0.06);
             }
 
-            &.text-danger:hover {
-                background: #fff5f5;
-                color: #dc3545;
+            &.text-danger {
+                color: #f85149;
+
+                &:hover {
+                    background: rgba(248, 81, 73, 0.1);
+                }
             }
         }
     }
