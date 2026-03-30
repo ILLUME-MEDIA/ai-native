@@ -7,9 +7,9 @@ import { Badge, Button, Form, InputGroup, Modal, Spinner, Table } from 'react-bo
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const STATUS_COLORS = { open: 'info', in_progress: 'warning', resolved: 'success', closed: 'secondary' };
+const STATUS_BADGE   = { open: { bg: 'info', text: 'dark' }, in_progress: { bg: 'warning', text: 'dark' }, resolved: { bg: 'success', text: 'white' }, closed: { bg: 'secondary', text: 'white' } };
 const STATUS_LABELS  = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
-const PRIORITY_COLORS = { low: 'secondary', medium: 'primary', high: 'warning', urgent: 'danger' };
+const PRIORITY_BADGE = { low: { bg: 'secondary', text: 'white' }, medium: { bg: 'primary', text: 'white' }, high: { bg: 'warning', text: 'dark' }, urgent: { bg: 'danger', text: 'white' } };
 
 const avatar = (name = '') => {
   const parts = String(name).trim().split(' ');
@@ -236,7 +236,7 @@ const TicketTable = ({ onTicketUpdated }) => {
       id: 'status',
       header: 'Status',
       cell: ({ row: { original: t } }) => (
-        <Badge bg={STATUS_COLORS[t.status] ?? 'secondary'} style={{ fontSize: '0.75rem' }}>
+        <Badge bg={(STATUS_BADGE[t.status] ?? STATUS_BADGE.closed).bg} text={(STATUS_BADGE[t.status] ?? STATUS_BADGE.closed).text} style={{ fontSize: '0.75rem' }}>
           {STATUS_LABELS[t.status] ?? t.status}
         </Badge>
       ),
@@ -245,7 +245,7 @@ const TicketTable = ({ onTicketUpdated }) => {
       id: 'priority',
       header: 'Priority',
       cell: ({ row: { original: t } }) => (
-        <Badge bg={PRIORITY_COLORS[t.priority] ?? 'secondary'} style={{ fontSize: '0.75rem', textTransform: 'capitalize' }}>
+        <Badge bg={(PRIORITY_BADGE[t.priority] ?? PRIORITY_BADGE.low).bg} text={(PRIORITY_BADGE[t.priority] ?? PRIORITY_BADGE.low).text} style={{ fontSize: '0.75rem', textTransform: 'capitalize' }}>
           {t.priority}
         </Badge>
       ),
@@ -427,10 +427,10 @@ const TicketTable = ({ onTicketUpdated }) => {
                   #{activeTicket.ticket_number} — {activeTicket.subject}
                 </div>
                 <div className="d-flex gap-2 mt-1">
-                  <Badge bg={STATUS_COLORS[activeTicket.status] ?? 'secondary'} style={{ fontSize: '0.72rem' }}>
+                  <Badge bg={(STATUS_BADGE[activeTicket.status] ?? STATUS_BADGE.closed).bg} text={(STATUS_BADGE[activeTicket.status] ?? STATUS_BADGE.closed).text} style={{ fontSize: '0.72rem' }}>
                     {STATUS_LABELS[activeTicket.status] ?? activeTicket.status}
                   </Badge>
-                  <Badge bg={PRIORITY_COLORS[activeTicket.priority] ?? 'secondary'} style={{ fontSize: '0.72rem', textTransform: 'capitalize' }}>
+                  <Badge bg={(PRIORITY_BADGE[activeTicket.priority] ?? PRIORITY_BADGE.low).bg} text={(PRIORITY_BADGE[activeTicket.priority] ?? PRIORITY_BADGE.low).text} style={{ fontSize: '0.72rem', textTransform: 'capitalize' }}>
                     {activeTicket.priority}
                   </Badge>
                   {activeTicket.category && (
