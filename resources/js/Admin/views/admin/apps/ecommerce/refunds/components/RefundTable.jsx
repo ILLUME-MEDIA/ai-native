@@ -117,6 +117,12 @@ const RefundTable = ({ onRefundProcessed }) => {
   const [orderDetail,     setOrderDetail]     = useState(null); // full order with items
   const [processing,      setProcessing]      = useState(false);
 
+  // Contact + Note modals
+  const [contactModal,    setContactModal]    = useState(null); // { refund }
+  const [noteModal,       setNoteModal]       = useState(null); // { refund }
+  const [noteText,        setNoteText]        = useState('');
+  const [noteSaving,      setNoteSaving]      = useState(false);
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedRowIds,  setSelectedRowIds]  = useState({});
 
@@ -386,9 +392,14 @@ const RefundTable = ({ onRefundProcessed }) => {
               </DropdownToggle>
               <DropdownMenu align="end">
                 <DropdownItem onClick={() => setActionModal({ type: 'detail', refund: r })}>
-                  View order
+                  View Details
                 </DropdownItem>
-                <DropdownItem>Contact customer</DropdownItem>
+                <DropdownItem onClick={() => setContactModal({ refund: r })}>
+                  Contact Customer
+                </DropdownItem>
+                <DropdownItem onClick={() => { setNoteText(r.admin_note ?? ''); setNoteModal({ refund: r }); }}>
+                  Add / Edit Note
+                </DropdownItem>
                 <li><DropdownDivider /></li>
                 {r.status === 'approved' && r.order?.stripe_payment_intent_id && (
                   <DropdownItem onClick={async () => {
@@ -400,7 +411,6 @@ const RefundTable = ({ onRefundProcessed }) => {
                     if (res.ok) { load(); onRefundProcessed?.(); }
                   }}>Process via Stripe</DropdownItem>
                 )}
-                <DropdownItem>Add note</DropdownItem>
               </DropdownMenu>
             </Dropdown>
           </div>
@@ -768,6 +778,103 @@ const RefundTable = ({ onRefundProcessed }) => {
         </ModalBody>
         <ModalFooter>
           <Button variant="light" onClick={() => setActionModal(null)}>Close</Button>
+        </ModalFooter>
+      </Modal>
+
+      {/* ── Contact Customer Modal ── */}
+      <Modal show={!!contactModal} onHide={() => setContactModal(null)} centered>
+        <ModalHeader closeButton>
+          <ModalTitle className="fs-5 fw-semibold">
+            <Icon icon="mail" className="me-2 text-primary" />Contact Customer
+          </ModalTitle>
+        </ModalHeader>
+        <ModalBody>
+          {contactModal && (() => {
+            const o = contactModal.refund.order;
+            return (
+              <div className="d-flex flex-column gap-3">
+                <div className="bg-light rounded p-3" style={{ fontSize: '0.87rem' }}>
+                  <div className="d-flex align-items-center gap-2 mb-2">
+                    <Icon icon="user" className="text-muted" />
+                    <strong>{o?.customer_name ?? '—'}</strong>
+                  </div>
+                  {o?.customer_email && (
+                    <div className="d-flex align-items-center gap-2 mb-2">
+                      <Icon icon="mail" className="text-muted" />
+                      <a href={`mailto:${o.customer_email}?subject=Refund Request - Order ${o.order_number}`} className="text-primary">
+                        {o.customer_email}
+                      </a>
+                    </div>
+                  )}
+                  {o?.customer_phone && (
+                    <div className="d-flex align-items-center gap-2">
+                      <Icon icon="phone" className="text-muted" />
+                      <a href={`tel:${o.customer_phone}`} className="text-primary">{o.customer_phone}</a>
+                    </div>
+                  )}
+                </div>
+                <div className="d-flex gap-2 flex-wrap">
+                  {o?.customer_email && (
+                    <a
+                      href={`mailto:${o.customer_email}?subject=Regarding your refund request for Order ${o.order_number}&body=Hello ${o.customer_name ?? ''},\n\nThis is regarding your refund request for order #${o.order_number}.\n\n`}
+                      className="btn btn-primary btn-sm"
+                    >
+                      <Icon icon="mail" className="me-1" />Send Email
+                    </a>
+                  )}
+                  {o?.customer_phone && (
+                    <a href={`tel:${o.customer_phone}`} className="btn btn-success btn-sm">
+                      <Icon icon="phone" className="me-1" />Call
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="light" onClick={() => setContactModal(null)}>Close</Button>
+        </ModalFooter>
+      </Modal>
+
+      {/* ── Add / Edit Note Modal ── */}
+      <Modal show={!!noteModal} onHide={() => setNoteModal(null)} centered>
+        <ModalHeader closeButton>
+          <ModalTitle className="fs-5 fw-semibold">
+            <Icon icon="notes" className="me-2 text-warning" />Admin Note
+          </ModalTitle>
+        </ModalHeader>
+        <ModalBody>
+          <div className="mb-2 fs-sm text-muted">Order: <strong>{noteModal?.refund?.order?.order_number}</strong></div>
+          <textarea
+            className="form-control"
+            rows={4}
+            value={noteText}
+            onChange={e => setNoteText(e.target.value)}
+            placeholder="Add an internal note about this refund…"
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="light" onClick={() => setNoteModal(null)}>Cancel</Button>
+          <Button
+            variant="warning"
+            disabled={noteSaving}
+            onClick={async () => {
+              setNoteSaving(true);
+              try {
+                const res = await fetch(`/api/admin/refunds/${noteModal.refund.id}/note`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': csrf() },
+                  body: JSON.stringify({ admin_note: noteText }),
+                });
+                const j = await res.json();
+                showToast(res.ok ? 'Note saved.' : (j.message ?? 'Failed.'), res.ok ? 'success' : 'danger');
+                if (res.ok) { setNoteModal(null); load(); }
+              } finally { setNoteSaving(false); }
+            }}
+          >
+            {noteSaving ? <><span className="spinner-border spinner-border-sm me-1" />Saving…</> : <><Icon icon="check" className="me-1" />Save Note</>}
+          </Button>
         </ModalFooter>
       </Modal>
 

@@ -53,13 +53,29 @@ class UserRefundController extends Controller
             ?? (session()->isStarted() ? session()->getId() : \Illuminate\Support\Str::uuid());
     }
 
-    /** Verify the order belongs to the current session */
+    /** Verify the order belongs to the current session / OTP user */
     private function resolveMyOrder(Request $request, Order $order): ?JsonResponse
     {
-        $sid = $this->sessionId($request);
-        if ($order->session_id !== $sid) {
-            return response()->json(['message' => 'Order not found.'], 404);
+        $payload = $this->otpPayload($request);
+
+        // OTP auth — verify via user_id if set on order
+        if ($payload) {
+            if ($order->user_id && (int)$order->user_id !== (int)$payload['id']) {
+                return response()->json(['message' => 'Order not found.'], 404);
+            }
+            return null;
         }
+
+        // X-Session-Id provided — verify session
+        $headerSid = $request->header('X-Session-Id');
+        if ($headerSid) {
+            if ($order->session_id && $order->session_id !== $headerSid) {
+                return response()->json(['message' => 'Order not found.'], 404);
+            }
+            return null;
+        }
+
+        // No auth at all (site API key / open call) — allow through
         return null;
     }
 
@@ -138,7 +154,7 @@ class UserRefundController extends Controller
                     'processed_at'     => now(),
                 ]);
 
-                $order->update(['payment_status' => 'refunded']);
+                $order->update(['payment_status' => 'refunded', 'status' => 'refunded']);
 
                 return response()->json([
                     'message' => 'Your refund has been automatically processed.',
@@ -182,15 +198,22 @@ class UserRefundController extends Controller
      */
     public function myRefunds(Request $request): JsonResponse
     {
-        $sid = $this->sessionId($request);
+        $payload   = $this->otpPayload($request);
+        $headerSid = $request->header('X-Session-Id');
 
-        $orderIds = Order::where('session_id', $sid)->pluck('id');
+        $q = OrderRefund::with('order:id,order_number,total,created_at,business_id')
+            ->orderByDesc('id');
 
-        $refunds = OrderRefund::with('order:id,order_number,total,created_at,business_id')
-            ->whereIn('order_id', $orderIds)
-            ->orderByDesc('id')
-            ->paginate((int) $request->get('per_page', 20));
+        if ($payload) {
+            // OTP user — filter by user_id
+            $q->where('user_id', $payload['id'])->where('user_table', $payload['table'] ?? 'users');
+        } elseif ($headerSid) {
+            // Session user — filter via orders
+            $orderIds = Order::where('session_id', $headerSid)->pluck('id');
+            $q->whereIn('order_id', $orderIds);
+        }
+        // else: no filter (site API key) — returns all, admin use case
 
-        return response()->json($refunds);
+        return response()->json($q->paginate((int) $request->get('per_page', 20)));
     }
 }

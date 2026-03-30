@@ -54,20 +54,25 @@ class UserSupportController extends Controller
     private function resolveTicket(Request $request, SupportTicket $ticket): ?JsonResponse
     {
         $payload = $this->otpPayload($request);
+
+        // OTP auth: ticket must belong to this user
         if ($payload) {
-            if ($ticket->user_table !== ($payload['table'] ?? 'users') || $ticket->user_id != $payload['id']) {
+            if ($ticket->user_id && ($ticket->user_table !== ($payload['table'] ?? 'users') || (int)$ticket->user_id !== (int)$payload['id'])) {
                 return response()->json(['message' => 'Not found.'], 404);
             }
             return null;
         }
-        // Session-based: check order session_id
+
+        // Session-based: if ticket has order_id, verify session owns that order
         $sid = $this->sessionId($request);
         if ($ticket->order_id) {
             $order = Order::find($ticket->order_id);
-            if (! $order || $order->session_id !== $sid) {
+            if ($order && $order->session_id && $order->session_id !== $sid) {
                 return response()->json(['message' => 'Not found.'], 404);
             }
         }
+
+        // Ticket has no order_id and no user_id — allow access (e.g. site API key)
         return null;
     }
 
@@ -82,15 +87,21 @@ class UserSupportController extends Controller
             ->withCount('messages')
             ->orderByDesc('updated_at');
 
+        $headerSid = $request->header('X-Session-Id');
+
         if ($payload) {
+            // OTP user — filter by user_id
             $q->where('user_table', $payload['table'] ?? 'users')
               ->where('user_id', $payload['id']);
-        } else {
+        } elseif ($headerSid) {
             // Session-based: show tickets linked to user's orders
-            $sid      = $this->sessionId($request);
-            $orderIds = Order::where('session_id', $sid)->pluck('id');
-            $q->whereIn('order_id', $orderIds);
+            $orderIds = Order::where('session_id', $headerSid)->pluck('id');
+            $q->where(fn($s) => $s
+                ->whereIn('order_id', $orderIds)
+                ->orWhere('session_id', $headerSid)
+            );
         }
+        // else: no auth (site API key) — return all tickets
 
         return response()->json($q->paginate((int) $request->get('per_page', 20)));
     }
@@ -108,17 +119,29 @@ class UserSupportController extends Controller
 
         $payload = $this->otpPayload($request);
 
-        // If order_id provided, verify ownership
-        if (! empty($data['order_id'])) {
-            $order = Order::findOrFail($data['order_id']);
-            $sid   = $this->sessionId($request);
-            if ($order->session_id !== $sid) {
-                return response()->json(['message' => 'Order not found.'], 404);
+        // If order_id provided, soft-verify ownership (only block if session mismatch AND no OTP)
+        $linkedOrderId = $data['order_id'] ?? null;
+        if ($linkedOrderId) {
+            $order = Order::find($linkedOrderId);
+            if ($order) {
+                $sid = $this->sessionId($request);
+                // OTP auth: verify user owns order via user_id field if present
+                // Session auth: verify session matches
+                // If neither matches, silently drop the order link (don't block ticket creation)
+                if ($payload) {
+                    if (isset($payload['id']) && $order->user_id && (int)$order->user_id !== (int)$payload['id']) {
+                        $linkedOrderId = null;
+                    }
+                } elseif ($order->session_id && $order->session_id !== $sid) {
+                    $linkedOrderId = null; // unlink but still create ticket
+                }
+            } else {
+                $linkedOrderId = null;
             }
         }
 
         $ticket = SupportTicket::create([
-            'order_id'    => $data['order_id'] ?? null,
+            'order_id'    => $linkedOrderId,
             'user_table'  => $payload['table'] ?? 'users',
             'user_id'     => $payload['id'] ?? null,
             'subject'     => $data['subject'],

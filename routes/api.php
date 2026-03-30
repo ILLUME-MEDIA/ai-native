@@ -179,6 +179,7 @@ Route::prefix('admin/refunds')->group(function () {
     Route::get('/{refund}',                        [AdminRefundController::class, 'show']);
     Route::post('/{refund}/approve',               [AdminRefundController::class, 'approve']);
     Route::post('/{refund}/reject',                [AdminRefundController::class, 'reject']);
+    Route::patch('/{refund}/note',                 [AdminRefundController::class, 'updateNote']);
     Route::post('/{refund}/process-stripe',        [AdminRefundController::class, 'processStripe']);
 });
 

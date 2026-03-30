@@ -162,9 +162,12 @@ class RefundController extends Controller
                     'processed_at'     => now(),
                 ]);
 
-                // Only mark fully refunded if full refund
+                // Update order status based on refund type
                 if ($refundType === 'full') {
-                    $order->update(['payment_status' => 'refunded']);
+                    $order->update(['payment_status' => 'refunded', 'status' => 'refunded']);
+                } else {
+                    // Partial refund — mark payment_status as partially_refunded
+                    $order->update(['payment_status' => 'partially_refunded']);
                 }
 
                 return response()->json([
@@ -194,6 +197,15 @@ class RefundController extends Controller
             'amount'      => $amount,
             'refund'      => $refund->fresh(),
         ]);
+    }
+
+    // ── Update Admin Note ─────────────────────────────────────────────────────
+
+    public function updateNote(Request $request, OrderRefund $refund): JsonResponse
+    {
+        $data = $request->validate(['admin_note' => 'nullable|string|max:500']);
+        $refund->update(['admin_note' => $data['admin_note'] ?? null]);
+        return response()->json(['message' => 'Note saved.', 'refund' => $refund->fresh()]);
     }
 
     // ── Reject ────────────────────────────────────────────────────────────────
@@ -241,7 +253,9 @@ class RefundController extends Controller
             ]);
 
             if ($refund->refund_type === 'full') {
-                $order->update(['payment_status' => 'refunded']);
+                $order->update(['payment_status' => 'refunded', 'status' => 'refunded']);
+            } else {
+                $order->update(['payment_status' => 'partially_refunded']);
             }
 
             return response()->json(['message' => 'Refund processed via Stripe.', 'refund' => $refund->fresh()]);
