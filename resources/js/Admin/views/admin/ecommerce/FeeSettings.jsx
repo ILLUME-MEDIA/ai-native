@@ -37,6 +37,8 @@ const FeeSettings = () => {
     tip_enabled:                true,
     tip_suggested_percentages:  [10, 20, 30],
     tip_allow_custom:           true,
+    refund_auto_enabled:        false,
+    refund_window_hours:        24,
   });
 
   const showToast = (msg, variant = 'success') => {
@@ -74,6 +76,8 @@ const FeeSettings = () => {
           ? map.tip_suggested_percentages
           : prev.tip_suggested_percentages,
         tip_allow_custom:          map.tip_allow_custom          ?? prev.tip_allow_custom,
+        refund_auto_enabled:       map.refund_auto_enabled       ?? prev.refund_auto_enabled,
+        refund_window_hours:       map.refund_window_hours       ?? prev.refund_window_hours,
       }));
     } catch {
       showToast('Failed to load settings.', 'danger');
@@ -101,6 +105,8 @@ const FeeSettings = () => {
           tip_enabled:               form.tip_enabled,
           tip_suggested_percentages: form.tip_suggested_percentages.map(Number),
           tip_allow_custom:          form.tip_allow_custom,
+          refund_auto_enabled:       form.refund_auto_enabled,
+          refund_window_hours:       parseInt(form.refund_window_hours, 10) || 0,
         }),
       });
       if (!res.ok) {
@@ -341,6 +347,90 @@ const FeeSettings = () => {
                     </div>
                   </>
                 )}
+              </Form>
+            </CardBody>
+          </Card>
+        </Col>
+
+        {/* ── Refund Policy ───────────────────────────────────────────────── */}
+        <Col xs={12}>
+          <Card>
+            <CardHeader className="border-light">
+              <h5 className="mb-0 d-flex align-items-center gap-2">
+                <span>Refund Policy</span>
+                <Badge bg="secondary-subtle" text="secondary" className="fw-normal fs-xs">Global</Badge>
+              </h5>
+              <p className="text-muted mb-0 mt-1 fs-sm">
+                Control how and when customers can request refunds. Auto-refund requires Stripe as the payment method.
+              </p>
+            </CardHeader>
+            <CardBody>
+              <Form>
+                <div className="row g-4">
+                  {/* Auto-refund toggle */}
+                  <div className="col-12 col-md-6">
+                    <Form.Group className="d-flex align-items-center justify-content-between p-3 border rounded">
+                      <div>
+                        <Form.Label className="fw-semibold mb-0">Auto-Refund via Stripe</Form.Label>
+                        <p className="text-muted mb-0 fs-sm">
+                          Automatically process the refund through Stripe as soon as the customer submits a request (no admin review).
+                        </p>
+                      </div>
+                      <Toggle
+                        id="refund-auto"
+                        checked={!!form.refund_auto_enabled}
+                        onChange={v => setForm(prev => ({ ...prev, refund_auto_enabled: v }))}
+                      />
+                    </Form.Group>
+                    {form.refund_auto_enabled && (
+                      <div className="alert alert-warning py-2 px-3 fs-sm mt-2 mb-0">
+                        All refund requests will be processed instantly via Stripe without admin approval.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Refund window */}
+                  <div className="col-12 col-md-6">
+                    <Form.Group>
+                      <Form.Label className="fw-semibold">
+                        Refund Request Window
+                        <span className="text-muted fw-normal ms-1 fs-sm">(hours after order placed)</span>
+                      </Form.Label>
+                      <div className="input-group" style={{ maxWidth: 220 }}>
+                        <Form.Control
+                          type="number"
+                          min="0"
+                          max="720"
+                          step="1"
+                          value={form.refund_window_hours}
+                          onChange={e => setForm(prev => ({ ...prev, refund_window_hours: e.target.value }))}
+                        />
+                        <span className="input-group-text">hrs</span>
+                      </div>
+                      <Form.Text className="text-muted">
+                        {parseInt(form.refund_window_hours, 10) === 0
+                          ? 'Set to 0 for no time limit — customers can request any time.'
+                          : `Customers have ${form.refund_window_hours} hour(s) from order time to submit a refund request.`}
+                      </Form.Text>
+                    </Form.Group>
+
+                    <div className="bg-light rounded p-3 fs-sm text-muted mt-3">
+                      <strong>Common windows:</strong>
+                      <div className="d-flex flex-wrap gap-2 mt-1">
+                        {[2, 6, 12, 24, 48, 72].map(h => (
+                          <button
+                            key={h}
+                            type="button"
+                            className={`btn btn-sm ${parseInt(form.refund_window_hours, 10) === h ? 'btn-primary' : 'btn-outline-secondary'}`}
+                            onClick={() => setForm(prev => ({ ...prev, refund_window_hours: h }))}
+                          >
+                            {h}h
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </Form>
             </CardBody>
           </Card>

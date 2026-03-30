@@ -176,6 +176,23 @@ class StripeService
         ]);
     }
 
+    // ── Refund ────────────────────────────────────────────────────────────────
+
+    /**
+     * Issue a refund for a PaymentIntent.
+     * $amountCents: amount in cents; null = full refund.
+     * Returns Stripe Refund object.
+     */
+    public function refundPaymentIntent(string $paymentIntentId, ?int $amountCents = null): \Stripe\Refund
+    {
+        $params = ['payment_intent' => $paymentIntentId];
+        if ($amountCents !== null) {
+            $params['amount'] = $amountCents;
+        }
+
+        return $this->stripe->refunds->create($params);
+    }
+
     // ── Webhook ───────────────────────────────────────────────────────────────
 
     /**

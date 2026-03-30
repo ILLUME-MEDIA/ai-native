@@ -168,6 +168,9 @@ export const routes = [
     path: '/apps/ecommerce/refunds',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/refunds'))
   }, {
+    path: '/apps/ecommerce/support',
+    Component: lazy(() => import('@admin/views/admin/apps/ecommerce/support'))
+  }, {
     path: '/apps/ecommerce/reviews',
     Component: lazy(() => import('@admin/views/admin/apps/ecommerce/reviews'))
   }, {

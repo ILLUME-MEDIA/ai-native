@@ -38,14 +38,20 @@ class EcommerceSettingsController extends Controller
             'tip_suggested_percentages'  => 'sometimes|array|min:1|max:10',
             'tip_suggested_percentages.*'=> 'numeric|min:1|max:100',
             'tip_allow_custom'           => 'sometimes|boolean',
+
+            // Refund policy settings
+            'refund_auto_enabled'        => 'sometimes|boolean',
+            'refund_window_hours'        => 'sometimes|integer|min:0|max:720',
         ]);
 
         $meta = [
-            'platform_fee_type'         => ['group' => 'fees',  'label' => 'Platform Fee Type',          'description' => 'percentage or fixed'],
-            'platform_fee_value'        => ['group' => 'fees',  'label' => 'Platform Fee Value',         'description' => 'Percentage (e.g. 5) or fixed amount'],
-            'tip_enabled'               => ['group' => 'tips',  'label' => 'Tips Enabled',               'description' => 'Show tip options at checkout'],
-            'tip_suggested_percentages' => ['group' => 'tips',  'label' => 'Suggested Tip Percentages',  'description' => 'Array of suggested % values'],
-            'tip_allow_custom'          => ['group' => 'tips',  'label' => 'Allow Custom Tip',           'description' => 'Allow customer to enter a custom tip'],
+            'platform_fee_type'         => ['group' => 'fees',    'label' => 'Platform Fee Type',          'description' => 'percentage or fixed'],
+            'platform_fee_value'        => ['group' => 'fees',    'label' => 'Platform Fee Value',         'description' => 'Percentage (e.g. 5) or fixed amount'],
+            'tip_enabled'               => ['group' => 'tips',    'label' => 'Tips Enabled',               'description' => 'Show tip options at checkout'],
+            'tip_suggested_percentages' => ['group' => 'tips',    'label' => 'Suggested Tip Percentages',  'description' => 'Array of suggested % values'],
+            'tip_allow_custom'          => ['group' => 'tips',    'label' => 'Allow Custom Tip',           'description' => 'Allow customer to enter a custom tip'],
+            'refund_auto_enabled'       => ['group' => 'refunds', 'label' => 'Auto Refund via Stripe',     'description' => 'Automatically process refund via Stripe when user requests'],
+            'refund_window_hours'       => ['group' => 'refunds', 'label' => 'Refund Window (hours)',      'description' => 'Hours after order placement within which user can request a refund. 0 = no limit.'],
         ];
 
         $saved = [];
@@ -55,7 +61,9 @@ class EcommerceSettingsController extends Controller
 
         return response()->json([
             'message'  => 'Settings updated.',
-            'settings' => EcommerceSetting::group('fees') + EcommerceSetting::group('tips'),
+            'settings' => EcommerceSetting::group('fees')
+                        + EcommerceSetting::group('tips')
+                        + EcommerceSetting::group('refunds'),
         ]);
     }
 }

@@ -60,6 +60,10 @@ use App\Http\Controllers\Admin\DesignSystem\DsSitesController;
 use App\Http\Controllers\Admin\DesignSystem\DsSitePagesController;
 use App\Http\Controllers\Admin\DesignSystem\DsPublicController;
 use App\Http\Controllers\Admin\DesignSystem\DsPageBlocksController;
+use App\Http\Controllers\Admin\RefundController as AdminRefundController;
+use App\Http\Controllers\Admin\SupportController as AdminSupportController;
+use App\Http\Controllers\Ecommerce\UserRefundController;
+use App\Http\Controllers\Ecommerce\UserSupportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -165,6 +169,28 @@ Route::prefix('admin/kanban')->group(function () {
     Route::put('cards/{card}',                       [KanbanController::class, 'cardsUpdate']);
     Route::delete('cards/{card}',                    [KanbanController::class, 'cardsDestroy']);
     Route::patch('cards/{card}/move',                [KanbanController::class, 'cardsMove']);
+});
+
+// ── Admin Refund Management ───────────────────────────────────────────────────
+Route::prefix('admin/refunds')->group(function () {
+    Route::get('/',                                [AdminRefundController::class, 'index']);
+    Route::get('/stats',                           [AdminRefundController::class, 'stats']);
+    Route::post('/',                               [AdminRefundController::class, 'store']);
+    Route::get('/{refund}',                        [AdminRefundController::class, 'show']);
+    Route::post('/{refund}/approve',               [AdminRefundController::class, 'approve']);
+    Route::post('/{refund}/reject',                [AdminRefundController::class, 'reject']);
+    Route::post('/{refund}/process-stripe',        [AdminRefundController::class, 'processStripe']);
+});
+
+// ── Admin Support / Issue Manager ─────────────────────────────────────────────
+Route::prefix('admin/support')->group(function () {
+    Route::get('tickets',                          [AdminSupportController::class, 'index']);
+    Route::get('tickets/stats',                    [AdminSupportController::class, 'stats']);
+    Route::get('tickets/{ticket}',                 [AdminSupportController::class, 'show']);
+    Route::post('tickets/{ticket}/reply',          [AdminSupportController::class, 'reply']);
+    Route::patch('tickets/{ticket}/status',        [AdminSupportController::class, 'updateStatus']);
+    Route::post('tickets/{ticket}/resolve',        [AdminSupportController::class, 'resolve']);
+    Route::post('tickets/{ticket}/close',          [AdminSupportController::class, 'close']);
 });
 
 // ── Ecommerce Settings (platform fee + tip global config) ─────────────────────
@@ -814,8 +840,22 @@ Route::prefix('ecommerce')->group(function () {
     Route::post('orders',           [OrderController::class, 'store']);
 
     // Customer order history — scoped to current session (no admin auth needed)
-    Route::get('my-orders',         [OrderController::class, 'myOrders']);
-    Route::get('my-orders/{order}', [OrderController::class, 'myOrderShow']);
+    Route::get('my-orders',                                 [OrderController::class, 'myOrders']);
+    Route::get('my-orders/{order}',                         [OrderController::class, 'myOrderShow']);
+
+    // Customer refund requests (OTP Bearer auth)
+    Route::post('my-orders/{order}/refund-request',         [UserRefundController::class, 'requestRefund']);
+    Route::get('my-orders/{order}/refund',                  [UserRefundController::class, 'orderRefundStatus']);
+    Route::get('my-refunds',                                [UserRefundController::class, 'myRefunds']);
+
+    // Customer support / issue manager
+    Route::prefix('support')->group(function () {
+        Route::get('tickets',                               [UserSupportController::class, 'index']);
+        Route::post('tickets',                              [UserSupportController::class, 'store']);
+        Route::get('tickets/{ticket}',                      [UserSupportController::class, 'show']);
+        Route::post('tickets/{ticket}/messages',            [UserSupportController::class, 'sendMessage']);
+        Route::post('tickets/{ticket}/close',               [UserSupportController::class, 'close']);
+    });
 
     // Unified checkout — single call: items + customer + payment → order (external sites)
     Route::post('checkout',         [CheckoutController::class, 'checkout']);

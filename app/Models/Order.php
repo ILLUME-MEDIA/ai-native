@@ -74,4 +74,9 @@ class Order extends Model
     {
         return $this->hasMany(PosOrder::class);
     }
+
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(OrderRefund::class);
+    }
 }

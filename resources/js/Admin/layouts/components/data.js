@@ -115,6 +115,10 @@ export const menuItems = [{
       slug: "pages:apps-ecommerce-refunds",
       label: "Refunds"
     }, {
+      url: "/apps/ecommerce/support",
+      slug: "pages:apps-ecommerce-support",
+      label: "Issue Manager"
+    }, {
       url: "/apps/ecommerce/reviews",
       slug: "pages:apps-ecommerce-reviews",
       label: "Reviews"
