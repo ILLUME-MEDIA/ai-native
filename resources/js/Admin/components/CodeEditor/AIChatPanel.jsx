@@ -115,17 +115,48 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
         return () => clearInterval(t);
     }, [loading]);
 
-    // Heartbeat: never feel "stuck"
+    const handleCancel = useCallback(async () => {
+        if (!loading) return;
+        if (abortRef.current) {
+            abortRef.current.abort();
+        }
+        if (workspace?.id && conversationId) {
+            try {
+                await axios.post(`/api/workspaces/${workspace.id}/ai/conversations/${conversationId}/cancel`, {
+                    reason: 'user_cancel',
+                });
+            } catch (e) {
+                // ignore
+            }
+        }
+        setLoading(false);
+        setStreamingMessage('');
+        setStreamingStatus('Cancelled');
+    }, [loading, workspace?.id, conversationId]);
+
+    // Heartbeat: update status and auto-cancel if stream goes silent or runs too long
     useEffect(() => {
         if (!loading) return;
+        const SILENT_TIMEOUT_MS  = 60_000;  // abort if no server event for 60s
+        const MAX_TOTAL_MS       = 5 * 60_000; // hard cap at 5 minutes
         const t = setInterval(() => {
-            const silentFor = Date.now() - (lastEventAtRef.current || Date.now());
+            const silentFor  = Date.now() - (lastEventAtRef.current || Date.now());
+            const totalMs    = streamStartAtRef.current ? Date.now() - streamStartAtRef.current : 0;
+
             if (silentFor > 2500) {
                 setStreamingStatus(`⏳ Working… (${streamSeconds}s)`);
             }
+
+            if (silentFor >= SILENT_TIMEOUT_MS) {
+                handleCancel();
+                toast.warning('AI stream timed out — no response for 60s. Request cancelled.');
+            } else if (totalMs >= MAX_TOTAL_MS) {
+                handleCancel();
+                toast.warning('AI request exceeded 5 minutes and was auto-cancelled.');
+            }
         }, 1000);
         return () => clearInterval(t);
-    }, [loading, streamSeconds]);
+    }, [loading, streamSeconds, handleCancel]);
 
 
     async function loadEndpoints() {
@@ -257,7 +288,7 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             return;
         }
 
-        const looksLikeUiRequest = /(auth|login|register|signup|forgot|reset|page|pages|screen|ui|form|layout|dashboard)/i.test(input);
+        const looksLikeUiRequest = /\b(auth|login|register|signup|forgot|reset|page|pages|screen|layout|dashboard)\b/i.test(input);
         if (looksLikeUiRequest && (uiTarget === 'ask' || !uiTarget)) {
             setSettingsOpen(true);
             toast.info('Select UI Target (React / HTML / Blade) before generating UI pages.');
@@ -346,14 +377,19 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
             const controller = new AbortController();
             abortRef.current = controller;
 
+            // Build headers — include Bearer token so WorkspaceAuth middleware
+            // can authenticate when there is no session (local dev).
+            const fetchHeaders = {
+                'Accept': 'text/event-stream',
+                'X-Requested-With': 'XMLHttpRequest',
+            };
+            if (csrfToken) fetchHeaders['X-CSRF-TOKEN'] = csrfToken;
+            if (window.__SITE_API_KEY__) fetchHeaders['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
+
             // EventSource doesn't support POST, so we'll use fetch with streaming
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Accept': 'text/event-stream',
-                    'X-CSRF-TOKEN': csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
+                headers: fetchHeaders,
                 body: formData,
                 credentials: 'same-origin',
                 signal: controller.signal,
@@ -570,25 +606,6 @@ export default function AIChatPanel({ workspace, currentFile, openFiles, onClose
                 break;
         }
     }
-
-    const handleCancel = useCallback(async () => {
-        if (!loading) return;
-        if (abortRef.current) {
-            abortRef.current.abort();
-        }
-        if (workspace?.id && conversationId) {
-            try {
-                await axios.post(`/api/workspaces/${workspace.id}/ai/conversations/${conversationId}/cancel`, {
-                    reason: 'user_cancel',
-                });
-            } catch (e) {
-                // ignore
-            }
-        }
-        setLoading(false);
-        setStreamingMessage('');
-        setStreamingStatus('Cancelled');
-    }, [loading, workspace?.id, conversationId]);
 
     function handleApply(changes) {
         onApplyChanges(changes);

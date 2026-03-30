@@ -44,9 +44,19 @@ class SchemaSyncService
 
     /**
      * Run schema sync at most once per TTL window to avoid slow page loads.
+     *
+     * NOTE: Does NOT run migrations — migrations must be run via `php artisan migrate`.
+     * Running Artisan::call('migrate') on a web request blocks for 10-30s and causes
+     * page load hangs. Only the fast entity-reflection step runs here.
      */
     public function syncIfStale(int $ttlSeconds = self::DEFAULT_SYNC_TTL_SECONDS): void
     {
+        try {
+            DB::connection()->getPdo();
+        } catch (\Exception) {
+            return; // DB unavailable — skip sync silently
+        }
+
         $lastSyncedAt = Cache::get('section_builder_schema_sync_last');
 
         if ($lastSyncedAt && now()->diffInSeconds($lastSyncedAt) < $ttlSeconds) {
@@ -59,7 +69,8 @@ class SchemaSyncService
         }
 
         try {
-            $this->sync();
+            // Only sync entities — never run migrations on a web request.
+            $this->syncEntitiesFromDatabase();
             Cache::put('section_builder_schema_sync_last', now(), 3600);
         } finally {
             Cache::forget('section_builder_schema_sync_lock');

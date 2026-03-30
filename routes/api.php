@@ -585,7 +585,7 @@ Route::group([], function () {
     });
 
     // Workspaces (Isolated development environments)
-    Route::middleware('auth:web')->group(function () {
+    Route::middleware('workspace.auth')->group(function () {
     Route::apiResource('workspaces', \App\Http\Controllers\Workspace\WorkspaceController::class);
     Route::prefix('workspaces/{workspace}')->group(function () {
         // Files

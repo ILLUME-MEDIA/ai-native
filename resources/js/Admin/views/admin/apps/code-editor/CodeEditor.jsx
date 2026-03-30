@@ -368,6 +368,9 @@ export default function CodeEditor() {
 
     async function handleFileSelect(file) {
         if (!workspace) return;
+        const cleanPath = file?.path?.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+        if (!cleanPath) return;
+        file = { ...file, path: cleanPath };
         setLeftView('explorer');
         setShowHistory(false);
 
@@ -504,6 +507,19 @@ export default function CodeEditor() {
         setSelectionActionBar(null);
     }, [focusedPane]);
 
+    // Persist open tab paths for session restore on next load
+    useEffect(() => {
+        if (!workspace?.id) return;
+        if (tabs.length === 0) {
+            localStorage.removeItem(`ce_tabs_${workspace.id}`);
+            return;
+        }
+        localStorage.setItem(`ce_tabs_${workspace.id}`, JSON.stringify({
+            paths: tabs.map(t => t.path),
+            active: activeTab?.path || null,
+        }));
+    }, [tabs, activeTab?.path, workspace?.id]);
+
     // S3-2: AI Selection Actions
     function handleSelectionChange(selInfo) {
         if (!selInfo) {
@@ -539,18 +555,67 @@ export default function CodeEditor() {
         setCenterView('code');
         setShowBlame(false);
         setBlameData(null);
-        // Reset split state
         setSplitMode(false);
         setSplitTabs([]);
         setSplitActiveTab(null);
         setFocusedPane('main');
         setSelectionActionBar(null);
+
+        // Restore previously open tabs for this workspace
+        if (selectedWorkspace?.id) {
+            restoreTabSession(selectedWorkspace);
+        }
     }
+
+    async function restoreTabSession(ws) {
+        try {
+            const key = `ce_tabs_${ws.id}`;
+            const saved = JSON.parse(localStorage.getItem(key) || 'null');
+            if (!saved?.paths?.length) return;
+            const validPaths = saved.paths.filter(p => p && p.replace(/^\/+/, '').replace(/\/+$/, '') !== '');
+            if (!validPaths.length) return;
+            const results = await Promise.all(
+                validPaths.map(path =>
+                    axios.get(`/api/workspaces/${ws.id}/files/read`, { params: { path } })
+                        .then(r => ({ path, content: r.data.content, name: path.split('/').pop(), language: detectLanguage(path.split('.').pop()), unsaved: false }))
+                        .catch(() => null)
+                )
+            );
+            const restored = results.filter(Boolean);
+            if (!restored.length) return;
+            setTabs(restored);
+            const active = restored.find(t => t.path === saved.active) || restored[0];
+            setActiveTab(active);
+            setCenterView('code');
+        } catch {
+            // Non-fatal — just start with no tabs
+        }
+    }
+
+    const autoSaveTimerRef = useRef(null);
 
     function handleEditorChange(newValue) {
         if (!activeTab) return;
         setTabs(prev => prev.map(tab => tab.path === activeTab.path ? { ...tab, content: newValue, unsaved: true } : tab));
         setActiveTab(prev => ({ ...prev, content: newValue, unsaved: true }));
+
+        // Debounced auto-save: write to disk 2s after last keystroke
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(() => {
+            saveFileToDisk(activeTab.path, newValue);
+        }, 2000);
+    }
+
+    // Save any specific file to disk (used for AI-applied changes and auto-save)
+    async function saveFileToDisk(path, content) {
+        if (!workspace) return;
+        try {
+            await axios.post(`/api/workspaces/${workspace.id}/files/write`, { path, content });
+            setTabs(prev => prev.map(t => t.path === path ? { ...t, unsaved: false } : t));
+            setActiveTab(prev => prev?.path === path ? { ...prev, unsaved: false } : prev);
+        } catch {
+            // Silent — manual Ctrl+S will retry
+        }
     }
 
     async function handleSave(content) {
@@ -1606,10 +1671,29 @@ export default function CodeEditor() {
                                         changes.forEach(change => {
                                             const tab = tabs.find(t => t.path === change.path);
                                             if (tab) {
-                                                setTabs(prev => prev.map(t => t.path === change.path ? { ...t, content: change.content, unsaved: true } : t));
+                                                // File already open — update content and save to disk
+                                                setTabs(prev => prev.map(t => t.path === change.path ? { ...t, content: change.content, unsaved: false } : t));
                                                 if (activeTab?.path === change.path) {
-                                                    setActiveTab(prev => ({ ...prev, content: change.content, unsaved: true }));
+                                                    setActiveTab(prev => ({ ...prev, content: change.content, unsaved: false }));
                                                 }
+                                                saveFileToDisk(change.path, change.content);
+                                            } else if (change.content) {
+                                                // File not open, AI provided content inline — open and save
+                                                const ext = change.path.split('.').pop();
+                                                const newTab = {
+                                                    path: change.path,
+                                                    name: change.path.split('/').pop(),
+                                                    content: change.content,
+                                                    language: detectLanguage(ext),
+                                                    unsaved: false,
+                                                };
+                                                setTabs(prev => [...prev, newTab]);
+                                                setActiveTab(newTab);
+                                                setCenterView('code');
+                                                saveFileToDisk(change.path, change.content);
+                                            } else {
+                                                // File created on disk via tool call — just open it
+                                                handleFileSelect({ path: change.path, name: change.path.split('/').pop() });
                                             }
                                         });
                                     }}

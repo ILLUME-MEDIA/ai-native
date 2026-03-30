@@ -141,13 +141,7 @@ class TerminalController extends Controller
             return $this->executeGitJson($workspace, $workingDir, $command);
         }
 
-        $process = Process::fromShellCommandline(
-            $command,
-            $workingDir,
-            null,
-            null,
-            (int) config('workspaces.terminal_timeout', 300)
-        );
+        $process = $this->buildProcess($command, $workingDir);
 
         try {
             $process->run();
@@ -312,13 +306,7 @@ class TerminalController extends Controller
         return response()->stream(function () use ($workspace, $workingDir, $command) {
             $this->sendSSE('connected', ['status' => 'connected']);
 
-            $process = Process::fromShellCommandline(
-                $command,
-                $workingDir,
-                null,
-                null,
-                (int) config('workspaces.terminal_timeout', 300)
-            );
+            $process = $this->buildProcess($command, $workingDir);
 
             try {
                 $process->start();
@@ -374,6 +362,35 @@ class TerminalController extends Controller
                 $this->sendSSE('done', ['status' => 'completed']);
             }
         }, 200, $this->sseHeaders());
+    }
+
+    /**
+     * Build a Process for the given shell command.
+     * On Windows, runs through Git Bash so Unix commands (ls, cat, grep, npm, etc.) work.
+     * On Linux/macOS, uses the system shell directly.
+     */
+    protected function buildProcess(string $command, string $workingDir): Process
+    {
+        $timeout = (int) config('workspaces.terminal_timeout', 300);
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $bash = config('workspaces.git_bash_path', 'C:\\Program Files\\Git\\bin\\bash.exe');
+            if (file_exists($bash)) {
+                // Inherit the full Windows PATH so node, npm, python, etc. are found.
+                // Convert Windows PATH separators for bash and prepend common node locations.
+                $winPath = getenv('PATH') ?: '';
+                $env = [
+                    'PATH' => '/usr/bin:/usr/local/bin:/mingw64/bin:' . str_replace('\\', '/', $winPath),
+                    'HOME' => str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME') ?: '/'),
+                    'TERM' => 'xterm-256color',
+                ];
+                return new Process([$bash, '--login', '-c', $command], $workingDir, $env, null, $timeout);
+            }
+            // Fallback: cmd.exe
+            return Process::fromShellCommandline($command, $workingDir, null, null, $timeout);
+        }
+
+        return Process::fromShellCommandline($command, $workingDir, null, null, $timeout);
     }
 
     protected function isGitCommand(string $command): bool

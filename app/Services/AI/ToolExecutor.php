@@ -271,6 +271,7 @@ class ToolExecutor
             'success' => true,
             'path' => $path,
             'type' => 'file',
+            'content' => $content,
             'size' => strlen($content),
             'message' => "File created: {$path}",
             'fs_patch' => [
@@ -318,6 +319,7 @@ class ToolExecutor
             return [
                 'success' => true,
                 'path' => $path,
+                'content' => $content,
                 'size' => strlen($content),
                 'message' => "File created: {$path}",
                 'fs_patch' => [
@@ -353,6 +355,7 @@ class ToolExecutor
             return [
                 'success' => true,
                 'path' => $path,
+                'content' => $content,
                 'size' => strlen($content),
                 'message' => "File updated: {$path}",
                 'fs_patch' => [
@@ -503,9 +506,12 @@ class ToolExecutor
     protected function runCommand(Workspace $workspace, array $args): array
     {
         $command = $args['command'];
-        $cwd = $workspace->full_path . '/' . ltrim($args['cwd'] ?? './', '/');
+        $relCwd  = ltrim($args['cwd'] ?? './', '/');
+        $cwd     = $relCwd === '' || $relCwd === './' || $relCwd === '.'
+            ? $workspace->full_path
+            : $workspace->full_path . '/' . $relCwd;
 
-        // Validate command is whitelisted
+        // Validate command against blocklist
         $validation = $this->validateCommand($command);
         if (!$validation['allowed']) {
             return [
@@ -515,21 +521,44 @@ class ToolExecutor
         }
 
         try {
-            $result = Process::path($cwd)
-                ->timeout(30)
-                ->run($command);
+            $timeout = (int) config('workspaces.terminal_timeout', 120);
+
+            if (PHP_OS_FAMILY === 'Windows') {
+                $bash = config('workspaces.git_bash_path', 'C:\\Program Files\\Git\\bin\\bash.exe');
+                if (file_exists($bash)) {
+                    $winPath = getenv('PATH') ?: '';
+                    $env = [
+                        'PATH' => '/usr/bin:/usr/local/bin:/mingw64/bin:' . str_replace('\\', '/', $winPath),
+                        'HOME' => str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME') ?: '/'),
+                        'TERM' => 'xterm-256color',
+                    ];
+                    $process = new \Symfony\Component\Process\Process(
+                        [$bash, '--login', '-c', $command],
+                        $cwd,
+                        $env,
+                        null,
+                        $timeout
+                    );
+                } else {
+                    $process = \Symfony\Component\Process\Process::fromShellCommandline($command, $cwd, null, null, $timeout);
+                }
+            } else {
+                $process = \Symfony\Component\Process\Process::fromShellCommandline($command, $cwd, null, null, $timeout);
+            }
+
+            $process->run();
 
             return [
-                'success' => $result->successful(),
-                'command' => $command,
-                'output' => $result->output(),
-                'error_output' => $result->errorOutput(),
-                'exit_code' => $result->exitCode()
+                'success'      => $process->isSuccessful(),
+                'command'      => $command,
+                'output'       => $this->stripAnsi($process->getOutput()),
+                'error_output' => $this->stripAnsi($process->getErrorOutput()),
+                'exit_code'    => $process->getExitCode(),
             ];
         } catch (\Exception $e) {
             return [
                 'success' => false,
-                'error' => 'Command execution failed: ' . $e->getMessage()
+                'error'   => 'Command execution failed: ' . $e->getMessage()
             ];
         }
     }
@@ -537,35 +566,48 @@ class ToolExecutor
     /**
      * Validate command against whitelist
      */
+    protected function stripAnsi(string $text): string
+    {
+        return preg_replace('/\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-Z0-9]|\r/', '', $text) ?? $text;
+    }
+
     protected function validateCommand(string $command): array
     {
-        $allowedCommands = config('ai_tools.tools.5.allowed_commands', []); // runCommand tool
-        $blockedPatterns = config('ai_tools.tools.5.blocked_patterns', []);
+        // Find the runCommand tool config by name (not positional index)
+        $runCommandConfig = collect(config('ai_tools.tools', []))->firstWhere('name', 'runCommand') ?? [];
+        $allowedCommands  = $runCommandConfig['allowed_commands'] ?? [];
+        $blockedPatterns  = $runCommandConfig['blocked_patterns'] ?? [];
 
-        // Check for blocked patterns
+        // Check blocked patterns first
         foreach ($blockedPatterns as $pattern) {
             if (str_contains($command, $pattern)) {
                 return [
                     'allowed' => false,
-                    'reason' => "Blocked pattern detected: {$pattern}"
+                    'reason'  => "Blocked pattern detected: {$pattern}"
                 ];
             }
         }
 
-        // Extract command name
-        $parts = explode(' ', trim($command));
-        $cmd = $parts[0];
+        // Extract the first token as the command name (handles chained commands via &&/;)
+        $firstToken = preg_split('/\s+/', trim($command))[0];
+        // Strip any path prefix (e.g. /usr/bin/npm -> npm)
+        $cmd = basename($firstToken);
 
         // Check if command is whitelisted
         if (!isset($allowedCommands[$cmd])) {
             return [
                 'allowed' => false,
-                'reason' => "Command not whitelisted: {$cmd}"
+                'reason'  => "Command not in allowlist: {$cmd}. Allowed: " . implode(', ', array_keys($allowedCommands))
             ];
         }
 
-        // Check subcommands if specified
+        // true means all subcommands allowed
         $allowedSubcommands = $allowedCommands[$cmd];
+        if ($allowedSubcommands === true) {
+            return ['allowed' => true];
+        }
+
+        $parts = explode(' ', trim($command));
         if (is_array($allowedSubcommands) && count($parts) > 1) {
             $subcommand = $parts[1];
             if (!in_array($subcommand, $allowedSubcommands)) {

@@ -6,6 +6,7 @@ import {
     MoreVertical, RefreshCw, Copy, Link, Star, X, Clock, Pin, GitCompare
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useCodeEditorTheme } from './useCodeEditorTheme';
 
 // ──────────────────────────────────────────────────
 // TreeNode is defined OUTSIDE FileExplorer so React
@@ -184,6 +185,7 @@ function TreeNode({
 // Main FileExplorer component
 // ──────────────────────────────────────────────────
 export default function FileExplorer({ workspace, onFileSelect, currentFile, onTreeRefresh, bookmarks = [], onToggleBookmark, recentFiles = [], pinnedPaths, onTogglePin, onCompareWith }) {
+    const { isDark } = useCodeEditorTheme();
     const [tree, setTree] = useState(null);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
