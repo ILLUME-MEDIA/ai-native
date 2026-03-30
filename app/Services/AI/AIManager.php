@@ -600,21 +600,44 @@ class AIManager
         $models = $endpoint->metadata['available_models'] ?? [];
 
         if (empty($models)) {
-            return $endpoint->default_model ?? 'gpt-3.5-turbo';
+            if ($endpoint->default_model) {
+                return $endpoint->default_model;
+            }
+            // Provider-aware fallback so we never send a GPT model to Anthropic
+            return match ($endpoint->provider) {
+                'anthropic' => 'claude-sonnet-4-5',
+                'google', 'gemini' => 'gemini-1.5-pro',
+                'mistral' => 'mistral-large-latest',
+                default => 'gpt-4o',
+            };
         }
 
         // Model priority (higher = better)
         $priorities = [
-            'gpt-4-turbo' => 100,
-            'gpt-4' => 95,
-            'claude-3-opus' => 93,
-            'claude-3-sonnet' => 90,
-            'gemini-1.5-pro' => 88,
-            'gemini-pro' => 85,
-            'mistral-large' => 83,
-            'gpt-3.5-turbo' => 70,
-            'gemini-1.5-flash' => 65,
-            'mistral-medium' => 60
+            // Claude 4.x
+            'claude-opus-4'     => 105,
+            'claude-sonnet-4'   => 102,
+            // Claude 3.5/3.7
+            'claude-3-7'        => 100,
+            'claude-3-5-sonnet' => 98,
+            'claude-3-5-haiku'  => 92,
+            // OpenAI
+            'gpt-4o'            => 97,
+            'gpt-4-turbo'       => 95,
+            'gpt-4'             => 93,
+            // Legacy Claude
+            'claude-3-opus'     => 91,
+            'claude-3-sonnet'   => 88,
+            'claude-3-haiku'    => 80,
+            // Google
+            'gemini-1.5-pro'    => 87,
+            'gemini-pro'        => 84,
+            // Mistral
+            'mistral-large'     => 83,
+            // Low priority
+            'gpt-3.5-turbo'     => 50,
+            'gemini-1.5-flash'  => 65,
+            'mistral-medium'    => 60,
         ];
 
         // Check rate limit cache
@@ -643,7 +666,7 @@ class AIManager
         }
 
         $bestModel = $availableModels->first();
-        return is_array($bestModel) ? ($bestModel['id'] ?? $bestModel['model'] ?? 'gpt-3.5-turbo') : $bestModel;
+        return is_array($bestModel) ? ($bestModel['id'] ?? $bestModel['model'] ?? $endpoint->default_model ?? 'gpt-4o') : $bestModel;
     }
 
     /**

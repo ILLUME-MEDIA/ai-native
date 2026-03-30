@@ -3,6 +3,7 @@
 namespace App\Services\AI;
 
 use App\Services\AI\Adapters\AIProviderAdapterInterface;
+use App\Services\AI\Adapters\AnthropicAdapter;
 use App\Services\AI\Adapters\OpenAIAdapter;
 use App\Services\AI\Adapters\GeminiAdapter;
 use App\Services\AI\Adapters\MistralAdapter;
@@ -14,6 +15,7 @@ class AIProviderFactory
     {
         $adapter = match ($endpoint->provider) {
             'openai' => new OpenAIAdapter(),
+            'anthropic' => new AnthropicAdapter(),
             'google' => new GeminiAdapter(),
             'gemini' => new GeminiAdapter(),
             'mistral' => new MistralAdapter(),
