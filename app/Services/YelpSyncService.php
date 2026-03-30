@@ -146,7 +146,7 @@ class YelpSyncService
                                 'status'          => 'skipped',
                                 'error'           => 'Country is not US/USA or country is missing.',
                             ]);
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             continue;
                         }
 
@@ -162,7 +162,7 @@ class YelpSyncService
                                     ? "Business Name column \"{$termCol}\" is empty for this row. Edit the job and ensure the column has data."
                                     : 'Business Name column is not mapped. Edit the job and select a column for "Business Name".',
                             ]);
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             continue;
                         }
 
@@ -210,7 +210,7 @@ class YelpSyncService
                                 'error' => $removed ? null : 'Archived as not_found but source row was not deleted.',
                             ]);
 
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             usleep(300000);
                             continue;
                         }
@@ -232,7 +232,7 @@ class YelpSyncService
                                 'yelp_name' => $match['name'] ?? null,
                                 'error' => 'Details fetch returned null.',
                             ]);
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             usleep(300000);
                             continue;
                         }
@@ -287,7 +287,7 @@ class YelpSyncService
 
                             $closedRows++;
                             $processed++;
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             usleep(300000);
                             continue;
                         }
@@ -318,7 +318,7 @@ class YelpSyncService
                             ]);
 
                             $processed++;
-                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                            $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                             usleep(300000);
                             continue;
                         }
@@ -386,7 +386,7 @@ class YelpSyncService
                         ]);
 
                         $processed++;
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                         usleep(300000);
                     } catch (\Throwable $e) {
                         $failed++;
@@ -398,7 +398,7 @@ class YelpSyncService
                             'status'          => 'failed',
                             'error'           => $e->getMessage(),
                         ]);
-                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows);
+                        $this->persistProgress($log, $processed, $failed, $skipped, $closedRows, $notFoundRows, $job, $lastProcessedId);
                     }
                 }
             }, 'id');
@@ -846,15 +846,22 @@ class YelpSyncService
         int $failed,
         int $skipped,
         int $closed,
-        int $notFound
+        int $notFound,
+        ?YelpJob $job = null,
+        ?int $lastProcessedId = null
     ): void {
         YelpJobLog::where('id', $log->id)->update([
             'processed_rows' => $processed,
-            'failed_rows' => $failed,
-            'skipped_rows' => $skipped,
-            'closed_rows' => $closed,
+            'failed_rows'    => $failed,
+            'skipped_rows'   => $skipped,
+            'closed_rows'    => $closed,
             'not_found_rows' => $notFound,
         ]);
+
+        // Save resume position after every row so process-kill doesn't lose progress
+        if ($job && $lastProcessedId !== null) {
+            YelpJob::where('id', $job->id)->update(['last_processed_id' => $lastProcessedId]);
+        }
     }
 
     protected function pickAccount(): ?YelpAccount

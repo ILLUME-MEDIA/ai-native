@@ -188,14 +188,26 @@ class YelpController extends Controller
      */
     public function jobsRun(YelpJob $job): JsonResponse
     {
-        // Prevent duplicate runs — return existing active log if already running/pending
+        // Prevent duplicate runs — but auto-recover logs stuck in running/pending for 2+ hours
         $existing = YelpJobLog::where('job_id', $job->id)
             ->whereIn('status', ['running', 'pending'])
             ->latest()
             ->first();
 
         if ($existing) {
-            return response()->json(['error' => 'Job is already running.', 'log' => $existing], 409);
+            $stuckThreshold = now()->subMinutes(30);
+            $isStuck = $existing->started_at && $existing->started_at->lt($stuckThreshold);
+
+            if (!$isStuck) {
+                return response()->json(['error' => 'Job is already running.', 'log' => $existing], 409);
+            }
+
+            // Process was killed without cleanup — mark it failed so a new run can proceed
+            $existing->update([
+                'status'        => 'failed',
+                'error_message' => 'Job was stuck in running state for over 30 minutes and was automatically reset.',
+                'completed_at'  => now(),
+            ]);
         }
 
         // Check if any account has quota
