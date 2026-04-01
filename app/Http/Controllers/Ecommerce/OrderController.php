@@ -204,15 +204,74 @@ class OrderController extends Controller
     }
 
     /**
+     * Extract OTP payload from Bearer token (without expiry enforcement).
+     * Returns the payload array or null if token is absent/invalid.
+     */
+    private function otpPayload(Request $request): ?array
+    {
+        $bearer = $this->extractBearer($request);
+        if (!$bearer) return null;
+
+        try {
+            $payload = decrypt($bearer);
+            if (
+                isset($payload['type'], $payload['id'], $payload['exp']) &&
+                $payload['type'] === 'otp_auth'
+            ) {
+                return $payload;
+            }
+        } catch (\Throwable) {}
+
+        return null;
+    }
+
+    /**
+     * Resolve the OTP user's phone and email from DB so we can match
+     * orders placed as guest (no email, or different session).
+     * Returns ['email' => ..., 'phone' => ...] or null.
+     */
+    private function otpUserContacts(array $otp): ?array
+    {
+        $table = $otp['table'] ?? 'users';
+        $id    = $otp['id'];
+
+        try {
+            $record = \DB::table($table)->where('id', $id)->first(['email', 'phone']);
+            if (!$record) return null;
+
+            return [
+                'email' => $record->email ?? null,
+                'phone' => $record->phone ?? null,
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
      * GET /api/ecommerce/my-orders
      * Returns paginated orders scoped to the current session.
      */
     public function myOrders(Request $request): JsonResponse
     {
-        $sid = $this->sessionId($request);
+        $sid      = $this->sessionId($request);
+        $otp      = $this->otpPayload($request);
+        $otpSid   = $otp ? 'otp_' . ($otp['table'] ?? 'users') . '_' . $otp['id'] : null;
+        $contacts = $otp ? $this->otpUserContacts($otp) : null;
 
         $q = Order::with(['business', 'items'])
-            ->where('session_id', $sid)
+            ->where(function ($query) use ($sid, $otpSid, $contacts) {
+                $query->where('session_id', $sid);
+                if ($otpSid && $otpSid !== $sid) {
+                    $query->orWhere('session_id', $otpSid);
+                }
+                if (!empty($contacts['email'])) {
+                    $query->orWhere('customer_email', $contacts['email']);
+                }
+                if (!empty($contacts['phone'])) {
+                    $query->orWhere('customer_phone', $contacts['phone']);
+                }
+            })
             ->orderByDesc('id');
 
         if ($request->filled('status')) {
@@ -228,9 +287,17 @@ class OrderController extends Controller
      */
     public function myOrderShow(Request $request, Order $order): JsonResponse
     {
-        $sid = $this->sessionId($request);
+        $sid      = $this->sessionId($request);
+        $otp      = $this->otpPayload($request);
+        $otpSid   = $otp ? 'otp_' . ($otp['table'] ?? 'users') . '_' . $otp['id'] : null;
+        $contacts = $otp ? $this->otpUserContacts($otp) : null;
 
-        if ($order->session_id !== $sid) {
+        $belongs = $order->session_id === $sid
+            || ($otpSid && $order->session_id === $otpSid)
+            || (!empty($contacts['email']) && $order->customer_email === $contacts['email'])
+            || (!empty($contacts['phone']) && $order->customer_phone === $contacts['phone']);
+
+        if (!$belongs) {
             return response()->json(['message' => 'Not found.'], 404);
         }
 
