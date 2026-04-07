@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Ecommerce;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\CartItem;
+use App\Models\DiscoveryUser;
 use App\Models\MenuItem;
 use App\Models\MenuItemModifierOption;
 use App\Models\Order;
@@ -45,10 +46,10 @@ class CheckoutController extends Controller
         $data = $request->validate([
             'business_id'                    => 'required|integer|exists:businesses,id',
 
-            // Customer info
-            'customer_name'                  => 'required|string|max:200',
-            'customer_email'                 => 'required|email|max:200',
-            'customer_phone'                 => 'required|string|max:30',
+            // Customer info — optional when OTP Bearer token is present (auto-filled from user record)
+            'customer_name'                  => 'nullable|string|max:200',
+            'customer_email'                 => 'nullable|email|max:200',
+            'customer_phone'                 => 'nullable|string|max:30',
 
             // Order options
             'order_type'                     => 'nullable|in:delivery,pickup,dine_in',
@@ -75,6 +76,28 @@ class CheckoutController extends Controller
             'payment_method'                 => 'nullable|in:cod,stripe',
             'stripe_payment_method_id'       => 'nullable|string|starts_with:pm_',
         ]);
+
+        // Auto-fill customer info from OTP Bearer token user (discovery_users or users table)
+        // Fields provided in the request always take priority over token data.
+        // Ensure keys always exist (validate() omits nullable fields absent from request)
+        $data['customer_name']  = $data['customer_name']  ?? null;
+        $data['customer_email'] = $data['customer_email'] ?? null;
+        $data['customer_phone'] = $data['customer_phone'] ?? null;
+
+        $otpUser = $this->resolveOtpUser($request);
+        if ($otpUser) {
+            $data['customer_name']  = $data['customer_name']  ?: ($otpUser->name  ?? null);
+            $data['customer_email'] = $data['customer_email'] ?: ($otpUser->email ?? null);
+            $data['customer_phone'] = $data['customer_phone'] ?: ($otpUser->phone ?? null);
+        }
+
+        // Guard: customer info must be present (either from token or request)
+        if (empty($data['customer_name']) || empty($data['customer_email'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'customer_name and customer_email are required. Pass them in the request or use an OTP Bearer token.',
+            ], 422);
+        }
 
         // Resolve session ID once — reused for cart fetch, order creation, and cart clear
         $sid = $this->sessionId($request);
@@ -158,19 +181,16 @@ class CheckoutController extends Controller
             OrderItem::create(array_merge($item, ['order_id' => $order->id]));
         }
 
-        // Clear session cart if it was used.
-        // Also clear any guest cart tied to X-Session-Id — handles the case where
-        // the user added items as a guest (X-Session-Id) then checked out with OTP token.
-        if ($usingSessionCart) {
-            $sidsToDelete = [$sid];
-            $headerSid = $request->header('X-Session-Id');
-            if ($headerSid && $headerSid !== $sid) {
-                $sidsToDelete[] = $headerSid;
-            }
-            CartItem::whereIn('session_id', $sidsToDelete)
-                ->where('business_id', $data['business_id'])
-                ->delete();
+        // ── Clear cart ─────────────────────────────────────────────────────────
+        // Always clear cart tied to session_id after successful checkout
+        $sidsToDelete = [$sid];
+        $headerSid = $request->header('X-Session-Id');
+        if ($headerSid && $headerSid !== $sid) {
+            $sidsToDelete[] = $headerSid;
         }
+        CartItem::whereIn('session_id', $sidsToDelete)
+            ->where('business_id', $data['business_id'])
+            ->delete();
 
         $order->load('business');
 
@@ -299,7 +319,7 @@ class CheckoutController extends Controller
         $result = [];
         foreach ($items as $item) {
             $menuItem = MenuItem::where('id', $item['menu_item_id'])
-                ->where('is_active', true)
+                ->where('is_available', true)
                 ->first();
             if (!$menuItem) continue;
 
@@ -440,6 +460,25 @@ class CheckoutController extends Controller
                 Log::error("Uber Direct dispatch FAILED (checkout) for {$order->order_number}: {$e->getMessage()}");
             }
         }
+    }
+
+    /**
+     * Resolve the authenticated user from an OTP Bearer token.
+     * Currently supports: discovery_users table.
+     * Returns the model instance, or null if no valid token / unsupported table.
+     */
+    private function resolveOtpUser(Request $request): ?object
+    {
+        $payload = $this->otpPayload($request);
+        if (!$payload) return null;
+
+        $table = $payload['table'] ?? null;
+        $id    = (int) ($payload['id'] ?? 0);
+
+        return match ($table) {
+            'discovery_users' => DiscoveryUser::find($id),
+            default           => null,
+        };
     }
 
     private function otpPayload(Request $request): ?array

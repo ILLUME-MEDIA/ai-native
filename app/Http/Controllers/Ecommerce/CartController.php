@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Ecommerce;
 
 use App\Http\Controllers\Controller;
-use App\Models\Business;
 use App\Models\CartItem;
 use App\Models\MenuItem;
 use App\Models\MenuItemModifierOption;
+use App\Models\Muzzhub;
 use App\Services\FeeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -65,7 +65,7 @@ class CartController extends Controller
     public function index(Request $request): JsonResponse
     {
         $items = CartItem::where('session_id', $this->sessionId($request))
-            ->with(['menuItem', 'business'])
+            ->with(['menuItem', 'business.muzzhub'])
             ->get();
 
         $subtotal = $items->sum(function ($i) {
@@ -78,9 +78,8 @@ class CartController extends Controller
         });
         $subtotal = round($subtotal, 2);
 
-        // Resolve business from cart items (first item wins); load muzzhub for fee resolution
-        $businessId = $items->first()?->business_id;
-        $business   = $businessId ? Business::with('muzzhub')->find($businessId) : null;
+        // Business already loaded with muzzhub via eager load — no extra query needed
+        $business = $items->first()?->business;
 
         // Platform fee
         $feeService  = app(FeeService::class);
@@ -91,7 +90,7 @@ class CartController extends Controller
         $tipOptions  = $feeService->getTipOptions($subtotal);
 
         return response()->json([
-            'items'        => $items,
+            'items'        => $items->map(fn ($i) => $this->withSeller($i)),
             'subtotal'     => $subtotal,
             'platform_fee' => $platformFee,
             'fee_config'   => $feeConfig,
@@ -124,7 +123,8 @@ class CartController extends Controller
             ]
         );
 
-        return response()->json($cart->load(['menuItem', 'business']), 201);
+        $cart->load(['menuItem', 'business.muzzhub']);
+        return response()->json($this->withSeller($cart), 201);
     }
 
     public function update(Request $request, CartItem $cartItem): JsonResponse
@@ -144,7 +144,32 @@ class CartController extends Controller
         }
 
         $cartItem->update($data);
-        return response()->json($cartItem->load(['menuItem', 'business']));
+        $cartItem->load(['menuItem', 'business.muzzhub']);
+        return response()->json($this->withSeller($cartItem));
+    }
+
+    /**
+     * Append a `seller` key to a CartItem array representation.
+     * Prefers Muzzhub (richer data) over Business when linked.
+     * Hides the raw `business` relation from the output.
+     */
+    private function withSeller(CartItem $item): array
+    {
+        $data    = $item->makeHidden('business')->toArray();
+        $muzzhub = $item->business?->muzzhub;
+
+        if ($muzzhub) {
+            $data['seller'] = array_merge(
+                $muzzhub->makeHidden(['business', 'category'])->toArray(),
+                ['source' => 'muzzhub']
+            );
+        } elseif ($item->business) {
+            $data['seller'] = array_merge($item->business->toArray(), ['source' => 'business']);
+        } else {
+            $data['seller'] = null;
+        }
+
+        return $data;
     }
 
     /**

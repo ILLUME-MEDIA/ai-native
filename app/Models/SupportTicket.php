@@ -13,14 +13,16 @@ class SupportTicket extends Model
         'order_id', 'user_table', 'user_id',
         'ticket_number', 'subject', 'category',
         'status', 'priority',
+        'affected_items',
         'resolution_note', 'resolved_at',
         'unread_admin', 'unread_user',
     ];
 
     protected $casts = [
-        'resolved_at'  => 'datetime',
-        'unread_admin' => 'integer',
-        'unread_user'  => 'integer',
+        'resolved_at'   => 'datetime',
+        'unread_admin'  => 'integer',
+        'unread_user'   => 'integer',
+        'affected_items'=> 'array',
     ];
 
     protected static function boot(): void

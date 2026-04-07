@@ -110,53 +110,87 @@ class UserSupportController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'order_id'   => 'nullable|integer|exists:orders,id',
-            'subject'    => 'required|string|max:200',
-            'category'   => 'sometimes|in:general,refund,delivery,quality,other',
-            'priority'   => 'sometimes|in:low,medium,high,urgent',
-            'message'    => 'required|string|max:2000',
+            'order_id'              => 'nullable|integer|exists:orders,id',
+            'subject'               => 'required|string|max:200',
+            'category'              => 'sometimes|in:general,refund,delivery,quality,other',
+            'priority'              => 'sometimes|in:low,medium,high,urgent',
+            'message'               => 'nullable|string|max:2000',
+            // Structured affected items from the frontend item-picker
+            'affected_items'        => 'nullable|array|max:50',
+            'affected_items.*.order_item_id' => 'nullable|integer',
+            'affected_items.*.menu_item_id'  => 'nullable|integer',
+            'affected_items.*.name'          => 'required_with:affected_items|string|max:200',
+            'affected_items.*.quantity'      => 'nullable|integer|min:1',
+            'affected_items.*.modifiers'     => 'nullable|array',
+            'affected_items.*.modifiers.*'   => 'string|max:100',
         ]);
 
-        $payload = $this->otpPayload($request);
+        $payload       = $this->otpPayload($request);
+        $affectedItems = $data['affected_items'] ?? null;
 
-        // If order_id provided, soft-verify ownership (only block if session mismatch AND no OTP)
+        // Auto-build message body from affected_items when message is absent/empty
+        $messageBody = $data['message'] ?? null;
+        if (empty($messageBody) && ! empty($affectedItems)) {
+            $lines = array_map(function ($item) {
+                $name  = $item['name'] ?? 'Item';
+                $mods  = ! empty($item['modifiers']) ? '(' . implode(', ', $item['modifiers']) . ')' : '';
+                $qty   = ($item['quantity'] ?? 1) > 1 ? " x{$item['quantity']}" : '';
+                return "- {$name}{$qty}" . ($mods ? " {$mods}" : '');
+            }, $affectedItems);
+
+            $messageBody = "Affected items:\n" . implode("\n", $lines);
+        }
+
+        if (empty($messageBody)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Provide a message or select affected items.',
+            ], 422);
+        }
+
+        // If order_id provided, soft-verify ownership
         $linkedOrderId = $data['order_id'] ?? null;
+        $linkedOrder   = null;
         if ($linkedOrderId) {
-            $order = Order::find($linkedOrderId);
-            if ($order) {
+            $linkedOrder = Order::find($linkedOrderId);
+            if ($linkedOrder) {
                 $sid = $this->sessionId($request);
-                // OTP auth: verify user owns order via user_id field if present
-                // Session auth: verify session matches
-                // If neither matches, silently drop the order link (don't block ticket creation)
                 if ($payload) {
-                    if (isset($payload['id']) && $order->user_id && (int)$order->user_id !== (int)$payload['id']) {
+                    if (isset($payload['id']) && $linkedOrder->user_id && (int)$linkedOrder->user_id !== (int)$payload['id']) {
                         $linkedOrderId = null;
+                        $linkedOrder   = null;
                     }
-                } elseif ($order->session_id && $order->session_id !== $sid) {
-                    $linkedOrderId = null; // unlink but still create ticket
+                } elseif ($linkedOrder->session_id && $linkedOrder->session_id !== $sid) {
+                    $linkedOrderId = null;
+                    $linkedOrder   = null;
                 }
             } else {
                 $linkedOrderId = null;
             }
         }
 
+        // Append order number to message if order is linked and message doesn't already include it
+        if ($linkedOrder && ! str_contains($messageBody, $linkedOrder->order_number)) {
+            $messageBody .= "\n\n" . $linkedOrder->order_number;
+        }
+
         $ticket = SupportTicket::create([
-            'order_id'    => $linkedOrderId,
-            'user_table'  => $payload['table'] ?? 'users',
-            'user_id'     => $payload['id'] ?? null,
-            'subject'     => $data['subject'],
-            'category'    => $data['category'] ?? 'general',
-            'priority'    => $data['priority'] ?? 'medium',
-            'status'      => 'open',
-            'unread_admin'=> 1,
+            'order_id'       => $linkedOrderId,
+            'user_table'     => $payload['table'] ?? 'users',
+            'user_id'        => $payload['id'] ?? null,
+            'subject'        => $data['subject'],
+            'category'       => $data['category'] ?? 'general',
+            'priority'       => $data['priority'] ?? 'medium',
+            'affected_items' => $affectedItems,
+            'status'         => 'open',
+            'unread_admin'   => 1,
         ]);
 
-        // First message
         SupportMessage::create([
             'ticket_id'   => $ticket->id,
             'sender_type' => 'user',
             'sender_id'   => $payload['id'] ?? null,
-            'message'     => $data['message'],
+            'message'     => $messageBody,
             'is_read'     => false,
         ]);
 

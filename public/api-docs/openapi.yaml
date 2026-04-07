@@ -181,6 +181,7 @@ tags:
       - DoorDash auto-dispatch if `delivery_vendor: doordash`
       - Cart is automatically cleared after order (session-scoped)
       - Returns complete order object
+      - **Customer info auto-filled** from `discovery_users` when OTP Bearer token is provided
 
       ### External site — pass items directly
       ```
@@ -3395,6 +3396,12 @@ paths:
         **Item source:**
         - `items[]` in body → external site / app (no session cart needed)
         - Omit `items[]` → uses session cart (same X-Session-Id used for cart)
+
+        **Customer info auto-fill (OTP Bearer token):**
+        When `Authorization: Bearer <otp-token>` is present, `customer_name`, `customer_email`,
+        and `customer_phone` are automatically resolved from the `discovery_users` record.
+        Any value you pass in the request **overrides** the token data.
+        Without a token, `customer_name` and `customer_email` are required.
       security: []
       parameters:
         - name: X-Session-Id
@@ -3418,22 +3425,25 @@ paths:
               type: object
               required:
                 - business_id
-                - customer_name
-                - customer_email
-                - customer_phone
               properties:
                 business_id:
                   type: integer
                   example: 1
                 customer_name:
                   type: string
+                  nullable: true
+                  description: "Required if no OTP Bearer token. Auto-filled from discovery_users when token is present."
                   example: "Jane Doe"
                 customer_email:
                   type: string
                   format: email
+                  nullable: true
+                  description: "Required if no OTP Bearer token. Auto-filled from discovery_users when token is present."
                   example: "jane@example.com"
                 customer_phone:
                   type: string
+                  nullable: true
+                  description: "Optional. Auto-filled from discovery_users when OTP Bearer token is present."
                   example: "+1 310 555 0100"
                 order_type:
                   type: string
@@ -3567,6 +3577,17 @@ paths:
                   tax_rate: 10
                   delivery_fee: 3.99
                   payment_method: cod
+              otp_token_autofill:
+                summary: OTP Bearer token — customer info auto-filled from discovery_users
+                value:
+                  business_id: 1
+                  order_type: delivery
+                  delivery_address: "456 Oak Ave, LA, CA 90001"
+                  delivery_fee: 3.99
+                  tax_rate: 10
+                  items:
+                    - menu_item_id: 5
+                      quantity: 2
       responses:
         "201":
           description: Order placed (and paid if Stripe)
@@ -4900,22 +4921,127 @@ paths:
       tags:
         - User Support
       summary: Open a new support ticket
+      description: |
+        Create a support ticket. Provide either `message` (free text) or `affected_items` (structured
+        item list from the order picker UI) — or both. When only `affected_items` is sent, the backend
+        auto-generates the message body:
+
+        ```
+        Affected items:
+        - Chicken Biryani x2 (Extra Raita, Medium)
+        - Vegetable Pulao (Raita)
+
+        ORD-15AALFWP
+        ```
+
+        The order number is appended automatically when `order_id` is linked.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [subject, message]
+              required: [subject]
               properties:
-                order_id: { type: integer, nullable: true }
-                subject:  { type: string, maxLength: 200 }
-                category: { type: string, enum: [general, refund, delivery, quality, other], default: general }
-                priority: { type: string, enum: [low, medium, high, urgent], default: medium }
-                message:  { type: string, maxLength: 2000 }
+                order_id:
+                  type: integer
+                  nullable: true
+                  description: ID of the related order (optional). Ownership is verified; silently unlinked on mismatch.
+                subject:
+                  type: string
+                  maxLength: 200
+                  example: "I would like to request a refund"
+                category:
+                  type: string
+                  enum: [general, refund, delivery, quality, other]
+                  default: general
+                priority:
+                  type: string
+                  enum: [low, medium, high, urgent]
+                  default: medium
+                message:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+                  description: Free-text message. Auto-generated from affected_items when omitted.
+                affected_items:
+                  type: array
+                  nullable: true
+                  maxItems: 50
+                  description: Structured list of affected order items selected in the frontend picker. Stored as JSON on the ticket for admin review.
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      order_item_id: { type: integer, nullable: true, description: "ID from order_items table" }
+                      menu_item_id:  { type: integer, nullable: true }
+                      name:          { type: string, maxLength: 200, example: "Chicken Biryani" }
+                      quantity:      { type: integer, minimum: 1, default: 1 }
+                      modifiers:
+                        type: array
+                        items: { type: string, maxLength: 100 }
+                        example: ["Extra Raita", "Medium"]
+            examples:
+              with_affected_items:
+                summary: Frontend item-picker (no manual message needed)
+                value:
+                  order_id: 49
+                  subject: "I would like to request a refund"
+                  category: refund
+                  priority: medium
+                  affected_items:
+                    - order_item_id: 12
+                      menu_item_id: 45
+                      name: "Chicken Biryani"
+                      quantity: 1
+                      modifiers: ["Extra Raita", "Medium"]
+                    - order_item_id: 13
+                      menu_item_id: 67
+                      name: "Vegetable Pulao"
+                      quantity: 1
+                      modifiers: ["Raita"]
+              manual_message:
+                summary: Free-text message only (backward compatible)
+                value:
+                  order_id: 49
+                  subject: "I would like to request a refund"
+                  category: refund
+                  priority: medium
+                  message: "Affected items:\n- Chicken Biryani (Extra Raita, Medium)\n- Vegetable Pulao (Raita)\n\nORD-15AALFWP"
       responses:
         "201":
           description: Ticket created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Support ticket created." }
+                  ticket:
+                    type: object
+                    properties:
+                      id:             { type: integer }
+                      ticket_number:  { type: string, example: "TKT-A1B2C3" }
+                      subject:        { type: string }
+                      category:       { type: string }
+                      priority:       { type: string }
+                      status:         { type: string, example: "open" }
+                      order_id:       { type: integer, nullable: true }
+                      affected_items:
+                        type: array
+                        nullable: true
+                        items: { type: object }
+                      messages:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:          { type: integer }
+                            sender_type: { type: string, enum: [user, admin] }
+                            message:     { type: string }
+                            created_at:  { type: string, format: date-time }
+        "422":
+          description: Validation error or missing message/affected_items
 
   /ecommerce/support/tickets/{ticket}:
     get:
@@ -8851,14 +8977,34 @@ components:
             image:
               type: string
               nullable: true
-        business:
+        seller:
           type: object
-          description: Loaded business record
+          nullable: true
+          description: |
+            Seller info — prefers Muzzhub record (richer data) when linked; falls back to Business.
+            Check `source` field to know which table the data came from.
           properties:
             id:
               type: integer
             name:
               type: string
+            logo:
+              type: string
+              nullable: true
+            address:
+              type: string
+              nullable: true
+            city:
+              type: string
+              nullable: true
+            phone:
+              type: string
+              nullable: true
+            source:
+              type: string
+              enum: [muzzhub, business]
+              description: "'muzzhub' = data from muzzhub table, 'business' = data from businesses table"
+              example: muzzhub
         created_at:
           type: string
           format: date-time
