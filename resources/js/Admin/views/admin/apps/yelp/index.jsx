@@ -350,7 +350,12 @@ function JobsTab() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [j, e, yf, gf] = await Promise.all([api('jobs'), api('entities'), api('fields'), api('google/fields')]);
+            const [j, e, yf, gf] = await Promise.all([
+                api('jobs'),
+                api('entities'),
+                api('fields'),
+                api('google/fields').catch(() => ({ data: [] })),
+            ]);
             const jobs = j.data ?? [];
             setJobs(jobs);
             setEntities(e.data ?? []);
