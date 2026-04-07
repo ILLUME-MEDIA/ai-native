@@ -85,7 +85,7 @@ class GoogleService
                 $resp = $this->client->post('https://places.googleapis.com/v1/places:searchText', [
                     'headers' => [
                         'X-Goog-Api-Key'   => $this->apiKey,
-                        'X-Goog-FieldMask' => 'places.id',
+                        'X-Goog-FieldMask' => 'places.id,places.name',
                         'Content-Type'     => 'application/json',
                     ],
                     'json' => [
@@ -106,8 +106,13 @@ class GoogleService
                     return null;
                 }
 
-                $data = json_decode((string) $resp->getBody(), true);
-                return $data['places'][0]['id'] ?? null;
+                $data  = json_decode((string) $resp->getBody(), true);
+                $place = $data['places'][0] ?? null;
+                if (!$place) return null;
+
+                // 'name' = full resource name "places/ChIJ..." — needed for Details API
+                // 'id'   = bare place ID "ChIJ..." — NOT usable as resource name directly
+                return $place['name'] ?? ('places/' . $place['id']);
 
             } catch (\Throwable $e) {
                 return null;
