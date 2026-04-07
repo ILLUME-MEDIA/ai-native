@@ -110,7 +110,14 @@ class SupportAgentService
             ]);
 
             $refundIntentCount = $ticket->refund_intent_count ?? 0;
+
+            // PHP-level override: if user has mentioned refund before AND AI detected
+            // any refund intent again, force escalation — don't trust AI to return the
+            // right action every time (Mistral often keeps returning 'refund_intent').
             if (in_array($action, ['refund_intent', 'request_refund'])) {
+                if ($refundIntentCount >= 1) {
+                    $action = 'request_refund'; // force escalation
+                }
                 $refundIntentCount++;
             }
 
