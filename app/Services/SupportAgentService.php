@@ -30,6 +30,25 @@ class SupportAgentService
     private const CACHE_KEY      = 'support_admin_online';
     private const ONLINE_TTL_HRS = 8;
 
+    /**
+     * Provider preference order for support agent.
+     * Mistral is first — cheap, fast, no per-token billing issues on free tier.
+     * Add more providers here if needed.
+     */
+    private const PROVIDER_PREFERENCE = ['mistral', 'anthropic', 'openai', 'google', 'gemini'];
+
+    /**
+     * Fallback model list per provider.
+     * If default_model is empty OR the chosen model returns a quota/rate error, try the next one.
+     */
+    private const MODEL_FALLBACKS = [
+        'mistral'   => ['mistral-small-latest', 'open-mixtral-8x7b', 'open-mistral-7b', 'mistral-tiny'],
+        'anthropic' => ['claude-haiku-4-5-20251001', 'claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'],
+        'openai'    => ['gpt-4o-mini', 'gpt-3.5-turbo'],
+        'google'    => ['gemini-1.5-flash', 'gemini-1.0-pro'],
+        'gemini'    => ['gemini-1.5-flash', 'gemini-1.0-pro'],
+    ];
+
     // ── Admin availability ────────────────────────────────────────────────────
 
     public function isAdminOnline(): bool
@@ -62,34 +81,26 @@ class SupportAgentService
      */
     public function respond(SupportTicket $ticket, string $latestUserMessage): ?SupportMessage
     {
-        // Resolve AI endpoint from DB — prefer anthropic, then any active endpoint
-        $endpoint = AIEndpoint::where('is_active', true)
-            ->orderByRaw("FIELD(provider,'anthropic','openai','mistral','google') ASC")
-            ->first();
-
+        $endpoint = $this->resolveEndpoint();
         if (! $endpoint) {
-            Log::warning('SupportAgent: No active AI endpoint found in DB. Add one at /admin/ai/endpoints.');
+            Log::warning('SupportAgent: No active AI endpoint found. Add one at /admin/ai/endpoints.');
+            return null;
+        }
+
+        $messages = $this->buildMessages($ticket, $latestUserMessage);
+        $system   = $this->systemPrompt($ticket);
+        $raw      = $this->callWithFallback($endpoint, $system, $messages);
+
+        if ($raw === null) {
+            Log::error('SupportAgent: All models exhausted for endpoint "' . $endpoint->name . '". Check API quotas.');
             return null;
         }
 
         try {
-            $adapter  = AIProviderFactory::make($endpoint);
-            $messages = $this->buildMessages($ticket, $latestUserMessage);
-
-            // Prepend system prompt as a system role message (AIProviderFactory handles Anthropic's system separation)
-            $payload = array_merge(
-                [['role' => 'system', 'content' => $this->systemPrompt($ticket)]],
-                $messages
-            );
-
-            $result = $adapter->generateTextWithTools($payload, []);
-            $raw    = $result['text'] ?? '';
-            $parsed = $this->parseResponse($raw);
-
+            $parsed    = $this->parseResponse($raw);
             $agentText = $parsed['message'] ?? $raw;
             $action    = $parsed['action']  ?? null;
 
-            // Store agent message in conversation
             $msg = SupportMessage::create([
                 'ticket_id'   => $ticket->id,
                 'sender_type' => 'agent',
@@ -98,13 +109,11 @@ class SupportAgentService
                 'is_read'     => false,
             ]);
 
-            // Track refund intents
             $refundIntentCount = $ticket->refund_intent_count ?? 0;
             if (in_array($action, ['refund_intent', 'request_refund'])) {
                 $refundIntentCount++;
             }
 
-            // Escalate to admin if user keeps requesting refund
             if ($action === 'request_refund' && $ticket->order_id) {
                 $this->escalateRefund($ticket);
             }
@@ -116,15 +125,100 @@ class SupportAgentService
                 'updated_at'          => now(),
             ]);
 
-            // Push agent reply to user via Pusher
             broadcast(new SupportMessageSent($ticket->fresh(), $msg));
 
             return $msg;
 
         } catch (\Throwable $e) {
-            Log::error('SupportAgent exception: ' . $e->getMessage());
+            Log::error('SupportAgent store/broadcast exception: ' . $e->getMessage());
             return null;
         }
+    }
+
+    // ── Endpoint resolution ───────────────────────────────────────────────────
+
+    /** Pick the best active endpoint based on PROVIDER_PREFERENCE order. */
+    private function resolveEndpoint(): ?AIEndpoint
+    {
+        $active = AIEndpoint::where('is_active', true)->get();
+        if ($active->isEmpty()) return null;
+
+        foreach (self::PROVIDER_PREFERENCE as $provider) {
+            $found = $active->firstWhere('provider', $provider);
+            if ($found) return $found;
+        }
+
+        return $active->first(); // any active endpoint as last resort
+    }
+
+    // ── Call with per-model fallback ──────────────────────────────────────────
+
+    /**
+     * Try the endpoint's default model first, then fallback models one by one.
+     * Returns the raw text response, or null if all models fail.
+     */
+    private function callWithFallback(AIEndpoint $endpoint, string $system, array $messages): ?string
+    {
+        $provider  = $endpoint->provider;
+        $fallbacks = self::MODEL_FALLBACKS[$provider] ?? [];
+
+        // Build model list: [default_model (if set), ...fallbacks] deduplicated
+        $modelsToTry = array_values(array_unique(array_filter(
+            array_merge([$endpoint->default_model ?? ''], $fallbacks)
+        )));
+
+        if (empty($modelsToTry)) {
+            $modelsToTry = [''];  // use adapter's built-in default
+        }
+
+        foreach ($modelsToTry as $model) {
+            try {
+                $adapter = AIProviderFactory::make($endpoint);
+                if ($model) $adapter->setModel($model);
+
+                $raw = $this->callAdapter($adapter, $system, $messages);
+
+                Log::info("SupportAgent: responded using {$provider}/{$model}");
+                return $raw;
+
+            } catch (\Throwable $e) {
+                $msg = $e->getMessage();
+                // Check if it's a quota / rate-limit error → try next model
+                $isQuotaError = str_contains($msg, 'insufficient balance')
+                    || str_contains($msg, 'quota')
+                    || str_contains($msg, 'rate limit')
+                    || str_contains($msg, 'Rate limit')
+                    || str_contains($msg, '429')
+                    || str_contains($msg, 'suspended')
+                    || str_contains($msg, 'billing');
+
+                Log::warning("SupportAgent: model '{$model}' failed" . ($isQuotaError ? ' (quota)' : '') . " — {$msg}");
+
+                if (! $isQuotaError) {
+                    // Non-quota error (bad request, auth wrong key, etc.) — skip remaining models
+                    return null;
+                }
+                // Quota error → try next model in list
+            }
+        }
+
+        return null; // all models exhausted
+    }
+
+    /** Send the actual API request to the adapter. */
+    private function callAdapter($adapter, string $system, array $messages): string
+    {
+        if (method_exists($adapter, 'generateTextWithTools')) {
+            $payload = array_merge([['role' => 'system', 'content' => $system]], $messages);
+            $result  = $adapter->generateTextWithTools($payload, []);
+            return $result['text'] ?? '';
+        }
+
+        // Universal fallback: format as single string prompt
+        return $adapter->generateText(
+            $this->formatPrompt($system, $messages),
+            ['max_tokens' => 400]
+        )['text'] ?? '';
     }
 
     // ── Build Claude conversation messages ────────────────────────────────────
@@ -216,6 +310,20 @@ Respond ONLY with valid JSON — no extra text:
 {"message": "your reply", "action": "refund_intent"}
 {"message": "your reply", "action": "request_refund"}
 PROMPT;
+    }
+
+    // ── Format history as single prompt (for adapters without multi-turn support) ──
+
+    private function formatPrompt(string $system, array $messages): string
+    {
+        $lines = [$system, '', 'Conversation:'];
+        foreach ($messages as $msg) {
+            $label   = $msg['role'] === 'user' ? 'Customer' : 'Agent';
+            $lines[] = "{$label}: {$msg['content']}";
+        }
+        $lines[] = '';
+        $lines[] = 'Now respond to the last Customer message. Reply with JSON only: {"message":"...","action":null}';
+        return implode("\n", $lines);
     }
 
     // ── Parse Claude's JSON response ──────────────────────────────────────────
