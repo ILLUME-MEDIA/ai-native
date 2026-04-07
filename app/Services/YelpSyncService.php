@@ -1065,7 +1065,9 @@ class YelpSyncService
                             foreach ($googleColumnMap as $googleField => $dbColumn) {
                                 $value = $extracted[$googleField] ?? null;
                                 if ($value === null) continue;
-                                if (!Schema::hasColumn($tableName, $dbColumn)) {
+                                // Check $newColumnsAdded first — Schema::hasColumn() is cached and returns
+                                // stale results after a column is added in the same run
+                                if (!in_array($dbColumn, $newColumnsAdded) && !Schema::hasColumn($tableName, $dbColumn)) {
                                     $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
                                     $newColumnsAdded[] = $dbColumn;
                                 }
@@ -1075,7 +1077,7 @@ class YelpSyncService
                             foreach ($extracted as $googleField => $value) {
                                 if ($value === null) continue;
                                 $dbColumn = $googleField;
-                                if (!Schema::hasColumn($tableName, $dbColumn)) {
+                                if (!in_array($dbColumn, $newColumnsAdded) && !Schema::hasColumn($tableName, $dbColumn)) {
                                     $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
                                     $newColumnsAdded[] = $dbColumn;
                                 }
@@ -1201,29 +1203,21 @@ class YelpSyncService
             $updates = [];
 
             if (!empty($googleColumnMap)) {
-                // Manual mapping: google_field_key => db_column_name
                 foreach ($googleColumnMap as $googleField => $dbColumn) {
-                    if (!array_key_exists($googleField, $extracted)) {
-                        continue;
-                    }
+                    if (!array_key_exists($googleField, $extracted)) continue;
                     $value = $extracted[$googleField];
-                    if ($value === null) {
-                        continue; // Never overwrite with null
-                    }
-                    if (!Schema::hasColumn($tableName, $dbColumn)) {
+                    if ($value === null) continue;
+                    if (!in_array($dbColumn, $newColumnsAdded) && !Schema::hasColumn($tableName, $dbColumn)) {
                         $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
                         $newColumnsAdded[] = $dbColumn;
                     }
                     $updates[$dbColumn] = is_array($value) ? json_encode($value) : $value;
                 }
             } else {
-                // Auto mode: write every non-null Google field using the key as the column name
                 foreach ($extracted as $googleField => $value) {
-                    if ($value === null) {
-                        continue; // Never overwrite with null
-                    }
-                    $dbColumn = $googleField; // e.g. "google_rating" becomes column "google_rating"
-                    if (!Schema::hasColumn($tableName, $dbColumn)) {
+                    if ($value === null) continue;
+                    $dbColumn = $googleField;
+                    if (!in_array($dbColumn, $newColumnsAdded) && !Schema::hasColumn($tableName, $dbColumn)) {
                         $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
                         $newColumnsAdded[] = $dbColumn;
                     }
@@ -1236,6 +1230,19 @@ class YelpSyncService
             }
         } catch (\Throwable $e) {
             // Google enrichment is best-effort — never fail the Yelp job
+            // Store error in a google_enrich_error column for debugging
+            try {
+                if (Schema::hasColumn($tableName, 'id')) {
+                    if (!Schema::hasColumn($tableName, 'google_enrich_error')) {
+                        Schema::table($tableName, function (Blueprint $table) {
+                            $table->string('google_enrich_error')->nullable()->after('id');
+                        });
+                    }
+                    DB::table($tableName)->where('id', $rowId)->update([
+                        'google_enrich_error' => substr($e->getMessage(), 0, 255),
+                    ]);
+                }
+            } catch (\Throwable) { /* ignore */ }
         }
     }
 
