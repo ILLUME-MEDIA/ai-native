@@ -16,6 +16,8 @@ class GoogleService
     protected string $apiKey;
 
     // All fields we request from the Places Details API
+    // Full field list — requested first. If Google returns 400 (invalid field),
+    // we automatically retry with SAFE_FIELDS (subset known to work everywhere).
     protected const PLACE_FIELDS = [
         'id',
         'displayName',
@@ -32,7 +34,7 @@ class GoogleService
         'plusCode',
         'currentOpeningHours',
         'regularOpeningHours',
-        'primaryTypeDisplayName',
+        'primaryType',               // string — replaces primaryTypeDisplayName (LocalizedText)
         'types',
         'editorialSummary',
         'photos',
@@ -58,6 +60,24 @@ class GoogleService
         'goodForWatchingSports',
         'liveMusic',
         'menuForChildren',
+    ];
+
+    // Minimal safe fields — used as fallback if full mask returns 400
+    protected const SAFE_FIELDS = [
+        'id',
+        'displayName',
+        'formattedAddress',
+        'nationalPhoneNumber',
+        'websiteUri',
+        'rating',
+        'userRatingCount',
+        'businessStatus',
+        'googleMapsUri',
+        'location',
+        'regularOpeningHours',
+        'types',
+        'photos',
+        'reviews',
     ];
 
     public function __construct(?string $apiKey = null, ?Client $client = null)
@@ -128,36 +148,44 @@ class GoogleService
      */
     public function getPlaceDetails(string $placeResourceName): ?array
     {
-        $fieldMask = implode(',', self::PLACE_FIELDS);
+        // Try full field list first; auto-fallback to safe minimal list on 400
+        $masks = [implode(',', self::PLACE_FIELDS), implode(',', self::SAFE_FIELDS)];
 
-        for ($attempt = 0; $attempt < 2; $attempt++) {
-            try {
-                $resp = $this->client->get("https://places.googleapis.com/v1/{$placeResourceName}", [
-                    'headers' => [
-                        'X-Goog-Api-Key'   => $this->apiKey,
-                        'X-Goog-FieldMask' => $fieldMask,
-                    ],
-                ]);
+        foreach ($masks as $maskIndex => $fieldMask) {
+            for ($attempt = 0; $attempt < 2; $attempt++) {
+                try {
+                    $resp = $this->client->get("https://places.googleapis.com/v1/{$placeResourceName}", [
+                        'headers' => [
+                            'X-Goog-Api-Key'   => $this->apiKey,
+                            'X-Goog-FieldMask' => $fieldMask,
+                        ],
+                    ]);
 
-                $status = $resp->getStatusCode();
+                    $status = $resp->getStatusCode();
 
-                if ($status === 429) {
-                    sleep(1);
-                    continue;
+                    if ($status === 429) {
+                        sleep(1);
+                        continue;
+                    }
+
+                    if ($status === 400 && $maskIndex === 0) {
+                        // Full mask rejected — try safe fallback mask
+                        break;
+                    }
+
+                    if ($status !== 200) {
+                        $body = (string) $resp->getBody();
+                        $msg  = json_decode($body, true)['error']['message'] ?? $body;
+                        throw new \RuntimeException("Google Places API {$status}: {$msg}");
+                    }
+
+                    return json_decode((string) $resp->getBody(), true);
+
+                } catch (\RuntimeException $e) {
+                    throw $e;
+                } catch (\Throwable $e) {
+                    throw new \RuntimeException("Google request failed: " . $e->getMessage());
                 }
-
-                if ($status !== 200) {
-                    $body = (string) $resp->getBody();
-                    $msg  = json_decode($body, true)['error']['message'] ?? $body;
-                    throw new \RuntimeException("Google Places API {$status}: {$msg}");
-                }
-
-                return json_decode((string) $resp->getBody(), true);
-
-            } catch (\RuntimeException $e) {
-                throw $e; // propagate so caller can log the real error
-            } catch (\Throwable $e) {
-                throw new \RuntimeException("Google request failed: " . $e->getMessage());
             }
         }
 
@@ -205,7 +233,7 @@ class GoogleService
         );
         $types = array_filter($types);
 
-        $primaryType = $d['primaryTypeDisplayName']['text'] ?? null;
+        $primaryType = $d['primaryType'] ?? ($d['primaryTypeDisplayName']['text'] ?? null);
         $editorialSummary = $d['editorialSummary']['text'] ?? null;
         $businessStatus = $d['businessStatus'] ?? null;
 
