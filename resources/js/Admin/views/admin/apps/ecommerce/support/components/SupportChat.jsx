@@ -69,8 +69,8 @@ export default function SupportChat({ ticketId, bearerToken, sessionId, onBack }
             const ch = window.Echo.channel(`support.ticket.${ticketId}`);
 
             ch.listen('.message.sent', (e) => {
-                // Only append admin messages (user's own go via optimistic update)
-                if (e.message?.sender_type !== 'admin') return;
+                // Accept admin + agent messages (user's own go via optimistic update)
+                if (!['admin', 'agent'].includes(e.message?.sender_type)) return;
                 setMessages(prev => {
                     if (prev.some(m => m.id === e.message.id)) return prev;
                     return [...prev, e.message];
