@@ -587,6 +587,21 @@ Route::group([], function () {
 
         // On-demand menu scraper
         Route::post('scrape-menu',                  [YelpController::class, 'scrapeMenu']);
+
+        // Google Accounts
+        Route::get('google/fields',                              [YelpController::class, 'googleFields']);
+        Route::get('google/accounts',                            [YelpController::class, 'googleAccountsIndex']);
+        Route::post('google/accounts',                           [YelpController::class, 'googleAccountsStore']);
+        Route::post('google/accounts/verify',                    [YelpController::class, 'googleAccountsVerify']);
+        Route::post('google/accounts/{account}/reveal',          [YelpController::class, 'googleAccountsReveal']);
+        Route::patch('google/accounts/{account}',                [YelpController::class, 'googleAccountsUpdate']);
+        Route::delete('google/accounts/{account}',               [YelpController::class, 'googleAccountsDestroy']);
+
+        // Google Run & Logs
+        Route::post('jobs/{job}/run-google',                     [YelpController::class, 'jobsRunGoogle']);
+        Route::get('google/logs',                                [YelpController::class, 'googleLogsIndex']);
+        Route::get('google/logs/{log}',                          [YelpController::class, 'googleLogProgress']);
+        Route::post('google/logs/{log}/stop',                    [YelpController::class, 'googleLogStop']);
     });
 
     //
@@ -850,6 +865,13 @@ Route::prefix('ecommerce')->group(function () {
     Route::post('my-orders/{order}/refund-request',         [UserRefundController::class, 'requestRefund']);
     Route::get('my-orders/{order}/refund',                  [UserRefundController::class, 'orderRefundStatus']);
     Route::get('my-refunds',                                [UserRefundController::class, 'myRefunds']);
+
+    // Refund issue types (public — for frontend dropdown)
+    Route::get('refund-issue-types', function () {
+        return response()->json([
+            'issue_types' => \App\Models\OrderRefund::issueTypes(),
+        ]);
+    });
 
     // Customer support / issue manager
     Route::prefix('support')->group(function () {

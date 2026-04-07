@@ -322,22 +322,27 @@ function AccountsTab() {
 
 // ─── JOBS TAB ─────────────────────────────────────────────────────────────────
 function JobsTab() {
-    const [jobs, setJobs]             = useState([]);
-    const [entities, setEntities]     = useState([]);
-    const [yelpFields, setYelpFields] = useState({});
-    const [loading, setLoading]       = useState(true);
+    const [jobs, setJobs]               = useState([]);
+    const [entities, setEntities]       = useState([]);
+    const [yelpFields, setYelpFields]   = useState({});
+    const [googleFields, setGoogleFields] = useState([]);
+    const [loading, setLoading]         = useState(true);
     const [showModal, setShowModal]   = useState(false);
     const [editTarget, setEditTarget] = useState(null);
     const [saving, setSaving]         = useState(false);
     const [formError, setFormError]   = useState('');
-    const [activeLogs, setActiveLogs] = useState({});
+    const [activeLogs, setActiveLogs] = useState({});       // yelp logs
+    const [activeGoogleLogs, setActiveGoogleLogs] = useState({}); // google logs
     const pollRef                     = useRef({});
+    const googlePollRef               = useRef({});
 
     const emptyForm = {
         name: '', entity_id: '', mode: 'smart', schedule: 'daily',
         custom_cron: '', is_active: true, auto_merge: false, max_calls_per_run: 0,
         search_columns: { term: '', address: '', city: '', state: '', zip: '', country: '', country_value: 'us' },
         column_mapping: {},
+        google_enabled: false,
+        google_column_mapping: {},
     };
     const [form, setForm] = useState(emptyForm);
     const selEnt = entities.find(e => String(e.id) === String(form.entity_id));
@@ -345,11 +350,12 @@ function JobsTab() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
+            const [j, e, yf, gf] = await Promise.all([api('jobs'), api('entities'), api('fields'), api('google/fields')]);
             const jobs = j.data ?? [];
             setJobs(jobs);
             setEntities(e.data ?? []);
             setYelpFields(yf.data ?? {});
+            setGoogleFields(gf.data ?? []);
 
             // Resume polling for any jobs already running (e.g. after page refresh)
             jobs.forEach(job => {
@@ -368,7 +374,10 @@ function JobsTab() {
 
     useEffect(() => {
         load();
-        return () => { Object.values(pollRef.current).forEach(clearInterval); };
+        return () => {
+            Object.values(pollRef.current).forEach(clearInterval);
+            Object.values(googlePollRef.current).forEach(clearInterval);
+        };
     }, [load]);
 
     const startPolling = (jobId, logId) => {
@@ -384,6 +393,39 @@ function JobsTab() {
                 }
             } catch { /* ignore */ }
         }, 2000);
+    };
+
+    const startGooglePolling = (jobId, logId) => {
+        if (googlePollRef.current[jobId]) clearInterval(googlePollRef.current[jobId]);
+        googlePollRef.current[jobId] = setInterval(async () => {
+            try {
+                const { data } = await api(`google/logs/${logId}`);
+                setActiveGoogleLogs(prev => ({ ...prev, [jobId]: data }));
+                if (!['running', 'pending'].includes(data.status)) {
+                    clearInterval(googlePollRef.current[jobId]);
+                    delete googlePollRef.current[jobId];
+                    load();
+                }
+            } catch { /* ignore */ }
+        }, 2000);
+    };
+
+    const runGoogleNow = async (job) => {
+        try {
+            const { data: log } = await api(`jobs/${job.id}/run-google`, { method: 'post' });
+            setActiveGoogleLogs(prev => ({ ...prev, [job.id]: log }));
+            if (['running', 'pending'].includes(log.status)) startGooglePolling(job.id, log.id);
+        } catch (e) { alert(e.response?.data?.error || 'Google run failed.'); }
+    };
+
+    const stopGoogleJob = async (job) => {
+        const log = activeGoogleLogs[job.id];
+        if (!log) return;
+        try {
+            await api(`google/logs/${log.id}/stop`, { method: 'post' });
+            setActiveGoogleLogs(prev => ({ ...prev, [job.id]: { ...(prev[job.id] ?? log), status: 'paused' } }));
+            load();
+        } catch (e) { alert(e.response?.data?.error || 'Stop failed.'); }
     };
 
     const runNow = async (job) => {
@@ -426,6 +468,8 @@ function JobsTab() {
                 country_value: sc.country_value || 'us',
             },
             column_mapping: { ...(job.column_mapping || {}) },
+            google_enabled: !!job.google_enabled,
+            google_column_mapping: { ...(job.google_column_mapping || {}) },
         });
         setFormError(''); setEditTarget(job); setShowModal(true);
     };
@@ -441,6 +485,9 @@ function JobsTab() {
                 is_active: form.is_active,
                 auto_merge: !!form.auto_merge,
                 max_calls_per_run: parseInt(form.max_calls_per_run) || 0,
+                google_enabled: !!form.google_enabled,
+                google_column_mapping: Object.keys(form.google_column_mapping || {}).length > 0
+                    ? form.google_column_mapping : null,
             };
             if (!editTarget) { await api('jobs', { method: 'post', data: payload }); }
             else              { await api(`jobs/${editTarget.id}`, { method: 'patch', data: payload }); }
@@ -588,17 +635,62 @@ function JobsTab() {
                                                     </>
                                                 ) : <small className="text-muted">—</small>}
                                             </td>
-                                            <td>
-                                                <div className="d-flex gap-1">
+                                                    <td>
+                                                {/* ── Google status badge ── */}
+                                                {job.google_enabled && (() => {
+                                                    const gLog = activeGoogleLogs[job.id];
+                                                    const gResume = job.google_last_processed_id ?? 0;
+                                                    const gRunning = ['running', 'pending'].includes(gLog?.status);
+                                                    const gsi = getStatus(gLog?.status);
+                                                    const gTotal = gLog?.total_rows || 0;
+                                                    const gDone = (gLog?.processed_rows || 0) + (gLog?.skipped_rows || 0);
+                                                    const gPct = gTotal > 0 ? Math.round((gDone / gTotal) * 100) : 0;
+                                                    return (
+                                                        <div className="mb-2">
+                                                            <div className="d-flex align-items-center gap-2 mb-1">
+                                                                <Icon icon="map-pin" className="text-primary fs-sm" />
+                                                                {gLog
+                                                                    ? <span className={`badge ${gsi.cls}`}>{gsi.label}</span>
+                                                                    : <span className="badge bg-secondary-subtle text-secondary">Not run</span>
+                                                                }
+                                                                {gResume > 0 && !gRunning && (
+                                                                    <small className="text-warning">⟳ Row #{gResume}</small>
+                                                                )}
+                                                            </div>
+                                                            {gRunning && gTotal > 0 && (
+                                                                <div className="d-flex align-items-center gap-2">
+                                                                    <ProgressBar now={gPct} variant="primary" animated style={{ height: 4, flex: 1 }} />
+                                                                    <small>{gPct}%</small>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+                                                <div className="d-flex gap-1 flex-wrap">
+                                                    {/* Yelp run/stop */}
                                                     {isRunning ? (
                                                         <button className="btn btn-warning btn-sm" onClick={() => stopJob(job)}>
-                                                            <Icon icon="square" className="me-1 fs-sm" />Stop
+                                                            <Icon icon="square" className="me-1 fs-sm" />Stop Yelp
                                                         </button>
                                                     ) : (
                                                         <button className="btn btn-success btn-sm" onClick={() => runNow(job)}>
-                                                            <Icon icon="player-play" className="me-1 fs-sm" />Run
+                                                            <Icon icon="player-play" className="me-1 fs-sm" />Run Yelp
                                                         </button>
                                                     )}
+                                                    {/* Google run/stop */}
+                                                    {job.google_enabled && (() => {
+                                                        const gLog = activeGoogleLogs[job.id];
+                                                        const gRunning = ['running', 'pending'].includes(gLog?.status);
+                                                        return gRunning ? (
+                                                            <button className="btn btn-warning btn-sm" onClick={() => stopGoogleJob(job)}>
+                                                                <Icon icon="square" className="me-1 fs-sm" />Stop Google
+                                                            </button>
+                                                        ) : (
+                                                            <button className="btn btn-primary btn-sm" onClick={() => runGoogleNow(job)} title="Run Google enrichment only">
+                                                                <Icon icon="map-pin" className="me-1 fs-sm" />Run Google
+                                                            </button>
+                                                        );
+                                                    })()}
                                                     <button className="btn btn-default btn-sm btn-icon" title="Edit" onClick={() => openEdit(job)}>
                                                         <Icon icon="edit" className="fs-lg" />
                                                     </button>
@@ -696,6 +788,60 @@ function JobsTab() {
                                     0 = unlimited. Each row = 2 calls. e.g. 100 = 50 rows per cron run.
                                     Job auto-pauses when limit hit and resumes next run from where it stopped.
                                 </Form.Text>
+                            </Col>
+
+                            {/* ── Google Enrichment ── */}
+                            <Col xs={12}><hr className="my-1" /></Col>
+                            <Col xs={12}>
+                                <div className="border rounded p-3" style={{ background: '#eef6ff' }}>
+                                    <Form.Check type="switch" id="googleEnabled" className="mb-2"
+                                        label={<strong>Enable Google Places enrichment</strong>}
+                                        checked={!!form.google_enabled}
+                                        onChange={e => setForm(f => ({ ...f, google_enabled: e.target.checked }))} />
+                                    {form.google_enabled && (
+                                        <>
+                                            <p className="text-muted fs-sm mb-2">
+                                                After Yelp verifies a business, Google Places data is fetched and written directly to the record.
+                                                Leave all unchecked to <strong>auto-create all</strong> <code>google_*</code> columns automatically.
+                                                Check a field only if you want to use a custom column name.
+                                            </p>
+                                            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                                                <Row className="g-2">
+                                                    {googleFields.map(gf => {
+                                                        const checked = gf.key in (form.google_column_mapping || {});
+                                                        const dbCol   = (form.google_column_mapping || {})[gf.key] ?? gf.key;
+                                                        return (
+                                                            <Col key={gf.key} md={6}>
+                                                                <div className={`d-flex align-items-start gap-2 p-2 rounded border ${checked ? 'border-primary bg-primary-subtle' : ''}`}>
+                                                                    <Form.Check type="checkbox" id={`gf_${gf.key}`}
+                                                                        checked={checked}
+                                                                        onChange={() => setForm(f => {
+                                                                            const gcm = { ...(f.google_column_mapping || {}) };
+                                                                            if (gf.key in gcm) delete gcm[gf.key];
+                                                                            else gcm[gf.key] = gf.key;
+                                                                            return { ...f, google_column_mapping: gcm };
+                                                                        })}
+                                                                        className="mt-1 flex-shrink-0" />
+                                                                    <label htmlFor={`gf_${gf.key}`} className="flex-shrink-0" style={{ cursor: 'pointer', width: 140 }}>
+                                                                        <span className="fs-sm fw-semibold d-block">{gf.label}</span>
+                                                                        <span className="badge bg-secondary-subtle text-secondary">{gf.type}</span>
+                                                                    </label>
+                                                                    {checked && (
+                                                                        <Form.Control size="sm" className="font-monospace" value={dbCol}
+                                                                            onChange={e => setForm(f => ({
+                                                                                ...f,
+                                                                                google_column_mapping: { ...(f.google_column_mapping || {}), [gf.key]: e.target.value }
+                                                                            }))} />
+                                                                    )}
+                                                                </div>
+                                                            </Col>
+                                                        );
+                                                    })}
+                                                </Row>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </Col>
 
                             {selEnt && (<>
@@ -1424,6 +1570,333 @@ function LogsTab() {
     );
 }
 
+// ─── GOOGLE LOGS TAB ─────────────────────────────────────────────────────────
+function GoogleLogsTab() {
+    const [logs, setLogs]         = useState([]);
+    const [jobs, setJobs]         = useState([]);
+    const [jobFilter, setJobFilter] = useState('');
+    const [loading, setLoading]   = useState(true);
+    const pollRef                 = useRef(null);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        const [l, j] = await Promise.all([
+            api(`google/logs${jobFilter ? `?job_id=${jobFilter}` : ''}`),
+            api('jobs'),
+        ]);
+        setLogs(l.data.data || l.data);
+        setJobs(j.data ?? []);
+        setLoading(false);
+        return l.data.data || l.data;
+    }, [jobFilter]);
+
+    useEffect(() => {
+        load().then(logList => {
+            const hasActive = (logList || []).some(l => ['running', 'pending'].includes(l.status));
+            if (hasActive && !pollRef.current) {
+                pollRef.current = setInterval(async () => {
+                    const { data } = await api(`google/logs${jobFilter ? `?job_id=${jobFilter}` : ''}`);
+                    const list = data.data || data;
+                    setLogs(list);
+                    if (!list.some(l => ['running', 'pending'].includes(l.status))) {
+                        clearInterval(pollRef.current);
+                        pollRef.current = null;
+                    }
+                }, 3000);
+            }
+        });
+        return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+    }, [load, jobFilter]);
+
+    const stopLog = async (log) => {
+        await api(`google/logs/${log.id}/stop`, { method: 'post' });
+        load();
+    };
+
+    return (
+        <Card>
+            <CardHeader className="border-light justify-content-between">
+                <h5 className="card-title mb-0">Google Enrichment Logs</h5>
+                <div className="d-flex gap-2 align-items-center">
+                    <select className="form-select form-select-sm" style={{ width: 200 }} value={jobFilter} onChange={e => setJobFilter(e.target.value)}>
+                        <option value="">All Jobs</option>
+                        {jobs.filter(j => j.google_enabled).map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+                    </select>
+                    <button className="btn btn-light btn-sm" onClick={load}>
+                        <Icon icon="refresh" className="fs-sm" />
+                    </button>
+                </div>
+            </CardHeader>
+
+            {loading ? (
+                <CardBody className="text-center py-5"><Spinner animation="border" size="sm" /></CardBody>
+            ) : logs.length === 0 ? (
+                <CardBody className="text-center text-muted py-5">No Google runs yet. Click "Run Google" on a job to start.</CardBody>
+            ) : (
+                <div className="table-responsive">
+                    <table className="table table-hover mb-0 align-middle">
+                        <thead className="table-light">
+                            <tr>
+                                <th>Job</th>
+                                <th>Status</th>
+                                <th>Progress</th>
+                                <th>Results</th>
+                                <th>New Columns</th>
+                                <th>Started</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {logs.map(log => {
+                                const si     = getStatus(log.status);
+                                const total  = log.total_rows || 0;
+                                const done   = (log.processed_rows || 0) + (log.skipped_rows || 0);
+                                const pct    = total > 0 ? Math.round((done / total) * 100) : 0;
+                                const active = ['running', 'pending'].includes(log.status);
+                                return (
+                                    <tr key={log.id}>
+                                        <td><strong>{log.job?.name ?? `Job #${log.job_id}`}</strong></td>
+                                        <td><span className={`badge ${si.cls}`}>{si.label}</span></td>
+                                        <td style={{ minWidth: 150 }}>
+                                            {total > 0 ? (
+                                                <div className="d-flex align-items-center gap-2">
+                                                    <ProgressBar now={pct} variant={active ? 'primary' : 'success'}
+                                                        animated={active} style={{ height: 5, flex: 1 }} />
+                                                    <small className="fw-semibold">{pct}%</small>
+                                                </div>
+                                            ) : '—'}
+                                        </td>
+                                        <td>
+                                            <small className="d-flex flex-wrap gap-2">
+                                                <span className="text-success">✓ {log.processed_rows}</span>
+                                                {log.failed_rows > 0 && <span className="text-danger">✗ {log.failed_rows}</span>}
+                                                {log.skipped_rows > 0 && <span className="text-muted">— {log.skipped_rows}</span>}
+                                                <span className="text-muted">/ {total}</span>
+                                            </small>
+                                        </td>
+                                        <td>
+                                            {(log.new_columns_added || []).length > 0 ? (
+                                                <div className="d-flex flex-wrap gap-1">
+                                                    {log.new_columns_added.map(c => (
+                                                        <span key={c} className="badge bg-warning-subtle text-warning">+{c}</span>
+                                                    ))}
+                                                </div>
+                                            ) : <span className="text-muted">—</span>}
+                                        </td>
+                                        <td><small>{log.started_at ? new Date(log.started_at).toLocaleString() : '—'}</small></td>
+                                        <td>
+                                            {active && (
+                                                <button className="btn btn-warning btn-sm" onClick={() => stopLog(log)}>
+                                                    <Icon icon="square" className="me-1 fs-sm" />Stop
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </Card>
+    );
+}
+
+// ─── GOOGLE ACCOUNTS TAB ─────────────────────────────────────────────────────
+function GoogleAccountsTab() {
+    const [accounts, setAccounts]         = useState([]);
+    const [loading, setLoading]           = useState(true);
+    const [showModal, setShowModal]       = useState(false);
+    const [editTarget, setEditTarget]     = useState(null);
+    const [form, setForm]                 = useState({ name: '', api_key: '', daily_limit: 1000, is_active: true });
+    const [saving, setSaving]             = useState(false);
+    const [formError, setFormError]       = useState('');
+    const [verifying, setVerifying]       = useState(false);
+    const [verifyResult, setVerifyResult] = useState(null);
+    const [revealing, setRevealing]       = useState(false);
+    const [keyRevealed, setKeyRevealed]   = useState(false);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        const { data } = await api('google/accounts');
+        setAccounts(data);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    const openAdd = () => {
+        setForm({ name: '', api_key: '', daily_limit: 1000, is_active: true });
+        setFormError(''); setVerifyResult(null); setEditTarget(null); setKeyRevealed(false); setShowModal(true);
+    };
+    const openEdit = (a) => {
+        setForm({ name: a.name, api_key: '', daily_limit: a.daily_limit, is_active: a.is_active });
+        setFormError(''); setVerifyResult(null); setEditTarget(a); setKeyRevealed(false); setShowModal(true);
+    };
+
+    const revealKey = async () => {
+        setRevealing(true);
+        try {
+            const { data } = await api(`google/accounts/${editTarget.id}/reveal`, { method: 'post' });
+            setForm(f => ({ ...f, api_key: data.api_key }));
+            setKeyRevealed(true);
+        } catch { setFormError('Could not reveal key.'); }
+        finally { setRevealing(false); }
+    };
+
+    const verifyKey = async () => {
+        setVerifying(true); setVerifyResult(null);
+        try {
+            const payload = editTarget ? { account_id: editTarget.id } : { api_key: form.api_key };
+            const { data } = await api('google/accounts/verify', { method: 'post', data: payload });
+            setVerifyResult({ ok: data.status === 'valid', msg: data.message });
+        } catch (e) {
+            setVerifyResult({ ok: false, msg: e.response?.data?.message || 'Verification failed.' });
+        } finally { setVerifying(false); }
+    };
+
+    const save = async (e) => {
+        e.preventDefault(); setSaving(true); setFormError('');
+        try {
+            if (!editTarget) { await api('google/accounts', { method: 'post', data: form }); }
+            else {
+                const payload = { ...form };
+                if (!payload.api_key) delete payload.api_key;
+                await api(`google/accounts/${editTarget.id}`, { method: 'patch', data: payload });
+            }
+            setShowModal(false); load();
+        } catch (e) {
+            setFormError(e.response?.data?.message || 'Save failed.');
+        } finally { setSaving(false); }
+    };
+
+    const del = async (a) => {
+        if (!confirm(`Delete "${a.name}"?`)) return;
+        await api(`google/accounts/${a.id}`, { method: 'delete' }); load();
+    };
+
+    return (
+        <>
+            <Card>
+                <CardHeader className="border-light justify-content-between">
+                    <h5 className="card-title mb-0">Google Places API Accounts</h5>
+                    <button className="btn btn-primary btn-sm" onClick={openAdd}>
+                        <Icon icon="plus" className="me-1" /> Add Account
+                    </button>
+                </CardHeader>
+
+                {loading ? (
+                    <CardBody className="text-center py-5">
+                        <Spinner animation="border" size="sm" className="text-primary" />
+                    </CardBody>
+                ) : accounts.length === 0 ? (
+                    <CardBody className="text-center text-muted py-5">
+                        No Google accounts yet. Add your Google Places API key to enable Google enrichment on Yelp jobs.
+                    </CardBody>
+                ) : (
+                    <div className="table-responsive">
+                        <table className="table table-hover mb-0 align-middle">
+                            <thead className="table-light">
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Daily Limit</th>
+                                    <th>Used Today</th>
+                                    <th>Remaining</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {accounts.map(a => (
+                                    <tr key={a.id}>
+                                        <td><strong>{a.name}</strong></td>
+                                        <td>{a.daily_limit}</td>
+                                        <td>{a.requests_today}</td>
+                                        <td>{a.remaining_requests}</td>
+                                        <td>
+                                            <span className={`badge ${a.is_active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}`}>
+                                                {a.is_active ? 'Active' : 'Inactive'}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div className="d-flex gap-1">
+                                                <button className="btn btn-default btn-sm btn-icon" title="Edit" onClick={() => openEdit(a)}>
+                                                    <Icon icon="edit" className="fs-lg" />
+                                                </button>
+                                                <button className="btn btn-default btn-sm btn-icon" title="Delete" onClick={() => del(a)}>
+                                                    <Icon icon="trash" className="fs-lg text-danger" />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+
+            <Modal show={showModal} onHide={() => setShowModal(false)} centered>
+                <ModalHeader closeButton>
+                    <ModalTitle as="h5">{editTarget ? `Edit: ${editTarget.name}` : 'Add Google Account'}</ModalTitle>
+                </ModalHeader>
+                <Form onSubmit={save}>
+                    <ModalBody>
+                        {formError && <Alert variant="danger" className="py-2 mb-3">{formError}</Alert>}
+                        <Form.Group className="mb-3">
+                            <Form.Label>Account Name</Form.Label>
+                            <Form.Control value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                                placeholder="e.g. Main Google Key" required />
+                        </Form.Group>
+                        <Form.Group className="mb-3">
+                            <Form.Label>Google Places API Key {editTarget && !keyRevealed && <small className="text-muted">(leave blank to keep existing)</small>}</Form.Label>
+                            {editTarget && !keyRevealed ? (
+                                <div className="d-flex gap-2">
+                                    <Form.Control value="••••••••••••••••••••" readOnly className="font-monospace text-muted" />
+                                    <button type="button" className="btn btn-light btn-sm" onClick={revealKey} disabled={revealing}>
+                                        {revealing ? <Spinner animation="border" size="sm" /> : 'Reveal'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="d-flex gap-2">
+                                    <Form.Control className="font-monospace" value={form.api_key}
+                                        onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+                                        placeholder="AIza..." required={!editTarget} />
+                                    {editTarget && keyRevealed && (
+                                        <button type="button" className="btn btn-light btn-sm" onClick={() => { setKeyRevealed(false); setForm(f => ({ ...f, api_key: '' })); }}>Hide</button>
+                                    )}
+                                </div>
+                            )}
+                        </Form.Group>
+                        <Form.Group className="mb-3">
+                            <Form.Label>Daily Limit</Form.Label>
+                            <Form.Control type="number" min="1" value={form.daily_limit}
+                                onChange={e => setForm(f => ({ ...f, daily_limit: parseInt(e.target.value) || 1000 }))} />
+                            <Form.Text className="text-muted">Google Places (New) free tier: 1,000 calls/day</Form.Text>
+                        </Form.Group>
+                        <Form.Check type="switch" id="gAccActive" label="Active"
+                            checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+                        {verifyResult && (
+                            <Alert variant={verifyResult.ok ? 'success' : 'danger'} className="py-2 mt-3 mb-0">
+                                {verifyResult.msg}
+                            </Alert>
+                        )}
+                    </ModalBody>
+                    <ModalFooter>
+                        <button type="button" className="btn btn-light" onClick={() => setShowModal(false)}>Cancel</button>
+                        <button type="button" className="btn btn-secondary" onClick={verifyKey} disabled={verifying || (!form.api_key && !editTarget)}>
+                            {verifying ? <><Spinner animation="border" size="sm" className="me-1" />Testing…</> : 'Test Key'}
+                        </button>
+                        <button type="submit" className="btn btn-primary" disabled={saving || !form.name}>
+                            {saving ? <><Spinner animation="border" size="sm" className="me-1" />Saving…</> : 'Save Account'}
+                        </button>
+                    </ModalFooter>
+                </Form>
+            </Modal>
+        </>
+    );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function YelpPage() {
     return (
@@ -1444,12 +1917,22 @@ export default function YelpPage() {
                                 </Nav.Item>
                                 <Nav.Item>
                                     <Nav.Link eventKey="accounts">
-                                        <Icon icon="key" className="me-1" /> API Accounts
+                                        <Icon icon="key" className="me-1" /> Yelp Accounts
+                                    </Nav.Link>
+                                </Nav.Item>
+                                <Nav.Item>
+                                    <Nav.Link eventKey="google">
+                                        <Icon icon="map-pin" className="me-1" /> Google Accounts
+                                    </Nav.Link>
+                                </Nav.Item>
+                                <Nav.Item>
+                                    <Nav.Link eventKey="google-logs">
+                                        <Icon icon="map-search" className="me-1" /> Google Logs
                                     </Nav.Link>
                                 </Nav.Item>
                                 <Nav.Item>
                                     <Nav.Link eventKey="logs">
-                                        <Icon icon="file-text" className="me-1" /> Run Logs
+                                        <Icon icon="file-text" className="me-1" /> Yelp Logs
                                     </Nav.Link>
                                 </Nav.Item>
                             </Nav>
@@ -1462,9 +1945,11 @@ export default function YelpPage() {
                         </div>
 
                         <Tab.Content>
-                            <Tab.Pane eventKey="jobs">     <JobsTab />     </Tab.Pane>
-                            <Tab.Pane eventKey="accounts"> <AccountsTab /> </Tab.Pane>
-                            <Tab.Pane eventKey="logs">     <LogsTab />     </Tab.Pane>
+                            <Tab.Pane eventKey="jobs">        <JobsTab />            </Tab.Pane>
+                            <Tab.Pane eventKey="accounts">    <AccountsTab />         </Tab.Pane>
+                            <Tab.Pane eventKey="google">      <GoogleAccountsTab />   </Tab.Pane>
+                            <Tab.Pane eventKey="google-logs"> <GoogleLogsTab />       </Tab.Pane>
+                            <Tab.Pane eventKey="logs">        <LogsTab />             </Tab.Pane>
                         </Tab.Content>
 
                     </Tab.Container>

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\SectionBuilder;
 
 use App\Http\Controllers\Controller;
+use App\Models\GoogleAccount;
+use App\Models\GoogleJobLog;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\SectionEntity;
@@ -14,6 +16,7 @@ use App\Models\YelpMatchDiff;
 use App\Models\YelpMatchMenuItem;
 use App\Models\YelpNotFoundBusiness;
 use App\Models\YelpRowLog;
+use App\Services\GoogleService;
 use App\Services\YelpService;
 use App\Services\YelpSyncService;
 use Illuminate\Http\JsonResponse;
@@ -113,6 +116,179 @@ class YelpController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Google Accounts
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function googleAccountsIndex(): JsonResponse
+    {
+        $accounts = GoogleAccount::all()->map(function ($a) {
+            $a->resetIfStale();
+            $a->refresh();
+            return array_merge($a->toArray(), [
+                'api_key'            => '•••••••••••••••',
+                'remaining_requests' => $a->remaining_requests,
+            ]);
+        });
+
+        return response()->json($accounts);
+    }
+
+    public function googleAccountsStore(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name'        => ['required', 'string', 'max:255'],
+            'api_key'     => ['required', 'string'],
+            'daily_limit' => ['required', 'integer', 'min:1', 'max:100000'],
+            'is_active'   => ['boolean'],
+        ]);
+
+        $account = GoogleAccount::create($data);
+
+        return response()->json(array_merge($account->toArray(), ['api_key' => '•••••••••••••••']), 201);
+    }
+
+    public function googleAccountsUpdate(Request $request, GoogleAccount $account): JsonResponse
+    {
+        $data = $request->validate([
+            'name'        => ['sometimes', 'string', 'max:255'],
+            'api_key'     => ['sometimes', 'string'],
+            'daily_limit' => ['sometimes', 'integer', 'min:1', 'max:100000'],
+            'is_active'   => ['sometimes', 'boolean'],
+        ]);
+
+        $account->update($data);
+        $account->resetIfStale();
+        $account->refresh();
+
+        return response()->json(array_merge($account->toArray(), [
+            'api_key'            => '•••••••••••••••',
+            'remaining_requests' => $account->remaining_requests,
+        ]));
+    }
+
+    public function googleAccountsDestroy(GoogleAccount $account): JsonResponse
+    {
+        $account->delete();
+        return response()->json(['status' => 'deleted']);
+    }
+
+    public function googleAccountsReveal(GoogleAccount $account): JsonResponse
+    {
+        return response()->json(['api_key' => $account->api_key]);
+    }
+
+    public function googleAccountsVerify(Request $request): JsonResponse
+    {
+        $apiKey = null;
+
+        if ($request->filled('account_id')) {
+            $account = GoogleAccount::findOrFail($request->account_id);
+            $apiKey  = $account->api_key;
+        } elseif ($request->filled('api_key')) {
+            $apiKey = $request->api_key;
+        } else {
+            return response()->json(['error' => 'Provide account_id or api_key.'], 422);
+        }
+
+        $google = new GoogleService($apiKey);
+        if ($google->testApiKey()) {
+            return response()->json(['status' => 'valid', 'message' => 'Google Places API key is working correctly.']);
+        }
+
+        return response()->json(['status' => 'invalid', 'message' => 'Google Places API key is invalid or has no quota.'], 422);
+    }
+
+    public function googleFields(): JsonResponse
+    {
+        return response()->json(GoogleService::availableFields());
+    }
+
+    /**
+     * Start a Google-only enrichment run for a job.
+     * Runs retroactively over ALL rows from google_last_processed_id.
+     */
+    public function jobsRunGoogle(YelpJob $job): JsonResponse
+    {
+        if (!$job->google_enabled) {
+            return response()->json(['error' => 'Google enrichment is not enabled on this job.'], 422);
+        }
+
+        // Prevent duplicate runs
+        $existing = GoogleJobLog::where('job_id', $job->id)
+            ->whereIn('status', ['running', 'pending'])
+            ->latest()
+            ->first();
+
+        if ($existing) {
+            $stuckThreshold = now()->subMinutes(30);
+            $isStuck = $existing->started_at && $existing->started_at->lt($stuckThreshold);
+            if (!$isStuck) {
+                return response()->json(['error' => 'Google job is already running.', 'log' => $existing], 409);
+            }
+            $existing->update([
+                'status'        => 'failed',
+                'error_message' => 'Job was stuck and automatically reset.',
+                'completed_at'  => now(),
+            ]);
+        }
+
+        $hasQuota = GoogleAccount::where('is_active', true)->get()
+            ->contains(fn ($a) => $a->hasQuota());
+
+        if (!$hasQuota) {
+            return response()->json(['error' => 'No Google account has remaining quota for today.'], 422);
+        }
+
+        $log = GoogleJobLog::create([
+            'job_id'     => $job->id,
+            'status'     => 'pending',
+            'started_at' => now(),
+        ]);
+
+        app()->terminating(function () use ($job, $log) {
+            try {
+                (new YelpSyncService())->runGoogle($job, $log);
+            } catch (\Throwable $e) {
+                $log->update([
+                    'status'        => 'failed',
+                    'error_message' => $e->getMessage(),
+                    'completed_at'  => now(),
+                ]);
+            }
+        });
+
+        return response()->json($log->fresh());
+    }
+
+    public function googleLogsIndex(Request $request): JsonResponse
+    {
+        $query = GoogleJobLog::with(['job:id,name', 'account:id,name'])->latest();
+
+        if ($request->filled('job_id')) {
+            $query->where('job_id', $request->job_id);
+        }
+
+        return response()->json($query->paginate(50));
+    }
+
+    public function googleLogProgress(GoogleJobLog $log): JsonResponse
+    {
+        $log->refresh();
+        return response()->json($log);
+    }
+
+    public function googleLogStop(GoogleJobLog $log): JsonResponse
+    {
+        $log->update([
+            'stop_requested_at' => now()->toISOString(),
+            'status'            => 'paused',
+            'completed_at'      => now()->toISOString(),
+        ]);
+
+        return response()->json(['status' => 'stopped']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Jobs
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -135,12 +311,14 @@ class YelpController extends Controller
             'search_columns.zip'           => ['sometimes', 'nullable', 'string'],
             'search_columns.country'       => ['sometimes', 'nullable', 'string'],
             'search_columns.country_value' => ['sometimes', 'nullable', 'string'],
-            'column_mapping'      => ['required', 'array', 'min:1'],
-            'schedule'            => ['required', 'string'],
-            'mode'                => ['sometimes', 'in:smart,full,verify_only'],
-            'auto_merge'          => ['sometimes', 'boolean'],
-            'is_active'           => ['boolean'],
-            'max_calls_per_run'   => ['sometimes', 'integer', 'min:0'],
+            'column_mapping'        => ['required', 'array', 'min:1'],
+            'schedule'              => ['required', 'string'],
+            'mode'                  => ['sometimes', 'in:smart,full,verify_only'],
+            'auto_merge'            => ['sometimes', 'boolean'],
+            'google_enabled'        => ['sometimes', 'boolean'],
+            'google_column_mapping' => ['sometimes', 'nullable', 'array'],
+            'is_active'             => ['boolean'],
+            'max_calls_per_run'     => ['sometimes', 'integer', 'min:0'],
         ]);
 
         $job = YelpJob::create($data);
@@ -162,12 +340,14 @@ class YelpController extends Controller
             'search_columns.zip'           => ['sometimes', 'nullable', 'string'],
             'search_columns.country'       => ['sometimes', 'nullable', 'string'],
             'search_columns.country_value' => ['sometimes', 'nullable', 'string'],
-            'column_mapping'    => ['sometimes', 'array'],
-            'schedule'          => ['sometimes', 'string'],
-            'mode'              => ['sometimes', 'in:smart,full,verify_only'],
-            'auto_merge'        => ['sometimes', 'boolean'],
-            'is_active'         => ['sometimes', 'boolean'],
-            'max_calls_per_run' => ['sometimes', 'integer', 'min:0'],
+            'column_mapping'        => ['sometimes', 'array'],
+            'schedule'              => ['sometimes', 'string'],
+            'mode'                  => ['sometimes', 'in:smart,full,verify_only'],
+            'auto_merge'            => ['sometimes', 'boolean'],
+            'google_enabled'        => ['sometimes', 'boolean'],
+            'google_column_mapping' => ['sometimes', 'nullable', 'array'],
+            'is_active'             => ['sometimes', 'boolean'],
+            'max_calls_per_run'     => ['sometimes', 'integer', 'min:0'],
         ]);
 
         $job->update($data);

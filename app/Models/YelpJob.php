@@ -17,6 +17,9 @@ class YelpJob extends Model
         'schedule',
         'mode',
         'auto_merge',
+        'google_enabled',
+        'google_column_mapping',
+        'google_last_processed_id',
         'is_active',
         'last_run_at',
         'next_run_at',
@@ -25,14 +28,17 @@ class YelpJob extends Model
     ];
 
     protected $casts = [
-        'search_columns'    => 'array',
-        'column_mapping'    => 'array',
-        'is_active'         => 'boolean',
-        'auto_merge'        => 'boolean',
-        'last_run_at'       => 'datetime',
-        'next_run_at'       => 'datetime',
-        'last_processed_id' => 'integer',
-        'max_calls_per_run' => 'integer',
+        'search_columns'        => 'array',
+        'column_mapping'        => 'array',
+        'google_column_mapping' => 'array',
+        'is_active'             => 'boolean',
+        'auto_merge'            => 'boolean',
+        'google_enabled'            => 'boolean',
+        'google_last_processed_id'  => 'integer',
+        'last_run_at'               => 'datetime',
+        'next_run_at'           => 'datetime',
+        'last_processed_id'     => 'integer',
+        'max_calls_per_run'     => 'integer',
     ];
 
     public function entity(): BelongsTo

@@ -177,6 +177,7 @@ function JobsTab() {
     const [jobs, setJobs] = useState([]);
     const [entities, setEntities] = useState([]);
     const [yelpFields, setYelpFields] = useState({});
+    const [googleFields, setGoogleFields] = useState([]);
     const [loading, setLoading] = useState(true);
     const [modal, setModal] = useState(null);
     const [saving, setSaving] = useState(false);
@@ -192,6 +193,8 @@ function JobsTab() {
         schedule: 'daily',
         custom_cron: '',
         auto_merge: false,
+        google_enabled: false,
+        google_column_mapping: {},
         is_active: true,
     };
     const [form, setForm] = useState(empty);
@@ -199,10 +202,11 @@ function JobsTab() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        const [j, e, yf] = await Promise.all([api('jobs'), api('entities'), api('fields')]);
+        const [j, e, yf, gf] = await Promise.all([api('jobs'), api('entities'), api('fields'), api('google/fields')]);
         setJobs(j.data);
         setEntities(e.data);
         setYelpFields(yf.data);
+        setGoogleFields(gf.data || []);
         setLoading(false);
         return j.data;
     }, []);
@@ -247,6 +251,8 @@ function JobsTab() {
             schedule: isCustom ? 'custom' : job.schedule,
             custom_cron: isCustom ? job.schedule : '',
             auto_merge: !!job.auto_merge,
+            google_enabled: !!job.google_enabled,
+            google_column_mapping: job.google_column_mapping || {},
             is_active: job.is_active,
         });
         setModal(job);
@@ -263,6 +269,8 @@ function JobsTab() {
                 column_mapping: form.column_mapping,
                 schedule: form.schedule === 'custom' ? form.custom_cron : form.schedule,
                 auto_merge: form.auto_merge,
+                google_enabled: form.google_enabled,
+                google_column_mapping: Object.keys(form.google_column_mapping).length > 0 ? form.google_column_mapping : null,
                 is_active: form.is_active,
             };
             if (modal === 'add') await api('jobs', { method: 'post', data: payload });
@@ -325,7 +333,7 @@ function JobsTab() {
             {loading ? <p className="text-sm text-gray-500">Loading...</p> : (
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                     <thead className="bg-gray-50">
-                        <tr>{['Job', 'Table', 'Schedule', 'Auto Merge', 'Status', ''].map(h => <th key={h} className="px-4 py-2 text-left font-semibold text-gray-700">{h}</th>)}</tr>
+                        <tr>{['Job', 'Table', 'Schedule', 'Auto Merge', 'Google', 'Status', ''].map(h => <th key={h} className="px-4 py-2 text-left font-semibold text-gray-700">{h}</th>)}</tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 bg-white">
                         {jobs.map(job => {
@@ -337,6 +345,7 @@ function JobsTab() {
                                     <td className="px-4 py-2"><code className="text-xs bg-gray-100 px-1 py-0.5 rounded">{job.entity?.table_name}</code></td>
                                     <td className="px-4 py-2">{job.schedule}</td>
                                     <td className="px-4 py-2"><Badge color={job.auto_merge ? 'green' : 'yellow'}>{job.auto_merge ? 'On' : 'Manual'}</Badge></td>
+                                    <td className="px-4 py-2"><Badge color={job.google_enabled ? 'blue' : 'gray'}>{job.google_enabled ? 'On' : 'Off'}</Badge></td>
                                     <td className="px-4 py-2"><Badge color={{ completed: 'green', failed: 'red', running: 'blue', paused: 'yellow', pending: 'gray' }[log?.status] ?? 'gray'}>{log?.status ?? 'never'}</Badge></td>
                                     <td className="px-4 py-2 flex gap-1">
                                         {isActive
@@ -414,6 +423,48 @@ function JobsTab() {
                         </select>
                         {form.schedule === 'custom' && <input className="w-full border rounded-md px-3 py-2 text-sm font-mono" value={form.custom_cron} onChange={e => setForm(f => ({ ...f, custom_cron: e.target.value }))} placeholder="0 6 * * *" />}
                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.auto_merge} onChange={e => setForm(f => ({ ...f, auto_merge: e.target.checked }))} /> Auto merge</label>
+
+                        {/* ── Google Enrichment ── */}
+                        <div className="border rounded-lg p-4 bg-blue-50 space-y-3">
+                            <label className="text-sm font-medium text-blue-900 flex items-center gap-2">
+                                <input type="checkbox" checked={form.google_enabled} onChange={e => setForm(f => ({ ...f, google_enabled: e.target.checked }))} />
+                                Enable Google Places enrichment
+                            </label>
+                            {form.google_enabled && (
+                                <div>
+                                    <p className="text-xs text-blue-700 mb-2">
+                                        After Yelp verifies each business, Google Places data will be fetched and written directly to the record.
+                                        Leave all unchecked to auto-create <code>google_*</code> columns with every available field.
+                                        Check individual fields to use custom column names instead.
+                                    </p>
+                                    <div className="max-h-56 overflow-y-auto space-y-1 bg-white border rounded p-2">
+                                        {googleFields.map(gf => {
+                                            const checked = gf.key in form.google_column_mapping;
+                                            const dbCol = form.google_column_mapping[gf.key] ?? gf.key;
+                                            return (
+                                                <div key={gf.key} className="flex items-center gap-2">
+                                                    <input type="checkbox" checked={checked} onChange={() => setForm(f => {
+                                                        const gcm = { ...f.google_column_mapping };
+                                                        if (gcm[gf.key]) delete gcm[gf.key];
+                                                        else gcm[gf.key] = gf.key;
+                                                        return { ...f, google_column_mapping: gcm };
+                                                    })} />
+                                                    <span className="text-xs w-52 text-gray-700">{gf.label}</span>
+                                                    {checked && (
+                                                        <input
+                                                            className="flex-1 border rounded px-2 py-0.5 text-xs font-mono"
+                                                            value={dbCol}
+                                                            onChange={e => setForm(f => ({ ...f, google_column_mapping: { ...f.google_column_mapping, [gf.key]: e.target.value } }))}
+                                                        />
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} /> Active</label>
                         <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setModal(null)}>Cancel</Btn><Btn onClick={save} disabled={saving || !form.entity_id || !form.name || !form.search_columns.term}>{saving ? 'Saving...' : 'Save Job'}</Btn></div>
                     </div>
@@ -645,10 +696,156 @@ function ReconciliationTab() {
     );
 }
 
+function GoogleAccountsTab() {
+    const [accounts, setAccounts] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [modal, setModal] = useState(null);
+    const [form, setForm] = useState({ name: '', api_key: '', daily_limit: 1000, is_active: true });
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const [revealing, setRevealing] = useState(false);
+    const [keyVisible, setKeyVisible] = useState(false);
+    const [verifying, setVerifying] = useState(false);
+    const [verifyResult, setVerifyResult] = useState(null);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        const { data } = await api('google/accounts');
+        setAccounts(data);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    const openEdit = (acc) => {
+        setForm({ name: acc.name, api_key: '', daily_limit: acc.daily_limit, is_active: acc.is_active });
+        setKeyVisible(false);
+        setVerifyResult(null);
+        setModal(acc);
+    };
+
+    const revealKey = async () => {
+        setRevealing(true);
+        try {
+            const { data } = await api(`google/accounts/${modal.id}/reveal`, { method: 'post' });
+            setForm(f => ({ ...f, api_key: data.api_key }));
+            setKeyVisible(true);
+        } catch {
+            setError('Could not reveal API key.');
+        } finally {
+            setRevealing(false);
+        }
+    };
+
+    const verifyKey = async () => {
+        setVerifying(true);
+        setVerifyResult(null);
+        try {
+            const payload = modal === 'add' ? { api_key: form.api_key } : { account_id: modal.id };
+            const { data } = await api('google/accounts/verify', { method: 'post', data: payload });
+            setVerifyResult({ ok: data.status === 'valid', msg: data.message });
+        } catch (e) {
+            setVerifyResult({ ok: false, msg: e.response?.data?.message || 'Verification failed.' });
+        } finally {
+            setVerifying(false);
+        }
+    };
+
+    const save = async () => {
+        setSaving(true);
+        setError('');
+        try {
+            if (modal === 'add') {
+                await api('google/accounts', { method: 'post', data: form });
+            } else {
+                const payload = { ...form };
+                if (!payload.api_key) delete payload.api_key;
+                await api(`google/accounts/${modal.id}`, { method: 'patch', data: payload });
+            }
+            setModal(null);
+            load();
+        } catch (e) {
+            setError(e.response?.data?.message || 'Save failed.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-4">
+                <p className="text-sm text-gray-600">Google Places API keys used to enrich Yelp-verified businesses.</p>
+                <Btn onClick={() => { setForm({ name: '', api_key: '', daily_limit: 1000, is_active: true }); setKeyVisible(false); setVerifyResult(null); setModal('add'); }}>+ Add Account</Btn>
+            </div>
+            {loading ? <p className="text-sm text-gray-500">Loading...</p> : (
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead className="bg-gray-50"><tr>{['Name', 'Daily Limit', 'Used', 'Remaining', 'Status', ''].map(h => <th key={h} className="px-4 py-2 text-left font-semibold text-gray-700">{h}</th>)}</tr></thead>
+                    <tbody className="divide-y divide-gray-200 bg-white">
+                        {accounts.map(acc => (
+                            <tr key={acc.id}>
+                                <td className="px-4 py-2 font-medium">{acc.name}</td>
+                                <td className="px-4 py-2">{acc.daily_limit}</td>
+                                <td className="px-4 py-2">{acc.requests_today}</td>
+                                <td className="px-4 py-2">{acc.remaining_requests}</td>
+                                <td className="px-4 py-2"><Badge color={acc.is_active ? 'green' : 'gray'}>{acc.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                                <td className="px-4 py-2 flex gap-2">
+                                    <Btn variant="ghost" onClick={() => openEdit(acc)}>Edit</Btn>
+                                    <Btn variant="danger" onClick={async () => { if (confirm(`Delete "${acc.name}"?`)) { await api(`google/accounts/${acc.id}`, { method: 'delete' }); load(); } }}>Delete</Btn>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+
+            {modal && (
+                <Modal title={modal === 'add' ? 'Add Google Account' : `Edit: ${modal.name}`} onClose={() => setModal(null)}>
+                    {error && <p className="mb-3 text-red-600 text-sm">{error}</p>}
+                    <div className="space-y-4">
+                        <input className="w-full border rounded-md px-3 py-2 text-sm" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Account name" />
+                        <div>
+                            <label className="block text-xs text-gray-500 mb-1">
+                                Google Places API Key {modal !== 'add' && !keyVisible && <span className="text-gray-400">(leave blank to keep existing)</span>}
+                            </label>
+                            {modal !== 'add' && !keyVisible ? (
+                                <div className="flex gap-2">
+                                    <div className="flex-1 border rounded-md px-3 py-2 text-sm font-mono bg-gray-50 text-gray-400 tracking-widest">••••••••••••••••••••</div>
+                                    <Btn variant="ghost" onClick={revealKey} disabled={revealing}>{revealing ? 'Loading...' : 'Reveal Key'}</Btn>
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <input
+                                        className="flex-1 border rounded-md px-3 py-2 text-sm font-mono"
+                                        type="text"
+                                        value={form.api_key}
+                                        onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+                                        placeholder={modal === 'add' ? 'Enter Google Places API key' : 'Enter new key to replace'}
+                                        autoFocus={keyVisible}
+                                    />
+                                    {modal !== 'add' && <Btn variant="ghost" onClick={() => { setKeyVisible(false); setForm(f => ({ ...f, api_key: '' })); }}>Hide</Btn>}
+                                </div>
+                            )}
+                        </div>
+                        <input type="number" min="1" className="w-full border rounded-md px-3 py-2 text-sm" value={form.daily_limit} onChange={e => setForm(f => ({ ...f, daily_limit: parseInt(e.target.value, 10) || 1000 }))} placeholder="Daily limit" />
+                        <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} /> Active</label>
+                        {verifyResult && <p className={`text-sm ${verifyResult.ok ? 'text-green-700' : 'text-red-600'}`}>{verifyResult.msg}</p>}
+                        <div className="flex justify-end gap-2">
+                            <Btn variant="ghost" onClick={() => setModal(null)}>Cancel</Btn>
+                            <Btn variant="ghost" onClick={verifyKey} disabled={verifying || (!form.api_key && modal === 'add')}>{verifying ? 'Verifying...' : 'Test Key'}</Btn>
+                            <Btn onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Btn>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    );
+}
+
 const TABS = [
     { id: 'jobs', label: 'Sync Jobs' },
     { id: 'reconciliation', label: 'Reconciliation' },
-    { id: 'accounts', label: 'API Accounts' },
+    { id: 'accounts', label: 'Yelp Accounts' },
+    { id: 'google', label: 'Google Accounts' },
     { id: 'logs', label: 'Run Logs' },
 ];
 
@@ -674,6 +871,7 @@ export default function YelpIndex() {
                             </nav>
                         </div>
                         {tab === 'accounts' && <AccountsTab />}
+                        {tab === 'google' && <GoogleAccountsTab />}
                         {tab === 'jobs' && <JobsTab />}
                         {tab === 'logs' && <LogsTab />}
                         {tab === 'reconciliation' && <ReconciliationTab />}

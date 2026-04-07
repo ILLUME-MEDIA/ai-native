@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\GoogleAccount;
+use App\Models\GoogleJobLog;
 use App\Models\SectionEntity;
 use App\Models\SectionField;
 use App\Models\YelpAccount;
@@ -48,12 +50,14 @@ class YelpSyncService
             return;
         }
 
-        $searchCols   = $job->search_columns ?? [];
-        $columnMap    = $job->column_mapping ?? [];
-        $mode         = $job->mode ?? 'smart';
-        $autoMerge    = (bool) ($job->auto_merge ?? false);
-        $resumeFromId = (int) ($job->last_processed_id ?? 0);
-        $maxCalls     = (int) ($job->max_calls_per_run ?? 0);
+        $searchCols        = $job->search_columns ?? [];
+        $columnMap         = $job->column_mapping ?? [];
+        $mode              = $job->mode ?? 'smart';
+        $autoMerge         = (bool) ($job->auto_merge ?? false);
+        $googleEnabled     = (bool) ($job->google_enabled ?? false);
+        $googleColumnMap   = $job->google_column_mapping ?? [];
+        $resumeFromId      = (int) ($job->last_processed_id ?? 0);
+        $maxCalls          = (int) ($job->max_calls_per_run ?? 0);
 
         // Fetch reviews only when that field is mapped (costs +1 API call per row)
         $fetchReviews = array_key_exists('recent_reviews_json', $columnMap);
@@ -95,6 +99,8 @@ class YelpSyncService
                 $columnMap,
                 $mode,
                 $autoMerge,
+                $googleEnabled,
+                $googleColumnMap,
                 $maxCalls,
                 &$callsMade,
                 &$lastProcessedId,
@@ -369,6 +375,20 @@ class YelpSyncService
                             ]);
                         } else {
                             DB::table($tableName)->where('id', $rowId)->update(['yelp_verified' => 1]);
+                        }
+
+                        // Google enrichment — runs after Yelp verifies the business
+                        if ($googleEnabled) {
+                            $this->enrichWithGoogle(
+                                $job,
+                                $entity,
+                                $tableName,
+                                (int) $rowId,
+                                $term,
+                                $location,
+                                $googleColumnMap,
+                                $newColumnsAdded
+                            );
                         }
 
                         YelpRowLog::create([
@@ -886,6 +906,392 @@ class YelpSyncService
         $value = trim((string) ($row[$col] ?? ''));
         return $value === '' ? null : $value;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Google-only run (retroactive / independent enrichment)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Standalone Google enrichment run — processes ALL rows in the source table
+     * starting from google_last_processed_id (so first run starts from row 0,
+     * subsequent runs resume from where they left off).
+     * Completely independent from the Yelp sync — no Yelp API calls made.
+     */
+    public function runGoogle(YelpJob $job, GoogleJobLog $log): void
+    {
+        set_time_limit(0);
+        ignore_user_abort(true);
+
+        $log->update(['status' => 'running', 'started_at' => now()]);
+
+        $entity = $job->entity;
+        if (!$entity) {
+            $log->update(['status' => 'failed', 'error_message' => 'Entity not found.', 'completed_at' => now()]);
+            return;
+        }
+
+        $tableName = $entity->table_name;
+        if (!Schema::hasTable($tableName)) {
+            $log->update(['status' => 'failed', 'error_message' => "Table `{$tableName}` not found.", 'completed_at' => now()]);
+            return;
+        }
+
+        $googleColumnMap  = $job->google_column_mapping ?? [];
+        $resumeFromId     = (int) ($job->google_last_processed_id ?? 0);
+        $maxCalls         = (int) ($job->max_calls_per_run ?? 0);
+
+        $total = DB::table($tableName)->where('id', '>', $resumeFromId)->count();
+        $log->update(['total_rows' => $total]);
+
+        if ($total === 0) {
+            $log->update(['status' => 'completed', 'completed_at' => now()]);
+            $job->update(['google_last_processed_id' => 0]);
+            return;
+        }
+
+        $newColumnsAdded  = [];
+        $processed        = 0;
+        $failed           = 0;
+        $skipped          = 0;
+        $account          = null;
+        $stopped          = false;
+        $limitHit         = false;
+        $callsMade        = 0;
+        $lastProcessedId  = $resumeFromId;
+
+        // Build field index once
+        $allGoogleFields = \App\Services\GoogleService::availableFields();
+        $fieldIndex      = array_column($allGoogleFields, null, 'key');
+
+        $searchCols = $job->search_columns ?? [];
+
+        DB::table($tableName)
+            ->where('id', '>', $resumeFromId)
+            ->orderBy('id')
+            ->chunkById(200, function ($rows) use (
+                $job, $log, $entity, $tableName,
+                $searchCols, $googleColumnMap, $fieldIndex,
+                $maxCalls,
+                &$callsMade, &$lastProcessedId,
+                &$processed, &$failed, &$skipped,
+                &$newColumnsAdded, &$account,
+                &$stopped, &$limitHit
+            ) {
+                foreach ($rows as $row) {
+                    if ($log->isStopRequested()) {
+                        $stopped = true;
+                        return false;
+                    }
+
+                    // 2 Google calls per row (search + details)
+                    if ($maxCalls > 0 && ($callsMade + 2) > $maxCalls) {
+                        $limitHit = true;
+                        return false;
+                    }
+
+                    $rowArr = (array) $row;
+                    $rowId  = $rowArr['id'] ?? null;
+                    $lastProcessedId = (int) ($rowId ?: $lastProcessedId);
+
+                    try {
+                        $term     = $this->colValue($rowArr, $searchCols['term']    ?? null);
+                        $address  = $this->colValue($rowArr, $searchCols['address'] ?? null);
+                        $city     = $this->colValue($rowArr, $searchCols['city']    ?? null);
+                        $state    = $this->colValue($rowArr, $searchCols['state']   ?? null);
+                        $zip      = $this->colValue($rowArr, $searchCols['zip']     ?? null);
+                        $location = implode(', ', array_filter([$address, $city, $state, $zip]));
+
+                        if (!$term) {
+                            $skipped++;
+                            $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
+                            continue;
+                        }
+
+                        $account = $this->pickGoogleAccount();
+                        if (!$account) {
+                            $log->update([
+                                'status'        => 'paused',
+                                'error_message' => 'All Google accounts exhausted for today. Resume tomorrow.',
+                                'processed_rows' => $processed,
+                                'failed_rows'    => $failed,
+                                'skipped_rows'   => $skipped,
+                                'completed_at'   => now(),
+                            ]);
+                            return false;
+                        }
+
+                        $google = new \App\Services\GoogleService($account->api_key);
+
+                        // ── Fast path: skip search if google_place_id already stored ──
+                        $existingPlaceId = null;
+                        if (Schema::hasColumn($tableName, 'google_place_id')) {
+                            $existingPlaceId = $rowArr['google_place_id'] ?? null;
+                        }
+
+                        if ($existingPlaceId) {
+                            // 1 call: details only
+                            if ($maxCalls > 0 && ($callsMade + 1) > $maxCalls) {
+                                $limitHit = true;
+                                return false;
+                            }
+                            $placeId = $existingPlaceId;
+                        } else {
+                            // 2 calls: search + details
+                            $placeId = $google->searchPlace($term, $location);
+                            $account->incrementUsage();
+                            $callsMade++;
+
+                            if (!$placeId) {
+                                $skipped++;
+                                $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
+                                continue; // no sleep — move on immediately
+                            }
+                        }
+
+                        $details = $google->getPlaceDetails($placeId);
+                        $account->incrementUsage();
+                        $callsMade++;
+
+                        if (!$details) {
+                            $failed++;
+                            $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
+                            continue; // no sleep
+                        }
+
+                        $extracted = $google->extractFields($details);
+                        $updates   = [];
+
+                        if (!empty($googleColumnMap)) {
+                            foreach ($googleColumnMap as $googleField => $dbColumn) {
+                                $value = $extracted[$googleField] ?? null;
+                                if ($value === null) continue;
+                                if (!Schema::hasColumn($tableName, $dbColumn)) {
+                                    $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
+                                    $newColumnsAdded[] = $dbColumn;
+                                }
+                                $updates[$dbColumn] = is_array($value) ? json_encode($value) : $value;
+                            }
+                        } else {
+                            foreach ($extracted as $googleField => $value) {
+                                if ($value === null) continue;
+                                $dbColumn = $googleField;
+                                if (!Schema::hasColumn($tableName, $dbColumn)) {
+                                    $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
+                                    $newColumnsAdded[] = $dbColumn;
+                                }
+                                $updates[$dbColumn] = is_array($value) ? json_encode($value) : $value;
+                            }
+                        }
+
+                        if (!empty($updates)) {
+                            DB::table($tableName)->where('id', $rowId)->update($updates);
+                        }
+
+                        $processed++;
+                        $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
+                        // No sleep — run as fast as Google allows (auto-retry on 429 inside GoogleService)
+
+                    } catch (\Throwable $e) {
+                        $failed++;
+                        $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
+                    }
+                }
+            }, 'id');
+
+        $freshLog    = $log->fresh();
+        $finalStatus = 'completed';
+        if ($stopped || $limitHit || $freshLog->status === 'paused') {
+            $finalStatus = 'paused';
+        }
+
+        $nextResumeId = $finalStatus === 'completed' ? 0 : $lastProcessedId;
+
+        $log->update([
+            'status'            => $finalStatus,
+            'processed_rows'    => $processed,
+            'failed_rows'       => $failed,
+            'skipped_rows'      => $skipped,
+            'new_columns_added' => array_values(array_unique($newColumnsAdded)),
+            'account_id'        => $account?->id,
+            'completed_at'      => now(),
+        ]);
+
+        $job->update(['google_last_processed_id' => $nextResumeId]);
+    }
+
+    protected function persistGoogleProgress(
+        GoogleJobLog $log,
+        int $processed,
+        int $failed,
+        int $skipped,
+        ?YelpJob $job = null,
+        ?int $lastProcessedId = null
+    ): void {
+        GoogleJobLog::where('id', $log->id)->update([
+            'processed_rows' => $processed,
+            'failed_rows'    => $failed,
+            'skipped_rows'   => $skipped,
+        ]);
+
+        if ($job && $lastProcessedId !== null) {
+            YelpJob::where('id', $job->id)->update(['google_last_processed_id' => $lastProcessedId]);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Google enrichment helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * After Yelp verifies a business, search Google Places and directly write
+     * all returned fields into the source row.  No diff/merge needed — Google
+     * data is additive and never removes existing columns.
+     *
+     * If $googleColumnMap is populated, only those mapped fields are written.
+     * If it's empty, ALL available Google fields are auto-created and written.
+     */
+    protected function enrichWithGoogle(
+        YelpJob $job,
+        SectionEntity $entity,
+        string $tableName,
+        int $rowId,
+        string $term,
+        string $location,
+        array $googleColumnMap,
+        array &$newColumnsAdded
+    ): void {
+        try {
+            $googleAccount = $this->pickGoogleAccount();
+            if (!$googleAccount) {
+                return; // No Google quota — skip silently, don't fail the Yelp job
+            }
+
+            $google = new \App\Services\GoogleService($googleAccount->api_key);
+
+            // Fast path: if google_place_id already exists in the row, skip search
+            $existingPlaceId = null;
+            if (Schema::hasColumn($tableName, 'google_place_id')) {
+                $currentRow = DB::table($tableName)->where('id', $rowId)->value('google_place_id');
+                $existingPlaceId = $currentRow ?: null;
+            }
+
+            if ($existingPlaceId) {
+                $placeId = $existingPlaceId;
+            } else {
+                $placeId = $google->searchPlace($term, $location);
+                $googleAccount->incrementUsage();
+                if (!$placeId) {
+                    return;
+                }
+            }
+
+            $details = $google->getPlaceDetails($placeId);
+            $googleAccount->incrementUsage();
+
+            if (!$details) {
+                return;
+            }
+
+            $extracted = $google->extractFields($details);
+
+            // Build the list of field→column pairs to write
+            $allFields = \App\Services\GoogleService::availableFields();
+            $fieldIndex = array_column($allFields, null, 'key'); // key => field-info
+
+            $updates = [];
+
+            if (!empty($googleColumnMap)) {
+                // Manual mapping: google_field_key => db_column_name
+                foreach ($googleColumnMap as $googleField => $dbColumn) {
+                    if (!array_key_exists($googleField, $extracted)) {
+                        continue;
+                    }
+                    $value = $extracted[$googleField];
+                    if ($value === null) {
+                        continue; // Never overwrite with null
+                    }
+                    if (!Schema::hasColumn($tableName, $dbColumn)) {
+                        $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
+                        $newColumnsAdded[] = $dbColumn;
+                    }
+                    $updates[$dbColumn] = is_array($value) ? json_encode($value) : $value;
+                }
+            } else {
+                // Auto mode: write every non-null Google field using the key as the column name
+                foreach ($extracted as $googleField => $value) {
+                    if ($value === null) {
+                        continue; // Never overwrite with null
+                    }
+                    $dbColumn = $googleField; // e.g. "google_rating" becomes column "google_rating"
+                    if (!Schema::hasColumn($tableName, $dbColumn)) {
+                        $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
+                        $newColumnsAdded[] = $dbColumn;
+                    }
+                    $updates[$dbColumn] = is_array($value) ? json_encode($value) : $value;
+                }
+            }
+
+            if (!empty($updates)) {
+                DB::table($tableName)->where('id', $rowId)->update($updates);
+            }
+        } catch (\Throwable $e) {
+            // Google enrichment is best-effort — never fail the Yelp job
+        }
+    }
+
+    protected function pickGoogleAccount(): ?GoogleAccount
+    {
+        $accounts = GoogleAccount::where('is_active', true)->get();
+        foreach ($accounts as $account) {
+            $account->resetIfStale();
+        }
+
+        return $accounts
+            ->filter(fn ($a) => $a->hasQuota())
+            ->sortByDesc(fn ($a) => $a->daily_limit - $a->requests_today)
+            ->first();
+    }
+
+    protected function addGoogleColumn(
+        SectionEntity $entity,
+        string $tableName,
+        string $dbColumn,
+        ?array $fieldInfo = null
+    ): void {
+        $fieldInfo ??= ['label' => ucwords(str_replace('_', ' ', $dbColumn)), 'type' => 'string'];
+        $colType = $fieldInfo['type'] ?? 'string';
+
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("SET SESSION sql_mode = ''");
+        }
+
+        $isJsonCol = str_ends_with($dbColumn, '_json') || $colType === 'json' || $colType === 'text';
+
+        Schema::table($tableName, function (Blueprint $table) use ($dbColumn, $colType, $isJsonCol) {
+            match (true) {
+                $colType === 'boolean' => $table->boolean($dbColumn)->nullable()->after('id'),
+                $colType === 'integer' => $table->unsignedInteger($dbColumn)->nullable()->after('id'),
+                $colType === 'decimal' => $table->decimal($dbColumn, 10, 7)->nullable()->after('id'),
+                $isJsonCol             => $table->text($dbColumn)->nullable()->after('id'),
+                default                => $table->string($dbColumn)->nullable()->after('id'),
+            };
+        });
+
+        SectionField::firstOrCreate(
+            ['entity_id' => $entity->id, 'column_name' => $dbColumn],
+            [
+                'label'        => $fieldInfo['label'] ?? ucwords(str_replace('_', ' ', $dbColumn)),
+                'type'         => $colType,
+                'nullable'     => true,
+                'list_visible' => true,
+                'sort_order'   => 999,
+                'mcp_readable' => true,
+                'mcp_writable' => false,
+            ]
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     protected function addColumn(SectionEntity $entity, string $tableName, string $dbColumn, string $yelpField): void
     {
