@@ -43,6 +43,10 @@ return [
         'key' => env('MISTRAL_API_KEY'),
     ],
 
+    'anthropic' => [
+        'key' => env('ANTHROPIC_API_KEY'),
+    ],
+
     'stripe' => [
         'secret'         => env('STRIPE_SECRET_KEY'),
         'publishable'    => env('STRIPE_PUBLISHABLE_KEY'),

@@ -245,16 +245,20 @@ export default function SupportChat({ ticketId, bearerToken, sessionId, onBack }
             {/* ── Messages ─────────────────────────────────────────────────── */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {messages.map((msg) => {
-                    const isUser = msg.sender_type === 'user';
+                    const isUser  = msg.sender_type === 'user';
+                    const isAgent = msg.sender_type === 'agent';
                     return (
                         <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
                             <div style={{ maxWidth: '78%' }}>
                                 {!isUser && (
-                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 3, marginLeft: 4 }}>Support Team</div>
+                                    <div style={{ fontSize: 11, color: isAgent ? '#2dd4bf' : '#64748b', marginBottom: 3, marginLeft: 4, fontWeight: isAgent ? 600 : 400 }}>
+                                        {isAgent ? '🤖 AI Agent' : 'Support Team'}
+                                    </div>
                                 )}
                                 <div style={{
-                                    background: isUser ? '#ff6b35' : '#1e2230',
-                                    color: '#fff',
+                                    background: isUser ? '#ff6b35' : isAgent ? '#0f2e2b' : '#1e2230',
+                                    color: isAgent ? '#2dd4bf' : '#fff',
+                                    border: isAgent ? '1px solid #0d4d47' : 'none',
                                     padding: '9px 14px',
                                     borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                                     fontSize: 14,

@@ -14,15 +14,18 @@ class SupportTicket extends Model
         'ticket_number', 'subject', 'category',
         'status', 'priority',
         'affected_items',
+        'agent_handled', 'refund_intent_count',
         'resolution_note', 'resolved_at',
         'unread_admin', 'unread_user',
     ];
 
     protected $casts = [
-        'resolved_at'   => 'datetime',
-        'unread_admin'  => 'integer',
-        'unread_user'   => 'integer',
-        'affected_items'=> 'array',
+        'resolved_at'        => 'datetime',
+        'unread_admin'       => 'integer',
+        'unread_user'        => 'integer',
+        'affected_items'     => 'array',
+        'agent_handled'      => 'boolean',
+        'refund_intent_count'=> 'integer',
     ];
 
     protected static function boot(): void

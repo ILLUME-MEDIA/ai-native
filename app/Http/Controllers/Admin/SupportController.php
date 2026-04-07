@@ -10,6 +10,7 @@ use App\Models\OrderRefund;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
 use App\Services\StripeService;
+use App\Services\SupportAgentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -26,7 +27,29 @@ use Illuminate\Http\Request;
  */
 class SupportController extends Controller
 {
-    public function __construct(private StripeService $stripe) {}
+    public function __construct(
+        private StripeService $stripe,
+        private SupportAgentService $agent,
+    ) {}
+
+    // ── Admin availability (controls AI agent) ────────────────────────────────
+
+    /** GET /api/admin/support/availability */
+    public function getAvailability(): JsonResponse
+    {
+        return response()->json(['online' => $this->agent->isAdminOnline()]);
+    }
+
+    /** POST /api/admin/support/availability  { online: true|false } */
+    public function setAvailability(Request $request): JsonResponse
+    {
+        $data = $request->validate(['online' => 'required|boolean']);
+        $this->agent->setAdminOnline($data['online']);
+        return response()->json([
+            'online'  => $data['online'],
+            'message' => $data['online'] ? 'You are now online. AI agent is paused.' : 'You are offline. AI agent will auto-respond.',
+        ]);
+    }
 
     // ── List ──────────────────────────────────────────────────────────────────
 

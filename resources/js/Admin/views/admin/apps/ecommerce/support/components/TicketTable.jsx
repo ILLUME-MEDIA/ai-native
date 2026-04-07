@@ -27,6 +27,10 @@ const TicketTable = ({ onTicketUpdated }) => {
   const [totalRows,     setTotalRows]     = useState(0);
   const [pageIndex,     setPageIndex]     = useState(0);
   const [pageSize,      setPageSize]      = useState(20);
+
+  // Admin online/offline (controls AI agent)
+  const [adminOnline,    setAdminOnline]    = useState(null); // null = loading
+  const [togglingOnline, setTogglingOnline] = useState(false);
   const [statusFilter,  setStatusFilter]  = useState('');
   const [priorityFilter,setPriorityFilter]= useState('');
   const [search,        setSearch]        = useState('');
@@ -72,6 +76,25 @@ const TicketTable = ({ onTicketUpdated }) => {
   };
 
   useEffect(() => { loadData(); }, [pageIndex, pageSize, statusFilter, priorityFilter, search]);
+
+  // ── Load + toggle admin availability ─────────────────────────────────────
+  useEffect(() => {
+    fetch('/api/admin/support/availability', { headers: { Accept: 'application/json' } })
+      .then(r => r.json()).then(r => setAdminOnline(r.online ?? false)).catch(() => setAdminOnline(false));
+  }, []);
+
+  const toggleAvailability = () => {
+    const next = !adminOnline;
+    setTogglingOnline(true);
+    fetch('/api/admin/support/availability', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ online: next }),
+    })
+      .then(r => r.json())
+      .then(r => setAdminOnline(r.online))
+      .finally(() => setTogglingOnline(false));
+  };
 
   // ── Real-time: listen for new tickets from users ─────────────────────────────
   useEffect(() => {
@@ -310,9 +333,13 @@ const TicketTable = ({ onTicketUpdated }) => {
     {
       id: 'unread',
       header: 'Unread',
-      cell: ({ row: { original: t } }) => t.unread_admin > 0
-        ? <Badge bg="danger" pill>{t.unread_admin}</Badge>
-        : <span className="text-muted">—</span>,
+      cell: ({ row: { original: t } }) => (
+        <div className="d-flex gap-1 align-items-center">
+          {t.unread_admin > 0 && <Badge bg="danger" pill>{t.unread_admin}</Badge>}
+          {t.agent_handled && <Badge bg="secondary" style={{ fontSize: '0.68rem' }}>🤖 Agent</Badge>}
+          {!t.unread_admin && !t.agent_handled && <span className="text-muted">—</span>}
+        </div>
+      ),
     },
     {
       id: 'messages_count',
@@ -378,6 +405,22 @@ const TicketTable = ({ onTicketUpdated }) => {
       <div className="card">
         <div className="card-header d-flex flex-wrap align-items-center gap-2">
           <span className="fw-semibold me-auto">Support Tickets</span>
+
+          {/* Admin online/offline toggle */}
+          <button
+            onClick={toggleAvailability}
+            disabled={togglingOnline || adminOnline === null}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '4px 12px', borderRadius: 20, border: 'none', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+              background: adminOnline ? '#198754' : '#6c757d',
+              color: '#fff', transition: 'background 0.2s',
+            }}
+            title={adminOnline ? 'Click to go offline (AI agent will take over)' : 'Click to go online (AI agent paused)'}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: adminOnline ? '#86efac' : '#adb5bd', display: 'inline-block' }} />
+            {adminOnline === null ? '…' : adminOnline ? 'Online' : 'Offline (AI active)'}
+          </button>
 
           <InputGroup size="sm" style={{ width: 220 }}>
             <InputGroup.Text><i className="ti ti-search" /></InputGroup.Text>
@@ -560,36 +603,43 @@ const TicketTable = ({ onTicketUpdated }) => {
               <div className="d-flex flex-column gap-2">
                 {(activeTicket?.messages ?? []).map((msg, idx) => {
                   const isAdmin = msg.sender_type === 'admin';
+                  const isAgent = msg.sender_type === 'agent';
+                  const isRight = isAdmin; // admin messages on the right
                   return (
-                    <div key={idx} className={`d-flex ${isAdmin ? 'justify-content-end' : 'justify-content-start'}`}>
-                      {!isAdmin && (
-                        <div
-                          style={{ width: 32, height: 32, borderRadius: '50%', background: '#6c757d', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', flexShrink: 0, marginRight: 8, marginTop: 4 }}
-                        >
-                          U
+                    <div key={idx} className={`d-flex ${isRight ? 'justify-content-end' : 'justify-content-start'}`}>
+                      {!isRight && (
+                        <div style={{
+                          width: 32, height: 32, borderRadius: '50%', flexShrink: 0, marginRight: 8, marginTop: 4,
+                          background: isAgent ? '#0f766e' : '#6c757d',
+                          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem',
+                        }}>
+                          {isAgent ? '🤖' : 'U'}
                         </div>
                       )}
-                      <div
-                        style={{
-                          maxWidth: '72%',
+                      <div style={{ maxWidth: '72%' }}>
+                        {isAgent && (
+                          <div style={{ fontSize: '0.7rem', color: '#0f766e', marginBottom: 2, marginLeft: 2, fontWeight: 600 }}>
+                            AI Agent
+                          </div>
+                        )}
+                        <div style={{
                           padding: '8px 12px',
-                          borderRadius: isAdmin ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                          background: isAdmin ? '#0d6efd' : '#fff',
-                          color: isAdmin ? '#fff' : '#212529',
+                          borderRadius: isRight ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
+                          background: isAdmin ? '#0d6efd' : isAgent ? '#ccfbf1' : '#fff',
+                          color: isAdmin ? '#fff' : isAgent ? '#134e4a' : '#212529',
                           boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                           fontSize: '0.86rem',
                           wordBreak: 'break-word',
-                        }}
-                      >
-                        {msg.message}
-                        <div style={{ fontSize: '0.7rem', opacity: 0.7, marginTop: 4, textAlign: 'right' }}>
-                          {fmtTime(msg.created_at)}
+                          border: isAgent ? '1px solid #99f6e4' : 'none',
+                        }}>
+                          {msg.message}
+                          <div style={{ fontSize: '0.7rem', opacity: 0.7, marginTop: 4, textAlign: 'right' }}>
+                            {fmtTime(msg.created_at)}
+                          </div>
                         </div>
                       </div>
-                      {isAdmin && (
-                        <div
-                          style={{ width: 32, height: 32, borderRadius: '50%', background: '#0d6efd', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', flexShrink: 0, marginLeft: 8, marginTop: 4 }}
-                        >
+                      {isRight && (
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#0d6efd', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', flexShrink: 0, marginLeft: 8, marginTop: 4 }}>
                           A
                         </div>
                       )}

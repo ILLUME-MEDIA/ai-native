@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
+use App\Services\SupportAgentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -24,6 +25,8 @@ use Illuminate\Support\Carbon;
  */
 class UserSupportController extends Controller
 {
+    public function __construct(private SupportAgentService $agent) {}
+
     // ── Auth helpers ──────────────────────────────────────────────────────────
 
     private function otpPayload(Request $request): ?array
@@ -198,9 +201,14 @@ class UserSupportController extends Controller
         // Notify admin panel in real-time that a new ticket arrived
         broadcast(new SupportTicketCreated($ticket->fresh()->load('messages')));
 
+        // Agent auto-responds if admin is offline
+        if ($this->agent->shouldAutoRespond($ticket->fresh())) {
+            $this->agent->respond($ticket->fresh()->load(['messages', 'order']), $messageBody);
+        }
+
         return response()->json([
             'message' => 'Support ticket created.',
-            'ticket'  => $ticket->load('messages'),
+            'ticket'  => $ticket->fresh()->load('messages'),
         ], 201);
     }
 
@@ -243,6 +251,12 @@ class UserSupportController extends Controller
         ]);
 
         broadcast(new SupportMessageSent($ticket->fresh(), $msg))->toOthers();
+
+        // Agent auto-responds if admin is offline
+        $freshTicket = $ticket->fresh()->load(['messages', 'order']);
+        if ($this->agent->shouldAutoRespond($freshTicket)) {
+            $this->agent->respond($freshTicket, $data['message']);
+        }
 
         return response()->json(['message' => 'Message sent.', 'ticket' => $ticket->fresh()->load('messages')]);
     }

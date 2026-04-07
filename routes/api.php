@@ -193,6 +193,8 @@ Route::prefix('admin/support')->group(function () {
     Route::post('tickets/{ticket}/resolve',            [AdminSupportController::class, 'resolve']);
     Route::post('tickets/{ticket}/close',              [AdminSupportController::class, 'close']);
     Route::post('tickets/{ticket}/refund-and-resolve', [AdminSupportController::class, 'refundAndResolve']);
+    Route::get('availability',                         [AdminSupportController::class, 'getAvailability']);
+    Route::post('availability',                        [AdminSupportController::class, 'setAvailability']);
 });
 
 // ── Ecommerce Settings (platform fee + tip global config) ─────────────────────
