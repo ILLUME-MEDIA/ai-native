@@ -79,7 +79,13 @@ export default function SupportChat({ ticketId, bearerToken, sessionId, onBack }
             });
 
             ch.listen('.ticket.updated', (e) => {
-                setTicket(prev => prev ? { ...prev, status: e.status, priority: e.priority } : prev);
+                setTicket(prev => prev ? {
+                    ...prev,
+                    status:          e.status,
+                    priority:        e.priority,
+                    resolution_note: e.resolution_note ?? prev.resolution_note,
+                    resolved_at:     e.resolved_at     ?? prev.resolved_at,
+                } : prev);
             });
 
             return () => window.Echo.leaveChannel(`support.ticket.${ticketId}`);
@@ -219,6 +225,22 @@ export default function SupportChat({ ticketId, bearerToken, sessionId, onBack }
                     </div>
                 )}
             </div>
+
+            {/* ── Resolved banner ──────────────────────────────────────────── */}
+            {ticket?.status === 'resolved' && ticket?.resolution_note && (
+                <div style={{ background: '#0f2318', borderBottom: '1px solid #166534', padding: '10px 18px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>✓</span>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#4ade80', marginBottom: 2 }}>Issue Resolved</div>
+                        <div style={{ fontSize: 13, color: '#86efac', lineHeight: 1.4 }}>{ticket.resolution_note}</div>
+                        {ticket.resolved_at && (
+                            <div style={{ fontSize: 11, color: '#166534', marginTop: 3 }}>
+                                {new Date(ticket.resolved_at).toLocaleString()}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* ── Messages ─────────────────────────────────────────────────── */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
