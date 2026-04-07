@@ -251,14 +251,14 @@ export default function SupportChat({ ticketId, bearerToken, sessionId, onBack }
                         <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
                             <div style={{ maxWidth: '78%' }}>
                                 {!isUser && (
-                                    <div style={{ fontSize: 11, color: isAgent ? '#2dd4bf' : '#64748b', marginBottom: 3, marginLeft: 4, fontWeight: isAgent ? 600 : 400 }}>
-                                        {isAgent ? '🤖 AI Agent' : 'Support Team'}
+                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 3, marginLeft: 4 }}>
+                                        Support Team
                                     </div>
                                 )}
                                 <div style={{
-                                    background: isUser ? '#ff6b35' : isAgent ? '#0f2e2b' : '#1e2230',
-                                    color: isAgent ? '#2dd4bf' : '#fff',
-                                    border: isAgent ? '1px solid #0d4d47' : 'none',
+                                    background: isUser ? '#ff6b35' : '#1e2230',
+                                    color: '#fff',
+                                    border: 'none',
                                     padding: '9px 14px',
                                     borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                                     fontSize: 14,
