@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Ecommerce;
 
 use App\Events\SupportMessageSent;
+use App\Events\SupportTicketCreated;
 use App\Events\SupportTicketUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
@@ -193,6 +194,9 @@ class UserSupportController extends Controller
             'message'     => $messageBody,
             'is_read'     => false,
         ]);
+
+        // Notify admin panel in real-time that a new ticket arrived
+        broadcast(new SupportTicketCreated($ticket->fresh()->load('messages')));
 
         return response()->json([
             'message' => 'Support ticket created.',

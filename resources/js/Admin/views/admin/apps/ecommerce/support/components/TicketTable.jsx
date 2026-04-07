@@ -64,6 +64,18 @@ const TicketTable = ({ onTicketUpdated }) => {
 
   useEffect(() => { loadData(); }, [pageIndex, pageSize, statusFilter, priorityFilter, search]);
 
+  // ── Real-time: listen for new tickets from users ─────────────────────────────
+  useEffect(() => {
+    if (!window.Echo) return; // polling already covers new tickets via loadData interval
+    const ch = window.Echo.channel('support.admin');
+    ch.listen('.ticket.created', () => {
+      // Refresh list so new ticket appears at top
+      loadData();
+      onTicketUpdated?.();
+    });
+    return () => window.Echo.leaveChannel('support.admin');
+  }, []);
+
   // ── Real-time: WebSocket (Pusher/Reverb) OR polling fallback ────────────────
   // If window.Echo is available (Pusher configured) → use WebSocket.
   // Otherwise → poll every 4 seconds while chat is open (works on cPanel/shared hosting).
