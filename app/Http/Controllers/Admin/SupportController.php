@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Admin;
 use App\Events\SupportMessageSent;
 use App\Events\SupportTicketUpdated;
 use App\Http\Controllers\Controller;
+use App\Models\Order;
+use App\Models\OrderRefund;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
+use App\Services\StripeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -23,6 +26,8 @@ use Illuminate\Http\Request;
  */
 class SupportController extends Controller
 {
+    public function __construct(private StripeService $stripe) {}
+
     // ── List ──────────────────────────────────────────────────────────────────
 
     public function index(Request $request): JsonResponse
@@ -118,6 +123,8 @@ class SupportController extends Controller
 
         $ticket->update($data);
 
+        broadcast(new SupportTicketUpdated($ticket->fresh()));
+
         return response()->json(['message' => 'Ticket updated.', 'ticket' => $ticket->fresh()]);
     }
 
@@ -133,8 +140,8 @@ class SupportController extends Controller
             'resolved_at'     => now(),
         ]);
 
-        // System message
-        SupportMessage::create([
+        // System message in chat so user sees resolution note
+        $sysMsg = SupportMessage::create([
             'ticket_id'   => $ticket->id,
             'sender_type' => 'admin',
             'sender_id'   => auth()->id(),
@@ -144,7 +151,11 @@ class SupportController extends Controller
 
         $ticket->update(['unread_user' => $ticket->unread_user + 1]);
 
-        return response()->json(['message' => 'Ticket resolved.', 'ticket' => $ticket->fresh()]);
+        // Broadcast resolution to user frontend in real-time
+        broadcast(new SupportMessageSent($ticket->fresh(), $sysMsg));
+        broadcast(new SupportTicketUpdated($ticket->fresh()));
+
+        return response()->json(['message' => 'Ticket resolved.', 'ticket' => $ticket->fresh()->load('messages')]);
     }
 
     // ── Close ─────────────────────────────────────────────────────────────────
@@ -154,6 +165,142 @@ class SupportController extends Controller
         $ticket->update(['status' => 'closed']);
         broadcast(new SupportTicketUpdated($ticket->fresh()))->toOthers();
         return response()->json(['message' => 'Ticket closed.', 'ticket' => $ticket->fresh()]);
+    }
+
+    // ── Refund + Resolve (single action from chat) ────────────────────────────
+
+    /**
+     * POST /api/admin/support/tickets/{ticket}/refund-and-resolve
+     *
+     * Creates/updates an OrderRefund, processes it via Stripe (optional),
+     * then resolves the ticket with a system message. All in one request.
+     *
+     * Body:
+     *   refund_type     — full|partial|platform_fee|tip|subtotal|items
+     *   amount          — required for partial
+     *   refund_item_ids — required for items
+     *   resolution_note — required (shown in chat + stored on ticket)
+     *   process_stripe  — boolean (default true) — attempt Stripe charge immediately
+     *   admin_note      — optional internal note
+     */
+    public function refundAndResolve(Request $request, SupportTicket $ticket): JsonResponse
+    {
+        if (in_array($ticket->status, ['resolved', 'closed'])) {
+            return response()->json(['message' => 'Ticket is already resolved/closed.'], 422);
+        }
+        if (! $ticket->order_id) {
+            return response()->json(['message' => 'No order is linked to this ticket.'], 422);
+        }
+
+        $data = $request->validate([
+            'refund_type'        => 'required|in:full,partial,platform_fee,tip,subtotal,items',
+            'refund_item_ids'    => 'required_if:refund_type,items|array',
+            'refund_item_ids.*'  => 'integer',
+            'amount'             => 'required_if:refund_type,partial|nullable|numeric|min:0.01',
+            'resolution_note'    => 'required|string|max:1000',
+            'process_stripe'     => 'sometimes|boolean',
+            'admin_note'         => 'nullable|string|max:500',
+        ]);
+
+        $order = Order::with('items')->findOrFail($ticket->order_id);
+
+        // Resolve amount based on type
+        $refundType = $data['refund_type'];
+        $amount = match ($refundType) {
+            'full'         => round((float) $order->total,        2),
+            'platform_fee' => round((float) $order->platform_fee, 2),
+            'tip'          => round((float) $order->tip,          2),
+            'subtotal'     => round((float) $order->subtotal,     2),
+            'partial'      => round((float) ($data['amount'] ?? 0), 2),
+            'items'        => round($order->items->whereIn('id', $data['refund_item_ids'] ?? [])->sum('subtotal'), 2),
+            default        => round((float) $order->total,        2),
+        };
+
+        if ($amount <= 0) {
+            return response()->json(['message' => 'Calculated refund amount is zero.'], 422);
+        }
+
+        // Create refund record (skip if one already exists for this order)
+        $refund = OrderRefund::firstOrCreate(
+            ['order_id' => $order->id, 'status' => 'pending'],
+            [
+                'issue_type'  => 'other',
+                'reason'      => $ticket->subject,
+                'amount'      => $amount,
+                'refund_type' => $refundType,
+            ]
+        );
+
+        // Update amounts/type even if it existed
+        $refund->update([
+            'refund_type'     => $refundType,
+            'refund_item_ids' => $data['refund_item_ids'] ?? null,
+            'amount'          => $amount,
+            'admin_note'      => $data['admin_note'] ?? null,
+        ]);
+
+        // Attempt Stripe refund
+        $refundStatus   = 'approved';
+        $stripeRefundId = null;
+        $shouldStripe   = ($data['process_stripe'] ?? true) && $order->stripe_payment_intent_id;
+
+        if ($shouldStripe) {
+            try {
+                $stripeResult   = $this->stripe->refundPaymentIntent($order->stripe_payment_intent_id, (int) round($amount * 100));
+                $refundStatus   = 'refunded';
+                $stripeRefundId = $stripeResult->id;
+
+                $order->update($refundType === 'full'
+                    ? ['payment_status' => 'refunded', 'status' => 'refunded']
+                    : ['payment_status' => 'partially_refunded']
+                );
+            } catch (\Throwable $e) {
+                return response()->json(['message' => 'Stripe refund failed: ' . $e->getMessage()], 502);
+            }
+        }
+
+        $refund->update([
+            'status'           => $refundStatus,
+            'stripe_refund_id' => $stripeRefundId,
+            'processed_at'     => now(),
+        ]);
+
+        // Resolve ticket
+        $ticket->update([
+            'status'          => 'resolved',
+            'resolution_note' => $data['resolution_note'],
+            'resolved_at'     => now(),
+        ]);
+
+        // System message with refund summary
+        $stripeNote = $stripeRefundId
+            ? " — processed via Stripe (#{$stripeRefundId})"
+            : ' — manual processing required';
+        $sysMsgText = implode("\n", [
+            '✓ Refund ' . $refundStatus . ': $' . number_format($amount, 2) . ' (' . $refundType . ')' . $stripeNote . '.',
+            '',
+            $data['resolution_note'],
+        ]);
+
+        $sysMsg = SupportMessage::create([
+            'ticket_id'   => $ticket->id,
+            'sender_type' => 'admin',
+            'sender_id'   => auth()->id(),
+            'message'     => $sysMsgText,
+            'is_read'     => false,
+        ]);
+
+        $ticket->update(['unread_user' => $ticket->unread_user + 1]);
+
+        // Push to user frontend in real-time
+        broadcast(new SupportMessageSent($ticket->fresh(), $sysMsg));
+        broadcast(new SupportTicketUpdated($ticket->fresh()));
+
+        return response()->json([
+            'message' => 'Refund ' . $refundStatus . ' and ticket resolved.',
+            'refund'  => $refund->fresh()->load('order:id,order_number,total,payment_status'),
+            'ticket'  => $ticket->fresh()->load('messages'),
+        ]);
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────────

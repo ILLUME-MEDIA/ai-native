@@ -190,8 +190,9 @@ Route::prefix('admin/support')->group(function () {
     Route::get('tickets/{ticket}',                 [AdminSupportController::class, 'show']);
     Route::post('tickets/{ticket}/reply',          [AdminSupportController::class, 'reply']);
     Route::patch('tickets/{ticket}/status',        [AdminSupportController::class, 'updateStatus']);
-    Route::post('tickets/{ticket}/resolve',        [AdminSupportController::class, 'resolve']);
-    Route::post('tickets/{ticket}/close',          [AdminSupportController::class, 'close']);
+    Route::post('tickets/{ticket}/resolve',            [AdminSupportController::class, 'resolve']);
+    Route::post('tickets/{ticket}/close',              [AdminSupportController::class, 'close']);
+    Route::post('tickets/{ticket}/refund-and-resolve', [AdminSupportController::class, 'refundAndResolve']);
 });
 
 // ── Ecommerce Settings (platform fee + tip global config) ─────────────────────

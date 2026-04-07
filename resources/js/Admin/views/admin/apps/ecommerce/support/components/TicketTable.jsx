@@ -39,6 +39,15 @@ const TicketTable = ({ onTicketUpdated }) => {
   const [resolveModal,  setResolveModal]  = useState(false);
   const [resolveNote,   setResolveNote]   = useState('');
 
+  // Refund & Resolve state
+  const [refundModal,     setRefundModal]     = useState(false);
+  const [refundType,      setRefundType]      = useState('full');
+  const [refundAmount,    setRefundAmount]    = useState('');
+  const [refundNote,      setRefundNote]      = useState('');
+  const [refundSending,   setRefundSending]   = useState(false);
+  const [refundError,     setRefundError]     = useState(null);
+  const [refundResult,    setRefundResult]    = useState(null); // last successful refund
+
   const chatEndRef = useRef(null);
 
   // ── load list ─────────────────────────────────────────────────────────────
@@ -182,10 +191,46 @@ const TicketTable = ({ onTicketUpdated }) => {
     })
       .then(r => r.json())
       .then(res => {
-        setActiveTicket(res.ticket ? { ...activeTicket, ...res.ticket } : activeTicket);
+        // res.ticket now includes messages (backend was updated to load them)
+        if (res.ticket) setActiveTicket(res.ticket);
         setResolveModal(false); setResolveNote('');
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
         loadData(); onTicketUpdated?.();
       });
+  };
+
+  // ── refund & resolve ──────────────────────────────────────────────────────
+  const doRefundAndResolve = () => {
+    if (!refundNote.trim()) return;
+    if (refundType === 'partial' && !(parseFloat(refundAmount) > 0)) {
+      setRefundError('Enter a valid partial amount.');
+      return;
+    }
+    setRefundError(null);
+    setRefundSending(true);
+
+    const body = {
+      refund_type:     refundType,
+      resolution_note: refundNote.trim(),
+      process_stripe:  true,
+      ...(refundType === 'partial' && { amount: parseFloat(refundAmount) }),
+    };
+
+    fetch(`/api/admin/support/tickets/${activeTicket.id}/refund-and-resolve`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(res => {
+        if (res.ticket) setActiveTicket(res.ticket);
+        setRefundResult(res.refund ?? null);
+        setRefundModal(false); setRefundNote(''); setRefundAmount(''); setRefundType('full');
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
+        loadData(); onTicketUpdated?.();
+      })
+      .catch(() => setRefundError('Request failed. Check console.'))
+      .finally(() => setRefundSending(false));
   };
 
   // ── close ticket ──────────────────────────────────────────────────────────
@@ -463,6 +508,11 @@ const TicketTable = ({ onTicketUpdated }) => {
                   <option value="urgent">Urgent</option>
                 </Form.Select>
 
+                {activeTicket.status !== 'resolved' && activeTicket.status !== 'closed' && activeTicket.order_id && (
+                  <Button size="sm" variant="warning" onClick={() => { setRefundModal(true); setRefundError(null); setRefundResult(null); }}>
+                    <i className="ti ti-cash-refund me-1" />Refund &amp; Resolve
+                  </Button>
+                )}
                 {activeTicket.status !== 'resolved' && activeTicket.status !== 'closed' && (
                   <Button size="sm" variant="success" onClick={() => setResolveModal(true)}>
                     <i className="ti ti-circle-check me-1" />Resolve
@@ -492,6 +542,17 @@ const TicketTable = ({ onTicketUpdated }) => {
                   {activeTicket.order.status && (
                     <Badge bg="secondary" className="ms-2" style={{ fontSize: '0.7rem' }}>{activeTicket.order.status}</Badge>
                   )}
+                </div>
+              )}
+
+              {/* refund success banner */}
+              {refundResult && (
+                <div className="alert alert-success py-2 px-3 mb-3 d-flex align-items-center gap-2" style={{ fontSize: '0.82rem' }}>
+                  <i className="ti ti-circle-check" />
+                  <span>
+                    Refund <strong>{refundResult.status}</strong>: <strong>${Number(refundResult.amount).toFixed(2)}</strong> ({refundResult.refund_type})
+                    {refundResult.stripe_refund_id && <span className="text-muted ms-1">— Stripe #{refundResult.stripe_refund_id}</span>}
+                  </span>
                 </div>
               )}
 
@@ -567,6 +628,79 @@ const TicketTable = ({ onTicketUpdated }) => {
               </Button>
             </div>
           )}
+        </Modal.Footer>
+      </Modal>
+
+      {/* ── Refund & Resolve Modal ── */}
+      <Modal show={refundModal} onHide={() => setRefundModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title style={{ fontSize: '1rem' }}>
+            <i className="ti ti-cash-refund me-2 text-warning" />Refund &amp; Resolve
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {activeTicket?.order && (
+            <div className="alert alert-light py-2 mb-3" style={{ fontSize: '0.82rem' }}>
+              Order <strong>#{activeTicket.order.order_number}</strong> &mdash; Total: <strong>${Number(activeTicket.order.total ?? 0).toFixed(2)}</strong>
+            </div>
+          )}
+
+          <div className="mb-3">
+            <Form.Label className="fw-semibold" style={{ fontSize: '0.87rem' }}>Refund Type <span className="text-danger">*</span></Form.Label>
+            <Form.Select size="sm" value={refundType} onChange={e => { setRefundType(e.target.value); setRefundAmount(''); }}>
+              <option value="full">Full Refund (entire order total)</option>
+              <option value="subtotal">Subtotal only (no fees/tip)</option>
+              <option value="platform_fee">Platform Fee only</option>
+              <option value="tip">Tip only</option>
+              <option value="partial">Partial — custom amount</option>
+            </Form.Select>
+          </div>
+
+          {refundType === 'partial' && (
+            <div className="mb-3">
+              <Form.Label className="fw-semibold" style={{ fontSize: '0.87rem' }}>Amount ($) <span className="text-danger">*</span></Form.Label>
+              <Form.Control
+                type="number"
+                size="sm"
+                min="0.01"
+                step="0.01"
+                placeholder="0.00"
+                value={refundAmount}
+                onChange={e => setRefundAmount(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="mb-3">
+            <Form.Label className="fw-semibold" style={{ fontSize: '0.87rem' }}>Resolution Note <span className="text-danger">*</span></Form.Label>
+            <Form.Control
+              as="textarea"
+              rows={3}
+              placeholder="Explain the resolution to the customer (shown in chat)…"
+              value={refundNote}
+              onChange={e => setRefundNote(e.target.value)}
+            />
+          </div>
+
+          <div className="form-check">
+            <input className="form-check-input" type="checkbox" checked readOnly id="stripeCheck" />
+            <label className="form-check-label" htmlFor="stripeCheck" style={{ fontSize: '0.82rem' }}>
+              Process Stripe refund automatically (if order has payment intent)
+            </label>
+          </div>
+
+          {refundError && (
+            <div className="alert alert-danger py-2 mt-3" style={{ fontSize: '0.82rem' }}>{refundError}</div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-secondary" size="sm" onClick={() => setRefundModal(false)} disabled={refundSending}>Cancel</Button>
+          <Button variant="warning" size="sm" disabled={!refundNote.trim() || refundSending} onClick={doRefundAndResolve}>
+            {refundSending
+              ? <><Spinner animation="border" size="sm" className="me-1" />Processing…</>
+              : <><i className="ti ti-cash-refund me-1" />Refund &amp; Resolve</>
+            }
+          </Button>
         </Modal.Footer>
       </Modal>
 

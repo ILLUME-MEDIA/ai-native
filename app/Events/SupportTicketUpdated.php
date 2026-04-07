@@ -34,9 +34,11 @@ class SupportTicketUpdated implements ShouldBroadcastNow
     public function broadcastWith(): array
     {
         return [
-            'ticket_id' => $this->ticket->id,
-            'status'    => $this->ticket->status,
-            'priority'  => $this->ticket->priority,
+            'ticket_id'       => $this->ticket->id,
+            'status'          => $this->ticket->status,
+            'priority'        => $this->ticket->priority,
+            'resolution_note' => $this->ticket->resolution_note,
+            'resolved_at'     => $this->ticket->resolved_at?->toISOString(),
         ];
     }
 }
