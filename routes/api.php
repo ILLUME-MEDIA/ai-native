@@ -602,6 +602,7 @@ Route::group([], function () {
         Route::get('google/logs',                                [YelpController::class, 'googleLogsIndex']);
         Route::get('google/logs/{log}',                          [YelpController::class, 'googleLogProgress']);
         Route::post('google/logs/{log}/stop',                    [YelpController::class, 'googleLogStop']);
+        Route::get('google/logs/{log}/rows',                     [YelpController::class, 'googleLogRows']);
     });
 
     //

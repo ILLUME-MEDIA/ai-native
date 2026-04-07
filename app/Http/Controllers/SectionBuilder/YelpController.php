@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SectionBuilder;
 use App\Http\Controllers\Controller;
 use App\Models\GoogleAccount;
 use App\Models\GoogleJobLog;
+use App\Models\GoogleRowLog;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\SectionEntity;
@@ -286,6 +287,17 @@ class YelpController extends Controller
         ]);
 
         return response()->json(['status' => 'stopped']);
+    }
+
+    public function googleLogRows(GoogleJobLog $log, Request $request): JsonResponse
+    {
+        $query = GoogleRowLog::where('log_id', $log->id)->latest('id');
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        return response()->json($query->paginate(50));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

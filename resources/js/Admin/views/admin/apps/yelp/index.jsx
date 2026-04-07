@@ -1575,12 +1575,280 @@ function LogsTab() {
     );
 }
 
+// ─── GOOGLE LOG DETAIL MODAL ─────────────────────────────────────────────────
+const GOOGLE_ROW_STATUS = {
+    found:     { label: 'Found',     cls: 'bg-success-subtle text-success' },
+    failed:    { label: 'Failed',    cls: 'bg-danger-subtle text-danger' },
+    skipped:   { label: 'Skipped',   cls: 'bg-secondary-subtle text-secondary' },
+    not_found: { label: 'Not Found', cls: 'bg-warning-subtle text-warning' },
+    error:     { label: 'Error',     cls: 'bg-danger-subtle text-danger' },
+};
+
+function GoogleLogDetailModal({ log: initialLog, onClose }) {
+    const [detail, setDetail]         = useState(initialLog);
+    const [activeTab, setActiveTab]   = useState('summary');
+    const [rowLogs, setRowLogs]       = useState([]);
+    const [rowLoading, setRowLoading] = useState(false);
+    const [rowPage, setRowPage]       = useState(1);
+    const [rowMeta, setRowMeta]       = useState(null);
+    const [rowStatusFilter, setRowStatusFilter] = useState('');
+    const pollRef = useRef(null);
+
+    useEffect(() => {
+        setDetail(initialLog);
+        const isLive = ['running', 'pending'].includes(initialLog.status);
+        if (isLive) {
+            pollRef.current = setInterval(async () => {
+                try {
+                    const { data } = await api(`google/logs/${initialLog.id}`);
+                    setDetail(data);
+                    if (!['running', 'pending'].includes(data.status)) clearInterval(pollRef.current);
+                } catch { /* ignore */ }
+            }, 2000);
+        }
+        return () => clearInterval(pollRef.current);
+    }, [initialLog]);
+
+    const loadRowLogs = useCallback(async (page = 1, statusFilter = rowStatusFilter) => {
+        setRowLoading(true);
+        try {
+            const params = new URLSearchParams({ page });
+            if (statusFilter) params.append('status', statusFilter);
+            const { data } = await api(`google/logs/${initialLog.id}/rows?${params}`);
+            setRowLogs(data.data);
+            setRowMeta({ total: data.total, lastPage: data.last_page, currentPage: data.current_page });
+            setRowPage(page);
+        } catch { /* ignore */ } finally { setRowLoading(false); }
+    }, [initialLog.id, rowStatusFilter]);
+
+    useEffect(() => {
+        if (activeTab === 'rows') loadRowLogs(1, rowStatusFilter);
+    }, [activeTab, rowStatusFilter]);
+
+    const si      = getStatus(detail.status);
+    const total   = detail.total_rows || 0;
+    const done    = (detail.processed_rows || 0) + (detail.skipped_rows || 0);
+    const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
+    const isLive  = ['running', 'pending'].includes(detail.status);
+    const secs    = detail.started_at && detail.completed_at
+        ? Math.round((new Date(detail.completed_at) - new Date(detail.started_at)) / 1000) : null;
+    const duration = secs !== null ? (secs < 60 ? `${secs}s` : `${(secs / 60).toFixed(1)}m`) : (isLive ? 'Running…' : '—');
+
+    const statCards = [
+        { label: 'Updated',   value: detail.processed_rows || 0, cls: 'text-success',   icon: '✓', key: 'found'     },
+        { label: 'Failed',    value: detail.failed_rows    || 0, cls: 'text-danger',    icon: '✗', key: 'failed'    },
+        { label: 'Skipped',   value: detail.skipped_rows   || 0, cls: 'text-secondary', icon: '—', key: 'skipped'   },
+        { label: 'Not Found', value: 0,                          cls: 'text-warning',   icon: '?', key: 'not_found' },
+        { label: 'Total',     value: total,                      cls: 'fw-semibold',    icon: '#', key: ''          },
+    ];
+
+    return (
+        <Modal show onHide={onClose} centered size="xl">
+            <ModalHeader closeButton>
+                <ModalTitle as="h5">
+                    Google Log — {detail.job?.name ?? `Job #${detail.job_id}`}
+                    {isLive && <Spinner animation="border" size="sm" className="ms-2 text-primary" />}
+                </ModalTitle>
+            </ModalHeader>
+            <ModalBody style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                <Nav variant="tabs" className="mb-3">
+                    <Nav.Item>
+                        <Nav.Link active={activeTab === 'summary'} onClick={() => setActiveTab('summary')} style={{ cursor: 'pointer' }}>
+                            Summary
+                        </Nav.Link>
+                    </Nav.Item>
+                    <Nav.Item>
+                        <Nav.Link active={activeTab === 'rows'} onClick={() => setActiveTab('rows')} style={{ cursor: 'pointer' }}>
+                            Row Logs {rowMeta ? <span className="badge bg-secondary ms-1">{rowMeta.total.toLocaleString()}</span> : ''}
+                        </Nav.Link>
+                    </Nav.Item>
+                </Nav>
+
+                {activeTab === 'summary' && (<>
+                    <div className="d-flex flex-wrap gap-3 mb-4 align-items-start">
+                        <div>
+                            <small className="text-muted d-block mb-1">Status</small>
+                            <span className={`badge fs-sm ${si.cls}`}>{si.label}</span>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Duration</small>
+                            <strong>{duration}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Started</small>
+                            <strong>{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}</strong>
+                        </div>
+                        <div>
+                            <small className="text-muted d-block mb-1">Completed</small>
+                            <strong>{detail.completed_at ? new Date(detail.completed_at).toLocaleString() : '—'}</strong>
+                        </div>
+                        {detail.account && (
+                            <div>
+                                <small className="text-muted d-block mb-1">API Account</small>
+                                <strong>{detail.account.name}</strong>
+                            </div>
+                        )}
+                    </div>
+
+                    {total > 0 && (
+                        <div className="mb-4">
+                            <div className="d-flex justify-content-between mb-1">
+                                <small className="fw-semibold">Progress</small>
+                                <small className="fw-semibold">{done} / {total} rows ({pct}%)</small>
+                            </div>
+                            <ProgressBar now={pct} animated={isLive}
+                                variant={isLive ? 'primary' : (detail.status === 'failed' ? 'danger' : 'success')}
+                                style={{ height: 10, borderRadius: 6 }} />
+                        </div>
+                    )}
+
+                    <div className="mb-4">
+                        <h6 className="mb-2">Row Breakdown <small className="text-muted fw-normal">(click to filter row logs)</small></h6>
+                        <Row className="g-2">
+                            {statCards.map(({ label, value, cls, icon, key }) => (
+                                <Col xs={6} md={4} key={label}>
+                                    <div className="p-3 rounded border text-center"
+                                        style={{ cursor: key ? 'pointer' : 'default' }}
+                                        onClick={() => { if (key) { setRowStatusFilter(key); setActiveTab('rows'); } }}>
+                                        <div className={`fs-4 fw-bold ${cls}`}>{value.toLocaleString()}</div>
+                                        <small className="text-muted">{icon} {label}</small>
+                                    </div>
+                                </Col>
+                            ))}
+                        </Row>
+                    </div>
+
+                    {detail.new_columns_added?.length > 0 && (
+                        <div className="mb-4">
+                            <h6 className="mb-2">Auto-Created Columns</h6>
+                            <div className="d-flex flex-wrap gap-2">
+                                {detail.new_columns_added.map(c => (
+                                    <span key={c} className="badge bg-warning-subtle text-warning fs-sm">+ {c}</span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {detail.error_message && (
+                        <div>
+                            <h6 className="mb-2 text-danger">Error</h6>
+                            <pre className="p-3 rounded mb-0"
+                                style={{ background: '#1e1e2e', color: '#f38ba8', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                {detail.error_message}
+                            </pre>
+                        </div>
+                    )}
+                </>)}
+
+                {activeTab === 'rows' && (<>
+                    <div className="d-flex align-items-center gap-2 mb-3">
+                        <Form.Select size="sm" style={{ width: 160 }} value={rowStatusFilter}
+                            onChange={e => setRowStatusFilter(e.target.value)}>
+                            <option value="">All statuses</option>
+                            {Object.entries(GOOGLE_ROW_STATUS).map(([k, v]) => (
+                                <option key={k} value={k}>{v.label}</option>
+                            ))}
+                        </Form.Select>
+                        <button className="btn btn-light btn-sm btn-icon" title="Refresh" onClick={() => loadRowLogs(rowPage)}>
+                            <Icon icon="refresh" className="fs-lg" />
+                        </button>
+                        {rowMeta && <small className="text-muted">{rowMeta.total.toLocaleString()} entries</small>}
+                    </div>
+
+                    {rowLoading ? (
+                        <div className="text-center py-4"><Spinner animation="border" size="sm" /></div>
+                    ) : rowLogs.length === 0 ? (
+                        <div className="text-center text-muted py-4">No row logs yet.</div>
+                    ) : (<>
+                        <div className="table-responsive">
+                            <table className="table table-sm table-hover mb-0 align-middle" style={{ fontSize: 13 }}>
+                                <thead className="table-light">
+                                    <tr>
+                                        <th>Row ID</th>
+                                        <th>Status</th>
+                                        <th>Search Term</th>
+                                        <th>Location</th>
+                                        <th>Google Result</th>
+                                        <th>Rating</th>
+                                        <th>Fields Written</th>
+                                        <th>Error</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rowLogs.map(r => {
+                                        const rs = GOOGLE_ROW_STATUS[r.status] ?? { label: r.status, cls: 'bg-secondary-subtle text-secondary' };
+                                        return (
+                                            <tr key={r.id}>
+                                                <td className="font-monospace text-muted">#{r.row_id ?? '—'}</td>
+                                                <td><span className={`badge ${rs.cls}`}>{rs.label}</span></td>
+                                                <td>
+                                                    {r.search_term
+                                                        ? <span>{r.search_term}</span>
+                                                        : <span className="text-danger fst-italic">empty</span>}
+                                                </td>
+                                                <td>
+                                                    {r.search_location
+                                                        ? <span className="text-muted">{r.search_location}</span>
+                                                        : <span className="text-warning fst-italic">none</span>}
+                                                </td>
+                                                <td>
+                                                    {r.google_name ? (
+                                                        <div>
+                                                            <span className="fw-semibold">{r.google_name}</span>
+                                                            {r.google_address && <small className="text-muted d-block">{r.google_address}</small>}
+                                                        </div>
+                                                    ) : <span className="text-muted">—</span>}
+                                                </td>
+                                                <td>{r.google_rating ?? '—'}</td>
+                                                <td>
+                                                    {(r.fields_updated || []).length > 0 ? (
+                                                        <div className="d-flex flex-wrap gap-1">
+                                                            {r.fields_updated.slice(0, 5).map(f => (
+                                                                <span key={f} className="badge bg-info-subtle text-info" style={{ fontSize: 10 }}>{f}</span>
+                                                            ))}
+                                                            {r.fields_updated.length > 5 && (
+                                                                <span className="badge bg-secondary-subtle text-secondary" style={{ fontSize: 10 }}>+{r.fields_updated.length - 5} more</span>
+                                                            )}
+                                                        </div>
+                                                    ) : <span className="text-muted">—</span>}
+                                                </td>
+                                                <td>
+                                                    {r.error && <small className="text-danger">{r.error}</small>}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                        {rowMeta && rowMeta.lastPage > 1 && (
+                            <div className="d-flex align-items-center justify-content-between mt-3">
+                                <small className="text-muted">Page {rowMeta.currentPage} of {rowMeta.lastPage}</small>
+                                <div className="d-flex gap-1">
+                                    <button className="btn btn-light btn-sm" disabled={rowMeta.currentPage <= 1}
+                                        onClick={() => loadRowLogs(rowMeta.currentPage - 1)}>‹ Prev</button>
+                                    <button className="btn btn-light btn-sm" disabled={rowMeta.currentPage >= rowMeta.lastPage}
+                                        onClick={() => loadRowLogs(rowMeta.currentPage + 1)}>Next ›</button>
+                                </div>
+                            </div>
+                        )}
+                    </>)}
+                </>)}
+            </ModalBody>
+            <ModalFooter>
+                <button className="btn btn-light" onClick={onClose}>Close</button>
+            </ModalFooter>
+        </Modal>
+    );
+}
+
 // ─── GOOGLE LOGS TAB ─────────────────────────────────────────────────────────
 function GoogleLogsTab() {
     const [logs, setLogs]         = useState([]);
     const [jobs, setJobs]         = useState([]);
     const [jobFilter, setJobFilter] = useState('');
     const [loading, setLoading]   = useState(true);
+    const [detailLog, setDetailLog] = useState(null);
     const pollRef                 = useRef(null);
 
     const load = useCallback(async () => {
@@ -1619,6 +1887,7 @@ function GoogleLogsTab() {
     };
 
     return (
+        <>
         <Card>
             <CardHeader className="border-light justify-content-between">
                 <h5 className="card-title mb-0">Google Enrichment Logs</h5>
@@ -1690,11 +1959,17 @@ function GoogleLogsTab() {
                                         </td>
                                         <td><small>{log.started_at ? new Date(log.started_at).toLocaleString() : '—'}</small></td>
                                         <td>
-                                            {active && (
-                                                <button className="btn btn-warning btn-sm" onClick={() => stopLog(log)}>
-                                                    <Icon icon="square" className="me-1 fs-sm" />Stop
+                                            <div className="d-flex gap-1">
+                                                <button className="btn btn-soft-info btn-sm btn-icon" title="View Details"
+                                                    onClick={() => setDetailLog(log)}>
+                                                    <Icon icon="eye" className="fs-lg" />
                                                 </button>
-                                            )}
+                                                {active && (
+                                                    <button className="btn btn-warning btn-sm" onClick={() => stopLog(log)}>
+                                                        <Icon icon="square" className="me-1 fs-sm" />Stop
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 );
@@ -1704,6 +1979,9 @@ function GoogleLogsTab() {
                 </div>
             )}
         </Card>
+
+        {detailLog && <GoogleLogDetailModal log={detailLog} onClose={() => setDetailLog(null)} />}
+        </>
     );
 }
 

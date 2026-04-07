@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\GoogleAccount;
 use App\Models\GoogleJobLog;
+use App\Models\GoogleRowLog;
 use App\Models\SectionEntity;
 use App\Models\SectionField;
 use App\Models\YelpAccount;
@@ -1003,6 +1004,14 @@ class YelpSyncService
 
                         if (!$term) {
                             $skipped++;
+                            GoogleRowLog::create([
+                                'log_id'          => $log->id,
+                                'row_id'          => $rowId,
+                                'status'          => 'skipped',
+                                'search_term'     => null,
+                                'search_location' => $location ?: null,
+                                'error'           => 'Business name column is empty for this row.',
+                            ]);
                             $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
                             continue;
                         }
@@ -1010,8 +1019,8 @@ class YelpSyncService
                         $account = $this->pickGoogleAccount();
                         if (!$account) {
                             $log->update([
-                                'status'        => 'paused',
-                                'error_message' => 'All Google accounts exhausted for today. Resume tomorrow.',
+                                'status'         => 'paused',
+                                'error_message'  => 'All Google accounts exhausted for today. Resume tomorrow.',
                                 'processed_rows' => $processed,
                                 'failed_rows'    => $failed,
                                 'skipped_rows'   => $skipped,
@@ -1029,22 +1038,28 @@ class YelpSyncService
                         }
 
                         if ($existingPlaceId) {
-                            // 1 call: details only
                             if ($maxCalls > 0 && ($callsMade + 1) > $maxCalls) {
                                 $limitHit = true;
                                 return false;
                             }
                             $placeId = $existingPlaceId;
                         } else {
-                            // 2 calls: search + details
                             $placeId = $google->searchPlace($term, $location);
                             $account->incrementUsage();
                             $callsMade++;
 
                             if (!$placeId) {
                                 $skipped++;
+                                GoogleRowLog::create([
+                                    'log_id'          => $log->id,
+                                    'row_id'          => $rowId,
+                                    'status'          => 'not_found',
+                                    'search_term'     => $term,
+                                    'search_location' => $location ?: null,
+                                    'error'           => 'No matching place found on Google.',
+                                ]);
                                 $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
-                                continue; // no sleep — move on immediately
+                                continue;
                             }
                         }
 
@@ -1054,8 +1069,17 @@ class YelpSyncService
 
                         if (!$details) {
                             $failed++;
+                            GoogleRowLog::create([
+                                'log_id'          => $log->id,
+                                'row_id'          => $rowId,
+                                'status'          => 'failed',
+                                'search_term'     => $term,
+                                'search_location' => $location ?: null,
+                                'google_place_id' => $placeId,
+                                'error'           => 'Place details fetch returned null (possible API error or bad place ID).',
+                            ]);
                             $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
-                            continue; // no sleep
+                            continue;
                         }
 
                         $extracted = $google->extractFields($details);
@@ -1065,8 +1089,6 @@ class YelpSyncService
                             foreach ($googleColumnMap as $googleField => $dbColumn) {
                                 $value = $extracted[$googleField] ?? null;
                                 if ($value === null) continue;
-                                // Check $newColumnsAdded first — Schema::hasColumn() is cached and returns
-                                // stale results after a column is added in the same run
                                 if (!in_array($dbColumn, $newColumnsAdded) && !Schema::hasColumn($tableName, $dbColumn)) {
                                     $this->addGoogleColumn($entity, $tableName, $dbColumn, $fieldIndex[$googleField] ?? null);
                                     $newColumnsAdded[] = $dbColumn;
@@ -1089,12 +1111,32 @@ class YelpSyncService
                             DB::table($tableName)->where('id', $rowId)->update($updates);
                         }
 
+                        GoogleRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'status'          => 'found',
+                            'search_term'     => $term,
+                            'search_location' => $location ?: null,
+                            'google_place_id' => $extracted['google_place_id'] ?? $placeId,
+                            'google_name'     => $extracted['google_name'] ?? null,
+                            'google_address'  => $extracted['google_address'] ?? null,
+                            'google_rating'   => $extracted['google_rating'] ?? null,
+                            'fields_updated'  => array_keys($updates),
+                        ]);
+
                         $processed++;
                         $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
-                        // No sleep — run as fast as Google allows (auto-retry on 429 inside GoogleService)
 
                     } catch (\Throwable $e) {
                         $failed++;
+                        GoogleRowLog::create([
+                            'log_id'          => $log->id,
+                            'row_id'          => $rowId,
+                            'status'          => 'error',
+                            'search_term'     => $term ?? null,
+                            'search_location' => isset($location) && $location !== '' ? $location : null,
+                            'error'           => $e->getMessage(),
+                        ]);
                         $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
                     }
                 }
