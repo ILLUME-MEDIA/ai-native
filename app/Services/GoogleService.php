@@ -147,13 +147,17 @@ class GoogleService
                 }
 
                 if ($status !== 200) {
-                    return null;
+                    $body = (string) $resp->getBody();
+                    $msg  = json_decode($body, true)['error']['message'] ?? $body;
+                    throw new \RuntimeException("Google Places API {$status}: {$msg}");
                 }
 
                 return json_decode((string) $resp->getBody(), true);
 
+            } catch (\RuntimeException $e) {
+                throw $e; // propagate so caller can log the real error
             } catch (\Throwable $e) {
-                return null;
+                throw new \RuntimeException("Google request failed: " . $e->getMessage());
             }
         }
 

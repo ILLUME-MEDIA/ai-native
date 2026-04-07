@@ -1063,24 +1063,10 @@ class YelpSyncService
                             }
                         }
 
+                        // getPlaceDetails throws RuntimeException on non-200 — caught below
                         $details = $google->getPlaceDetails($placeId);
                         $account->incrementUsage();
                         $callsMade++;
-
-                        if (!$details) {
-                            $failed++;
-                            GoogleRowLog::create([
-                                'log_id'          => $log->id,
-                                'row_id'          => $rowId,
-                                'status'          => 'failed',
-                                'search_term'     => $term,
-                                'search_location' => $location ?: null,
-                                'google_place_id' => $placeId,
-                                'error'           => 'Place details fetch returned null (possible API error or bad place ID).',
-                            ]);
-                            $this->persistGoogleProgress($log, $processed, $failed, $skipped, $job, $lastProcessedId);
-                            continue;
-                        }
 
                         $extracted = $google->extractFields($details);
                         $updates   = [];
