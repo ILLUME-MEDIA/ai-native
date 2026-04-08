@@ -14,7 +14,7 @@ function colorForUser(userId) {
 /**
  * C-02: Collaboration Cursors
  *
- * Polls the presence API every 3 s and renders remote cursors as Monaco decorations.
+ * Polls the presence API every 15 s and renders remote cursors as Monaco decorations.
  * Also sends the current user's cursor position + open file on each keystroke (throttled).
  *
  * Props:
@@ -22,12 +22,14 @@ function colorForUser(userId) {
  *   monacoEditorRef   – ref to the Monaco IStandaloneCodeEditor instance
  *   activeTab         – current open tab ({ path })
  */
-export default function CollaborationCursors({ workspace, monacoEditorRef, activeTab }) {
+export default function CollaborationCursors({ workspace, monacoEditorRef, activeTab, pauseRef }) {
     const decorationsRef  = useRef([]);   // active decoration IDs
     const usersRef        = useRef([]);   // last fetched user list
     const pollTimerRef    = useRef(null);
     const heartbeatRef    = useRef(null);
     const cursorSendRef   = useRef(null); // throttle timer for cursor sends
+    const pollAbortRef    = useRef(null); // AbortController for in-flight poll
+    const heartAbortRef   = useRef(null); // AbortController for in-flight heartbeat
 
     // ── Send own cursor position to the server ────────────────────────────────
     const sendCursor = useCallback(() => {
@@ -35,12 +37,14 @@ export default function CollaborationCursors({ workspace, monacoEditorRef, activ
         const editor = monacoEditorRef?.current;
         const pos    = editor?.getPosition();
 
+        heartAbortRef.current?.abort();
+        heartAbortRef.current = new AbortController();
         axios.post(`/api/workspaces/${workspace.id}/presence/heartbeat`, {
             open_file:   activeTab?.path ?? null,
             cursor_line: pos?.lineNumber ?? null,
             cursor_col:  pos?.column    ?? null,
-        }).catch(() => { /* silent — heartbeat failure is non-critical */ });
-    }, [workspace, monacoEditorRef, activeTab]);
+        }, { signal: heartAbortRef.current.signal }).catch(() => {});
+    }, [workspace, monacoEditorRef, activeTab, pauseRef]);
 
     // Throttled cursor sender — fires at most once per 2 s
     const scheduleCursorSend = useCallback(() => {
@@ -119,31 +123,58 @@ export default function CollaborationCursors({ workspace, monacoEditorRef, activ
     // ── Poll remote cursors ───────────────────────────────────────────────────
     const poll = useCallback(async () => {
         if (!workspace) return;
+        pollAbortRef.current?.abort();
+        pollAbortRef.current = new AbortController();
         try {
-            const { data } = await axios.get(`/api/workspaces/${workspace.id}/presence`);
+            const { data } = await axios.get(`/api/workspaces/${workspace.id}/presence`,
+                { signal: pollAbortRef.current.signal });
             usersRef.current = data.users ?? [];
             applyDecorations(usersRef.current);
-        } catch { /* silent */ }
-    }, [workspace, applyDecorations]);
+        } catch { /* silent — includes AbortError */ }
+    }, [workspace, applyDecorations, pauseRef]);
+
+    // ── Start / stop interval helpers ────────────────────────────────────────
+    const startTimers = useCallback(() => {
+        if (pollTimerRef.current || heartbeatRef.current) return;
+        pollTimerRef.current  = setInterval(poll,       60000);
+        heartbeatRef.current  = setInterval(sendCursor, 50000);
+    }, [poll, sendCursor]);
+
+    const stopTimers = useCallback(() => {
+        clearInterval(pollTimerRef.current);
+        clearInterval(heartbeatRef.current);
+        pollTimerRef.current  = null;
+        heartbeatRef.current  = null;
+        // Abort any in-flight requests immediately so PHP is freed
+        pollAbortRef.current?.abort();
+        heartAbortRef.current?.abort();
+    }, []);
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!workspace) return;
 
-        // Initial load + periodic poll
-        poll();
-        pollTimerRef.current = setInterval(poll, 3000);
+        // Stop timers entirely while AI streams — restart 3 s after done.
+        // This prevents presence from queuing behind chat-stream on single-threaded PHP.
+        const onAiStreaming = (e) => {
+            if (e.detail?.streaming) {
+                stopTimers();
+            } else {
+                setTimeout(() => startTimers(), 3000);
+            }
+        };
+        window.addEventListener('ce-ai-streaming', onAiStreaming);
 
-        // Heartbeat every 12 s
-        sendCursor();
-        heartbeatRef.current = setInterval(sendCursor, 12000);
+        // Delay initial calls 8 s so page-load requests settle first.
+        const initTimer = setTimeout(() => { poll(); sendCursor(); startTimers(); }, 8000);
 
         return () => {
-            clearInterval(pollTimerRef.current);
-            clearInterval(heartbeatRef.current);
+            window.removeEventListener('ce-ai-streaming', onAiStreaming);
+            clearTimeout(initTimer);
+            stopTimers();
             clearTimeout(cursorSendRef.current);
         };
-    }, [workspace, poll, sendCursor]);
+    }, [workspace, poll, sendCursor, startTimers, stopTimers]);
 
     // Re-apply decorations when active tab changes
     useEffect(() => {

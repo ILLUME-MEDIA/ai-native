@@ -614,6 +614,10 @@ Route::group([], function () {
         // Terminal
         Route::post('terminal/execute', [\App\Http\Controllers\Workspace\TerminalController::class, 'execute']);
         Route::post('terminal/execute-stream', [\App\Http\Controllers\Workspace\TerminalController::class, 'executeStream']);
+        // Background job terminal (non-blocking — AI can work in parallel)
+        Route::post('terminal/execute-job', [\App\Http\Controllers\Workspace\TerminalController::class, 'startJob']);
+        Route::get('terminal/job/{jobId}', [\App\Http\Controllers\Workspace\TerminalController::class, 'pollJob']);
+        Route::delete('terminal/job/{jobId}', [\App\Http\Controllers\Workspace\TerminalController::class, 'killJob']);
 
         // Git
         Route::post('git/init', [\App\Http\Controllers\Workspace\GitController::class, 'init']);

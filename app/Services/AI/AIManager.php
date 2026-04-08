@@ -399,8 +399,12 @@ class AIManager
                     'content' => json_encode($toolResult)
                 ];
 
-                // If tool was approved and created a file, add to code changes
-                if (isset($toolResult['success']) && $toolResult['success'] && isset($toolResult['path'])) {
+                // If tool created/updated a FILE (not a directory), add to code changes
+                if (
+                    isset($toolResult['success']) && $toolResult['success'] &&
+                    isset($toolResult['path']) &&
+                    ($toolResult['type'] ?? '') !== 'directory'
+                ) {
                     $codeChanges[] = [
                         'path' => $toolResult['path'],
                         'action' => $toolResult['type'] ?? 'update',
@@ -494,6 +498,65 @@ class AIManager
         $instructions .= "To use a tool, respond with: [TOOL_CALL: toolName({\"param\": \"value\"})]\n";
         $instructions .= "Example: [TOOL_CALL: createFile({\"path\": \"index.html\", \"content\": \"<html>...</html>\"})]\n\n";
         $instructions .= "After executing a tool, you'll receive the result and can use more tools or provide a final response.\n";
+        $instructions .= "\n### CRITICAL FILE CREATION RULES\n";
+        $instructions .= "1. NEVER create empty files. Always include FULL, COMPLETE, WORKING code in the `content` parameter.\n";
+        $instructions .= "2. When creating a file with `createFile`, the `content` field MUST contain the entire file contents — not a placeholder, not a TODO, not an empty string.\n";
+        $instructions .= "3. If a file already exists and needs updating, use `writeFile` with the full new content.\n";
+        $instructions .= "4. After creating/writing all files, always provide a final summary response explaining what was done.\n";
+        $instructions .= "5. If creating multiple files (e.g., full auth system), create ALL files in sequence before giving the final response.\n";
+        $instructions .= "6. CODE QUALITY: Every component/module MUST import ALL symbols it uses. Before writing a file, mentally verify every identifier is imported. For React: import Navigate, Link, useNavigate etc. from 'react-router-dom' if used.\n";
+        $instructions .= "7. DOTFILES: You CAN create .gitignore, .prettierrc, .eslintrc etc. — these are allowed. Use path like '.gitignore' (with the dot prefix).\n";
+        $instructions .= "\n### EXECUTION RULES — MUST FOLLOW\n";
+        $instructions .= "- NEVER stop mid-task and ask 'Would you like me to...?' or 'Should I also...?' — just DO IT.\n";
+        $instructions .= "- NEVER ask for confirmation before creating files or running commands.\n";
+        $instructions .= "- Complete the ENTIRE requested task in one go. If the user asks for a full auth system, create ALL files without stopping.\n";
+        $instructions .= "- Use `runCommand` to install packages and run the app when needed — do not ask permission.\n";
+        $instructions .= "- Only stop when the task is 100% complete, then give a brief summary.\n";
+        $instructions .= "\n### COMPLETE PROJECT STRUCTURE RULES\n";
+        $instructions .= "When creating any app/project/system, you MUST create ALL of these files (not just the feature files):\n\n";
+        $instructions .= "**React/Vite project — required files:**\n";
+        $instructions .= "- package.json (with all dependencies: react, react-dom, react-router-dom, axios, etc.)\n";
+        $instructions .= "- vite.config.js (IMPORTANT: set server.port to 3000 — port 5173 is reserved)\n";
+        $instructions .= "- index.html (entry HTML with <div id='root'>)\n";
+        $instructions .= "- src/main.jsx (ReactDOM.createRoot entry point)\n";
+        $instructions .= "- src/App.jsx (with all routes using react-router-dom)\n";
+        $instructions .= "- src/index.css (basic reset styles)\n";
+        $instructions .= "- .gitignore\n";
+        $instructions .= "- README.md with run instructions\n\n";
+        $instructions .= "**Then create the feature files** (pages, components, context, hooks, api, etc.)\n\n";
+        $instructions .= "**After creating all files**, run these commands in sequence:\n";
+        $instructions .= "1. `npm install` (install all dependencies)\n";
+        $instructions .= "2. `npm run dev` (start dev server)\n\n";
+        $instructions .= "**PORT RULE**: ALWAYS use port 3000 for workspace projects. NEVER use 5173 (reserved by the editor).\n";
+        $instructions .= "In vite.config.js always include:\n";
+        $instructions .= "  server: { port: 3000, host: '0.0.0.0', strictPort: false }\n\n";
+
+        $instructions .= "### ⚠️ CRITICAL: DEV SERVER RULE\n";
+        $instructions .= "NEVER run `npm run dev`, `vite`, `node server.js`, or ANY long-running server command via runCommand.\n";
+        $instructions .= "These WILL fail with 'listen UNKNOWN' because they cannot bind sockets as PHP child processes on Windows.\n";
+        $instructions .= "Instead, after creating all files and running `npm install`:\n";
+        $instructions .= "1. Confirm all files are created and npm install succeeded.\n";
+        $instructions .= "2. Tell the user: 'Open a new CMD window, go to [workspace path], and run: npm run dev'\n";
+        $instructions .= "3. DO NOT attempt to start the server yourself via runCommand.\n\n";
+
+        $instructions .= "### ALLOWED via runCommand (one-time commands only):\n";
+        $instructions .= "- npm install / npm install <package>\n";
+        $instructions .= "- npm run build\n";
+        $instructions .= "- git commands\n";
+        $instructions .= "- file operations (ls, cat, find, grep)\n";
+        $instructions .= "- taskkill, netstat (for process management)\n\n";
+
+        $instructions .= "**STOP RULES — must follow exactly:**\n";
+        $instructions .= "- If a command fails with the SAME error twice → STOP trying that command, move on.\n";
+        $instructions .= "- If runCommand returns 'STOP' in the error → immediately give final summary to user, do not call any more tools.\n";
+        $instructions .= "- If netstat/taskkill/port-scan fails → STOP port scanning, it won't help. Use strictPort:false instead.\n";
+        $instructions .= "- NEVER repeat the same command more than once.\n";
+        $instructions .= "**Node/Express project — required files:**\n";
+        $instructions .= "- package.json (with express, cors, dotenv, etc.)\n";
+        $instructions .= "- .env (PORT=3000)\n";
+        $instructions .= "- server.js or index.js (main entry)\n";
+        $instructions .= "- All route files, model files, middleware, etc.\n\n";
+        $instructions .= "REMEMBER: A project is only complete when `npm install && npm run dev` (or equivalent) works without errors.\n";
 
         return $instructions;
     }
@@ -729,16 +792,50 @@ class AIManager
         $pinnedContext = $data['pinned_context'] ?? [];
         $shouldStop = $data['should_stop'] ?? null;
         $extraSystem = (string) ($data['extra_system'] ?? '');
+        $conversationObj = $data['conversation_obj'] ?? null;
 
         // Set context so buildSystemPrompt() can scope rules correctly
         $this->contextUserId      = $user?->id;
         $this->contextWorkspaceId = $workspace?->id;
 
         try {
-            // Required UX protocol: show liveness immediately
+            // Required UX protocol: show liveness immediately — BEFORE any DB/network calls
             $streamCallback('status', ['message' => '🤔 Thinking...']);
             $streamCallback('status', ['message' => '🧠 Planning...']);
             $streamCallback('status', ['message' => 'Connecting to AI...']);
+
+            // Load prior conversation history for context (last 10 exchanges = 20 messages)
+            $priorHistory = [];
+            try {
+                if ($conversationObj) {
+                    $events = \App\Models\AIConversationEvent::where('conversation_id', $conversationObj->id)
+                        ->whereIn('type', ['user_message', 'assistant_message'])
+                        ->orderBy('id')
+                        ->limit(20)
+                        ->get();
+
+                    foreach ($events as $ev) {
+                        $payload = $ev->payload ?? [];
+                        if ($ev->type === 'user_message' && !empty($payload['message'])) {
+                            // Cap user messages at 1000 chars to avoid context overflow
+                            $content = mb_substr((string) $payload['message'], 0, 1000);
+                            $priorHistory[] = ['role' => 'user', 'content' => $content];
+                        } elseif ($ev->type === 'assistant_message' && !empty($payload['message'])) {
+                            // Cap assistant messages at 2000 chars (they can be very long)
+                            $content = mb_substr((string) $payload['message'], 0, 2000);
+                            $priorHistory[] = ['role' => 'assistant', 'content' => $content];
+                        }
+                    }
+
+                    // Remove the last user message from history if it matches current message
+                    // (it was just saved to DB before this call, so it would be duplicated)
+                    if (!empty($priorHistory) && end($priorHistory)['role'] === 'user') {
+                        array_pop($priorHistory);
+                    }
+                }
+            } catch (\Exception $e) {
+                $priorHistory = []; // safe fallback — no history is better than a crash
+            }
 
             // Get endpoints (support failover for streaming)
             $endpoints = $endpointId
@@ -770,47 +867,35 @@ class AIManager
 
             $streamCallback('status', ['message' => 'Generating response...']);
 
-            $lastError = null;
-            foreach ($endpoints as $idx => $endpoint) {
-                try {
-                    $streamCallback('status', ['message' => 'Endpoint selected', 'endpoint' => $endpoint->name]);
-
-                    $useModel = $modelId;
-                    if ($useModel === 'AUTO' || !$useModel) {
-                        $useModel = $this->selectBestModel($endpoint);
-                        $streamCallback('status', ['message' => 'Model selected', 'model' => $useModel]);
-                    }
-
-                    $this->attemptExecutionWithToolsStream(
-                        $endpoint,
-                        $message,
-                        $baseSystemPrompt,
-                        $useModel,
-                        $toolDefinitions,
-                        $toolExecutor,
-                        $workspace,
-                        $user,
-                        $streamCallback,
-                        is_callable($shouldStop) ? $shouldStop : null
-                    );
-                    return; // success (complete event emitted)
-                } catch (\Exception $e) {
-                    $lastError = $e->getMessage();
-                    $streamCallback('status', [
-                        'message' => '⚠️ Provider error, attempting failover...',
-                        'error' => $lastError,
-                        'attempt' => $idx + 1,
-                        'max' => $endpoints->count(),
-                    ]);
-
-                    // If user forced a specific endpoint, don't failover
-                    if ($endpointId) {
-                        throw $e;
-                    }
-                }
+            if ($endpoints->isEmpty()) {
+                throw new \Exception('No active AI endpoint available');
             }
 
-            throw new \Exception('All AI endpoints failed. Last error: ' . ($lastError ?? 'unknown'));
+            // Build the ordered list of (endpoint, model) pairs to try
+            $endpointList = [];
+            foreach ($endpoints as $ep) {
+                $m = $modelId;
+                if ($m === 'AUTO' || !$m) {
+                    $m = $this->selectBestModel($ep);
+                }
+                $endpointList[] = ['endpoint' => $ep, 'model' => $m];
+            }
+
+            $streamCallback('status', ['message' => 'Endpoint selected', 'endpoint' => $endpointList[0]['endpoint']->name]);
+            $streamCallback('status', ['message' => 'Model selected', 'model' => $endpointList[0]['model']]);
+
+            $this->runToolsStreamWithFailover(
+                $endpointList,
+                $message,
+                $baseSystemPrompt,
+                $toolDefinitions,
+                $toolExecutor,
+                $workspace,
+                $user,
+                $streamCallback,
+                is_callable($shouldStop) ? $shouldStop : null,
+                $priorHistory
+            );
 
         } catch (\Exception $e) {
             $streamCallback('error', [
@@ -823,62 +908,137 @@ class AIManager
     /**
      * Execute AI call with tool support and streaming
      */
-    protected function attemptExecutionWithToolsStream(
-        AIEndpoint $endpoint,
+    /**
+     * Run the tool-calling loop with automatic endpoint failover on any turn failure.
+     * $endpointList = [['endpoint' => AIEndpoint, 'model' => string], ...]
+     */
+    protected function runToolsStreamWithFailover(
+        array $endpointList,
         string $message,
         string $systemPrompt,
-        string $modelId,
         array $toolDefinitions,
         ?ToolExecutor $toolExecutor,
         $workspace,
         $user,
         callable $streamCallback,
-        ?callable $shouldStop = null
+        ?callable $shouldStop = null,
+        array $priorHistory = []
     ): void {
-        $adapter = AIProviderFactory::make($endpoint);
+        // Build conversation: system → history → current user message
+        $conversation = [['role' => 'system', 'content' => $systemPrompt]];
+        foreach ($priorHistory as $h) {
+            $conversation[] = $h;
+        }
+
+        // Build user message — multimodal array if images are attached
+        $images = $data['images'] ?? [];
+        if (!empty($images)) {
+            $userContent = [['type' => 'text', 'text' => $message ?: 'Please analyze the attached image(s).']];
+            foreach ($images as $img) {
+                if (empty($img['data'])) continue;
+                $userContent[] = [
+                    'type'      => 'image_url',
+                    'image_url' => ['url' => $img['data'], 'detail' => 'high'],
+                ];
+            }
+            $conversation[] = ['role' => 'user', 'content' => $userContent];
+        } else {
+            $conversation[] = ['role' => 'user', 'content' => $message];
+        }
+
+        $toolCalls    = [];
+        $codeChanges  = [];
+        $fullResponse = '';
+        $maxTurns     = config('ai_tools.max_execution_turns', 20);
+
+        // Current endpoint index — incremented on failure
+        $epIdx    = 0;
+        $ep       = $endpointList[$epIdx]['endpoint'];
+        $modelId  = $endpointList[$epIdx]['model'];
+        $adapter  = AIProviderFactory::make($ep);
         $adapter->setModel($modelId);
 
-        $conversation = [
-            ['role' => 'system', 'content' => $systemPrompt],
-            ['role' => 'user', 'content' => $message]
-        ];
-
-        $toolCalls = [];
-        $codeChanges = [];
-        $fullResponse = '';
-        $maxTurns = config('ai_tools.max_execution_turns', 10);
-
-        // Tool execution loop
         for ($turn = 0; $turn < $maxTurns; $turn++) {
             if ($shouldStop && $shouldStop()) {
-                $streamCallback('cancelled', [
-                    'status' => 'cancelled',
-                    'message' => 'Cancelled by user',
-                ]);
+                $streamCallback('cancelled', ['status' => 'cancelled', 'message' => 'Cancelled by user']);
                 return;
             }
 
             $streamCallback('turn_start', ['turn' => $turn + 1, 'max' => $maxTurns]);
+            $streamCallback('status', ['message' => $turn === 0 ? '🤖 Calling AI...' : '🔄 Continuing (turn ' . ($turn + 1) . ')...']);
+            if (ob_get_level() > 0) { @ob_flush(); }
+            @flush();
 
+            $result = null;
+            $turnFailed = false;
             $startTime = microtime(true);
 
-            // Call AI - check if adapter supports streaming
-            if (method_exists($adapter, 'generateTextStream')) {
-                // Stream response token by token
-                $result = $adapter->generateTextStream($conversation, $toolDefinitions, function($chunk) use ($streamCallback, $shouldStop) {
-                    if ($shouldStop && $shouldStop()) {
-                        throw new \RuntimeException('Cancelled');
-                    }
-                    $streamCallback('chunk', ['text' => $chunk]);
-                });
-            } else {
-                // Fallback: non-streaming
-                $result = $this->callAdapterWithTools($adapter, $conversation, $toolDefinitions);
-
-                // Send the full response as one chunk
-                if (isset($result['text'])) {
-                    $streamCallback('chunk', ['text' => $result['text']]);
+            // Try current endpoint, then each fallback
+            for ($tryEp = $epIdx; $tryEp < count($endpointList); $tryEp++) {
+                if ($tryEp > $epIdx) {
+                    // Switching to next endpoint mid-task
+                    $ep      = $endpointList[$tryEp]['endpoint'];
+                    $modelId = $endpointList[$tryEp]['model'];
+                    $adapter = AIProviderFactory::make($ep);
+                    $adapter->setModel($modelId);
+                    $epIdx   = $tryEp;
+                    $streamCallback('status', ['message' => "🔀 Switching to {$ep->name} ({$modelId})..."]);
+                    if (ob_get_level() > 0) { @ob_flush(); }
+                    @flush();
                 }
+
+                try {
+                    if (method_exists($adapter, 'generateTextStream')) {
+                        $result = $adapter->generateTextStream(
+                            $conversation,
+                            $toolDefinitions,
+                            // onChunk — called for every text token
+                            function($chunk) use ($streamCallback, $shouldStop) {
+                                if ($shouldStop && $shouldStop()) throw new \RuntimeException('Cancelled');
+                                $streamCallback('chunk', ['text' => $chunk]);
+                            },
+                            // onProgress — called every ~2s when only tool_call deltas arrive.
+                            // Sends a named SSE keepalive so the browser resets its silence timer.
+                            function() use ($streamCallback, $shouldStop) {
+                                if ($shouldStop && $shouldStop()) throw new \RuntimeException('Cancelled');
+                                $streamCallback('keepalive', ['ts' => time()]);
+                            }
+                        );
+                    } else {
+                        $result = $this->callAdapterWithTools($adapter, $conversation, $toolDefinitions);
+                        if (!empty($result['text'])) {
+                            $streamCallback('chunk', ['text' => $result['text']]);
+                        }
+                    }
+                    $turnFailed = false;
+                    break; // success — stop trying more endpoints
+
+                } catch (\RuntimeException $e) {
+                    if ($e->getMessage() === 'Cancelled') {
+                        $streamCallback('cancelled', ['status' => 'cancelled', 'message' => 'Cancelled by user']);
+                        return;
+                    }
+                    throw $e;
+                } catch (\Exception $e) {
+                    $errMsg = $e->getMessage();
+                    Log::error("AI turn {$turn} failed on endpoint {$ep->name}", ['error' => $errMsg]);
+                    $isRateLimit = str_contains(strtolower($errMsg), 'rate limit') || str_contains($errMsg, '429');
+
+                    if ($tryEp + 1 < count($endpointList)) {
+                        // More endpoints to try
+                        $streamCallback('status', ['message' => ($isRateLimit ? '⏱️ Rate limited' : '⚠️ Error') . ' — switching to next provider...']);
+                    } else {
+                        // No more endpoints
+                        $streamCallback('status', ['message' => $isRateLimit
+                            ? '⏱️ All providers rate limited. Task paused — please retry in 30s.'
+                            : '⚠️ All providers failed: ' . mb_substr($errMsg, 0, 100)]);
+                        $turnFailed = true;
+                    }
+                }
+            }
+
+            if ($turnFailed) {
+                break; // all endpoints exhausted → fall through to summary
             }
 
             $duration = microtime(true) - $startTime;
@@ -888,40 +1048,54 @@ class AIManager
                 $finalText = $result['text'] ?? $result['content'] ?? '';
                 $fullResponse .= $finalText;
 
-                // Parse any code changes
                 $parsedCodeChanges = $this->parseCodeChanges($finalText);
                 $codeChanges = array_merge($codeChanges, $parsedCodeChanges);
 
-                $this->logAction($endpoint, 'chat_stream', 'success', [
+                $this->logAction($ep, 'chat_stream', 'success', [
                     'duration' => $duration,
                     'model' => $modelId,
                     'turns' => $turn + 1,
                     'tool_calls' => count($toolCalls)
                 ]);
 
-                // UX: final phase before completion
                 $streamCallback('status', ['message' => '🔄 Updating preview...']);
-
-                // Send completion
                 $streamCallback('complete', [
                     'message' => $fullResponse,
                     'code_changes' => $codeChanges,
                     'tool_calls' => $toolCalls,
                     'model_used' => $modelId,
-                    'provider' => $endpoint->provider,
+                    'provider' => $ep->provider,
                     'original_message' => $message
                 ]);
-
                 return;
             }
+
+            // ── CRITICAL: Add assistant message WITH tool_calls to conversation ──
+            // Without this, the API call on the next turn sees a malformed history
+            // (tool results without a preceding assistant message) and fails silently.
+            $assistantToolCalls = array_map(function($tc) {
+                return [
+                    'id'       => $tc['id'] ?? ('call_' . uniqid()),
+                    'type'     => 'function',
+                    'function' => [
+                        'name'      => $tc['name'] ?? ($tc['function']['name'] ?? 'unknown'),
+                        'arguments' => is_string($tc['arguments'] ?? ($tc['function']['arguments'] ?? '{}'))
+                            ? ($tc['arguments'] ?? ($tc['function']['arguments'] ?? '{}'))
+                            : json_encode($tc['arguments'] ?? ($tc['function']['arguments'] ?? [])),
+                    ],
+                ];
+            }, $result['tool_calls']);
+
+            $conversation[] = [
+                'role'       => 'assistant',
+                'content'    => $result['text'] ?? null,
+                'tool_calls' => $assistantToolCalls,
+            ];
 
             // Execute tool calls
             foreach ($result['tool_calls'] as $toolCall) {
                 if ($shouldStop && $shouldStop()) {
-                    $streamCallback('cancelled', [
-                        'status' => 'cancelled',
-                        'message' => 'Cancelled by user',
-                    ]);
+                    $streamCallback('cancelled', ['status' => 'cancelled', 'message' => 'Cancelled by user']);
                     return;
                 }
 
@@ -931,14 +1105,10 @@ class AIManager
                     $toolArgs = json_decode($toolArgs, true) ?? [];
                 }
 
-                // UX protocol: status messages for tool phases
+                // UX status messages
                 if ($toolName === 'createFile') {
                     $t = (string) ($toolArgs['type'] ?? 'file');
-                    if ($t === 'directory') {
-                        $streamCallback('status', ['message' => '📁 Creating directories...']);
-                    } else {
-                        $streamCallback('status', ['message' => '🛠 Creating files...']);
-                    }
+                    $streamCallback('status', ['message' => $t === 'directory' ? '📁 Creating directories...' : '🛠 Creating files...']);
                 } elseif ($toolName === 'writeFile') {
                     $streamCallback('status', ['message' => '✏️ Editing code...']);
                 } elseif ($toolName === 'deleteFile') {
@@ -949,47 +1119,39 @@ class AIManager
                     $streamCallback('status', ['message' => '🔎 Reading files...']);
                 }
 
-                $streamCallback('tool_call', [
-                    'tool' => $toolName,
-                    'status' => 'executing',
-                    'arguments' => $toolArgs,
-                ]);
+                $streamCallback('tool_call', ['tool' => $toolName, 'status' => 'executing', 'arguments' => $toolArgs]);
 
-                if (!$toolExecutor || !$workspace) {
-                    $toolResult = [
-                        'success' => false,
-                        'error' => 'Tool execution not available'
-                    ];
-                } else {
-                    $toolResult = $toolExecutor->execute($toolCall, $workspace, $user);
-                }
+                $toolResult = (!$toolExecutor || !$workspace)
+                    ? ['success' => false, 'error' => 'Tool execution not available']
+                    : $toolExecutor->execute($toolCall, $workspace, $user);
 
-                // Track tool call
+                $toolCallId = $toolCall['id'] ?? ('call_' . uniqid());
+
                 $toolCalls[] = [
-                    'name' => $toolName,
+                    'name'      => $toolName,
                     'arguments' => $toolCall['arguments'] ?? $toolCall['function']['arguments'] ?? [],
-                    'result' => $toolResult
+                    'result'    => $toolResult,
                 ];
 
-                $streamCallback('tool_result', [
-                    'tool' => $toolName,
-                    'result' => $toolResult,
-                ]);
+                $streamCallback('tool_result', ['tool' => $toolName, 'result' => $toolResult]);
 
-                // Add tool result to conversation
+                // Add tool result to conversation (must match the tool_call_id above)
                 $conversation[] = [
-                    'role' => 'tool',
-                    'tool_call_id' => $toolCall['id'] ?? uniqid(),
-                    'name' => $toolName,
-                    'content' => json_encode($toolResult)
+                    'role'         => 'tool',
+                    'tool_call_id' => $toolCallId,
+                    'name'         => $toolName,
+                    'content'      => json_encode($toolResult),
                 ];
 
-                // If tool created/modified a file, add to code changes
+                // Keepalive: flush after every tool to prevent browser connection drop
+                if (ob_get_level() > 0) { @ob_flush(); }
+                @flush();
+
                 if (isset($toolResult['success']) && $toolResult['success'] && isset($toolResult['path'])) {
                     $codeChanges[] = [
-                        'path' => $toolResult['path'],
-                        'action' => $toolResult['type'] ?? 'update',
-                        'content' => $toolResult['content'] ?? ''
+                        'path'    => $toolResult['path'],
+                        'action'  => $toolResult['type'] ?? 'update',
+                        'content' => $toolResult['content'] ?? '',
                     ];
                 }
             }
@@ -1015,8 +1177,38 @@ class AIManager
             'code_changes' => $codeChanges,
             'tool_calls' => $toolCalls,
             'model_used' => $modelId,
-            'provider' => $endpoint->provider,
+            'provider' => $ep->provider,
             'original_message' => $message
         ]);
+    }
+
+    /**
+     * Legacy single-endpoint wrapper — kept for non-streaming callers.
+     */
+    protected function attemptExecutionWithToolsStream(
+        AIEndpoint $endpoint,
+        string $message,
+        string $systemPrompt,
+        string $modelId,
+        array $toolDefinitions,
+        ?ToolExecutor $toolExecutor,
+        $workspace,
+        $user,
+        callable $streamCallback,
+        ?callable $shouldStop = null,
+        array $priorHistory = []
+    ): void {
+        $this->runToolsStreamWithFailover(
+            [['endpoint' => $endpoint, 'model' => $modelId]],
+            $message,
+            $systemPrompt,
+            $toolDefinitions,
+            $toolExecutor,
+            $workspace,
+            $user,
+            $streamCallback,
+            $shouldStop,
+            $priorHistory
+        );
     }
 }

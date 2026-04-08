@@ -16,6 +16,15 @@ class PresenceController extends Controller
      */
     public function heartbeat(Request $request, Workspace $workspace): \Illuminate\Http\JsonResponse
     {
+        // Exit immediately if the browser has already closed the connection.
+        // This frees php artisan serve for the next request (e.g. chat-stream).
+        ignore_user_abort(false);
+        $request->session()->save(); // release session lock before DB work
+
+        if (connection_aborted()) {
+            return response()->json(['ok' => true]);
+        }
+
         $data = $request->validate([
             'open_file'   => 'nullable|string|max:500',
             'cursor_line' => 'nullable|integer|min:1',
@@ -40,6 +49,12 @@ class PresenceController extends Controller
      */
     public function list(Workspace $workspace): \Illuminate\Http\JsonResponse
     {
+        ignore_user_abort(false);
+
+        if (connection_aborted()) {
+            return response()->json(['users' => []]);
+        }
+
         $cutoff = now()->subSeconds(30);
 
         $users = WorkspacePresence::with('user:id,name')

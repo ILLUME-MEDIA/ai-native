@@ -32,10 +32,14 @@ export default function ApprovalPanel({ workspace, onClose, onApproved }) {
         try {
             await axios.post(`/api/approvals/${approvalId}/approve`);
             toast.success('Changes approved and applied');
+            // Persist resolved ID so chat banner never reappears after refresh
+            try {
+                const stored = new Set(JSON.parse(localStorage.getItem('ce_resolved_approvals') || '[]'));
+                stored.add(String(approvalId));
+                localStorage.setItem('ce_resolved_approvals', JSON.stringify([...stored]));
+            } catch {}
             loadApprovals();
-            if (onApproved) {
-                onApproved();
-            }
+            if (onApproved) onApproved();
         } catch (error) {
             toast.error(error.response?.data?.error || 'Failed to approve');
         }
@@ -43,10 +47,14 @@ export default function ApprovalPanel({ workspace, onClose, onApproved }) {
 
     async function reject(approvalId) {
         const reason = prompt('Reason for rejection (optional):');
-
         try {
             await axios.post(`/api/approvals/${approvalId}/reject`, { reason });
             toast.success('Changes rejected');
+            try {
+                const stored = new Set(JSON.parse(localStorage.getItem('ce_resolved_approvals') || '[]'));
+                stored.add(String(approvalId));
+                localStorage.setItem('ce_resolved_approvals', JSON.stringify([...stored]));
+            } catch {}
             loadApprovals();
         } catch (error) {
             toast.error('Failed to reject');

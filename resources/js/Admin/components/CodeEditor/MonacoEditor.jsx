@@ -188,10 +188,14 @@ export default function MonacoEditor({
                                 column: position.column,
                             }
                         );
+                        // Re-check cancellation after the async call returns
+                        if (token.isCancellationRequested) return { items: [] };
                         const completion = resp.data?.completion;
                         if (!completion) return { items: [] };
                         return { items: [{ insertText: completion }], enableForwardStability: true };
-                    } catch {
+                    } catch (e) {
+                        // Swallow Axios cancellation errors — they are non-fatal
+                        if (axios.isCancel?.(e)) return { items: [] };
                         return { items: [] };
                     }
                 },

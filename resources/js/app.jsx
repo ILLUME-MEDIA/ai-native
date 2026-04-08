@@ -1,6 +1,17 @@
 import '../css/app.css';
 import './bootstrap';
 
+// Suppress Monaco Editor React's internal Axios CancelToken rejection.
+// @monaco-editor/react cancels its CDN loader on hot-reload/unmount and the
+// rejection `{type:'cancelation', msg:'operation is manually canceled'}` bubbles
+// up as an unhandled promise — it is harmless but pollutes the console.
+window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    if (r && typeof r === 'object' && r.type === 'cancelation') {
+        e.preventDefault();
+    }
+});
+
 import { createInertiaApp, router } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createRoot } from 'react-dom/client';

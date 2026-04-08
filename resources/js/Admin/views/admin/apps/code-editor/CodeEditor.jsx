@@ -152,6 +152,9 @@ export default function CodeEditor() {
     const terminalApiRef = useRef(null);
     const monacoEditorRef = useRef(null);
     const pendingScrollLineRef = useRef(null);
+    // Shared ref: true while AI is streaming — presence/heartbeat pause to avoid
+    // blocking php artisan serve (single-process) during long SSE connections.
+    const aiStreamingRef = useRef(false);
 
     const handleTreeRefresh = useCallback((apiOrFn) => {
         if (typeof apiOrFn === 'function') { treeApiRef.current = { refresh: apiOrFn }; return; }
@@ -161,12 +164,27 @@ export default function CodeEditor() {
 
     function refreshFileTree() { treeApiRef.current?.refresh?.(); }
     function applyFileTreePatch(patchOrPatches) {
-        if (treeApiRef.current?.applyPatch) { treeApiRef.current.applyPatch(patchOrPatches); return; }
+        if (treeApiRef.current?.applyPatch) {
+            treeApiRef.current.applyPatch(patchOrPatches);
+            // Auto-open newly created files (op === 'create' and type === 'file')
+            const patches = Array.isArray(patchOrPatches) ? patchOrPatches : [patchOrPatches];
+            const createdFiles = patches.filter(p => p?.op === 'create' && p?.type === 'file' && p?.path);
+            if (createdFiles.length > 0) {
+                // Open the last created file
+                const last = createdFiles[createdFiles.length - 1];
+                handleFileSelect({ path: last.path, name: last.path.split('/').pop() });
+            }
+            return;
+        }
         refreshFileTree();
     }
 
     const handleTerminalApi = useCallback((api) => { terminalApiRef.current = api; }, []);
     const appendToTerminal = useCallback((entries) => { terminalApiRef.current?.appendEntries?.(entries); }, []);
+    const openTerminalTab = useCallback(() => {
+        setTerminalOpen(true);
+        setBottomTab('terminal');
+    }, []);
 
     // B-10: Bookmark helpers
     function getWorkspaceBookmarks() {
@@ -572,8 +590,22 @@ export default function CodeEditor() {
             const key = `ce_tabs_${ws.id}`;
             const saved = JSON.parse(localStorage.getItem(key) || 'null');
             if (!saved?.paths?.length) return;
-            const validPaths = saved.paths.filter(p => p && p.replace(/^\/+/, '').replace(/\/+$/, '') !== '');
-            if (!validPaths.length) return;
+
+            // Filter out empty paths, bare directory paths (no dot in last segment), and '.'
+            const validPaths = saved.paths.filter(p => {
+                if (!p) return false;
+                const clean = p.replace(/^\/+/, '').replace(/\/+$/, '');
+                if (clean === '' || clean === '.') return false;
+                // Must look like a file: last path segment must contain a dot
+                const lastSeg = clean.split('/').pop();
+                return lastSeg.includes('.');
+            });
+
+            if (!validPaths.length) {
+                localStorage.removeItem(key); // stale dir-only session — clear it
+                return;
+            }
+
             const results = await Promise.all(
                 validPaths.map(path =>
                     axios.get(`/api/workspaces/${ws.id}/files/read`, { params: { path } })
@@ -582,7 +614,10 @@ export default function CodeEditor() {
                 )
             );
             const restored = results.filter(Boolean);
-            if (!restored.length) return;
+            if (!restored.length) {
+                localStorage.removeItem(key); // all files gone — clear stale session
+                return;
+            }
             setTabs(restored);
             const active = restored.find(t => t.path === saved.active) || restored[0];
             setActiveTab(active);
@@ -804,6 +839,7 @@ export default function CodeEditor() {
                     workspace={workspace}
                     monacoEditorRef={monacoEditorRef}
                     activeTab={activeTab}
+                    pauseRef={aiStreamingRef}
                 />
             )}
 
@@ -1557,6 +1593,7 @@ export default function CodeEditor() {
                                 <PresenceIndicator
                                     workspaceId={workspace?.id}
                                     openFile={activeTab?.path ?? null}
+                                    pauseRef={aiStreamingRef}
                                 />
                                 {['UTF-8', 'LF'].map(s => (
                                     <span key={s} className="ce-status-item" style={{ fontSize: '10px', color: t.text3 }}>{s}</span>
@@ -1667,6 +1704,9 @@ export default function CodeEditor() {
                                     onPrefillConsumed={() => setAiChatPrefill(null)}
                                     pinnedContext={getWorkspacePinnedFiles()}
                                     onUnpinFile={togglePinnedFile}
+                                    onTerminalAppend={appendToTerminal}
+                                    onOpenTerminal={openTerminalTab}
+                                    onLoadingChange={(isLoading) => { aiStreamingRef.current = isLoading; }}
                                     onApplyChanges={(changes) => {
                                         changes.forEach(change => {
                                             const tab = tabs.find(t => t.path === change.path);
@@ -1692,8 +1732,12 @@ export default function CodeEditor() {
                                                 setCenterView('code');
                                                 saveFileToDisk(change.path, change.content);
                                             } else {
-                                                // File created on disk via tool call — just open it
-                                                handleFileSelect({ path: change.path, name: change.path.split('/').pop() });
+                                                // File created on disk via tool call — open it.
+                                                // Skip directories (no dot in the last path segment).
+                                                const lastSeg = change.path.split('/').pop();
+                                                if (lastSeg.includes('.')) {
+                                                    handleFileSelect({ path: change.path, name: lastSeg });
+                                                }
                                             }
                                         });
                                     }}

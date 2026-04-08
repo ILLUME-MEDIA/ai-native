@@ -13,12 +13,12 @@ return [
 
     'enabled' => env('AI_TOOLS_ENABLED', true),
 
-    'max_execution_turns' => env('AI_MAX_TOOL_TURNS', 10),
+    'max_execution_turns' => env('AI_MAX_TOOL_TURNS', 30),
 
     'tools' => [
         [
             'name' => 'createFile',
-            'description' => 'Create a new file or directory in the workspace with the specified content',
+            'description' => 'Create a new file or directory in the workspace. IMPORTANT: When creating a file (type=file), you MUST provide the complete, full file content in the `content` parameter. Never create empty files.',
             'parameters' => [
                 'type' => 'object',
                 'properties' => [
@@ -28,7 +28,7 @@ return [
                     ],
                     'content' => [
                         'type' => 'string',
-                        'description' => 'File content (empty string for directories)'
+                        'description' => 'REQUIRED for files: Complete, full file content. Must never be empty for type=file. Use empty string only for type=directory.'
                     ],
                     'type' => [
                         'type' => 'string',
@@ -42,7 +42,7 @@ return [
                         'default' => false
                     ]
                 ],
-                'required' => ['path', 'type']
+                'required' => ['path', 'content', 'type']
             ],
             'permission' => 'write',
             'requires_approval' => false,
@@ -79,12 +79,12 @@ return [
                 'required' => ['path', 'content']
             ],
             'permission' => 'write',
-            'requires_approval' => true,
+            'requires_approval' => false,
             'approval_rules' => [
                 'patterns' => [
-                    'src/**/*.{js,jsx,ts,tsx,css}' => false, // Auto-approve frontend files
-                    'resources/**/*.{js,jsx}' => false,
-                    '*.md' => false, // Auto-approve docs
+                    '*.env*' => true,    // Always require approval for env files
+                    '.git/*' => true,    // Git internals
+                    'vendor/*' => true,  // Composer vendor
                 ]
             ]
         ],
@@ -142,13 +142,13 @@ return [
 
         [
             'name' => 'runCommand',
-            'description' => 'Execute a terminal command in the workspace (restricted to whitelisted commands)',
+            'description' => 'Execute a terminal command in the workspace. IMPORTANT: For dev servers use port 3000 (e.g. "npm run dev -- --port 3000"). Port 5173 is reserved by the editor and must NOT be used.',
             'parameters' => [
                 'type' => 'object',
                 'properties' => [
                     'command' => [
                         'type' => 'string',
-                        'description' => 'Command to execute (must be whitelisted)'
+                        'description' => 'Command to execute. For Vite: always use "npm run dev -- --port 3000". Never use port 5173.'
                     ],
                     'cwd' => [
                         'type' => 'string',
@@ -177,25 +177,45 @@ return [
                 'composer' => true,
                 // Git
                 'git'     => true,
-                // Shell utilities
+                // Shell / file utilities
                 'ls'      => true,
+                'dir'     => true,
                 'cat'     => true,
+                'type'    => true,
                 'pwd'     => true,
                 'echo'    => true,
                 'mkdir'   => true,
                 'cp'      => true,
+                'copy'    => true,
                 'mv'      => true,
+                'move'    => true,
                 'rm'      => true,
+                'del'     => true,
                 'touch'   => true,
                 'find'    => true,
                 'grep'    => true,
+                'findstr' => true,
                 'which'   => true,
+                'where'   => true,
                 'whoami'  => true,
+                'curl'    => true,
+                'wget'    => true,
+                // Network / port diagnostics
+                'netstat' => true,
+                'ss'      => true,
+                'lsof'    => true,
+                'kill'    => true,
+                'taskkill'=> true,
+                'tasklist'=> true,
                 // Build tools
                 'make'    => true,
                 'rsbuild' => true,
                 'vite'    => true,
                 'tsc'     => true,
+                // Process helpers
+                'sleep'      => true,
+                'timeout'    => true,
+                'powershell' => true,
             ],
             'blocked_patterns' => [
                 'rm -rf /',
@@ -205,6 +225,14 @@ return [
                 ':(){:|:&};:',
                 'mkfs',
                 'dd if=',
+                // Block long-running servers — they hang as PHP child processes
+                'npm run dev',
+                'npm start',
+                'node server',
+                'node index',
+                'nodemon',
+                'vite dev',
+                'vite preview',
             ]
         ],
     ],
@@ -219,13 +247,16 @@ return [
         'block_path_traversal' => true,
         'max_file_size' => 5242880, // 5MB
         'allowed_extensions' => [
-            'js', 'jsx', 'ts', 'tsx',
+            'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
             'php', 'py', 'rb', 'java',
             'html', 'htm', 'css', 'scss', 'sass', 'less',
-            'json', 'xml', 'yaml', 'yml',
-            'md', 'txt', 'rst',
-            'sql', 'sh', 'bash',
-            'lock', 'env.example'
+            'json', 'xml', 'yaml', 'yml', 'toml',
+            'md', 'txt', 'rst', 'mdx',
+            'sql', 'sh', 'bash', 'zsh',
+            'lock', 'env', 'env.example', 'example',
+            // Extensionless dotfiles handled below — allow by name pattern
+            'gitignore', 'gitattributes', 'prettierrc', 'eslintrc',
+            'babelrc', 'editorconfig', 'nvmrc', 'npmrc',
         ],
         'blocked_paths' => [
             '.env',

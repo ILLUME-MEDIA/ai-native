@@ -521,38 +521,78 @@ class ToolExecutor
         }
 
         try {
-            $timeout = (int) config('workspaces.terminal_timeout', 120);
+            $timeout = (int) config('workspaces.terminal_timeout', 300);
 
             if (PHP_OS_FAMILY === 'Windows') {
-                $bash = config('workspaces.git_bash_path', 'C:\\Program Files\\Git\\bin\\bash.exe');
-                if (file_exists($bash)) {
-                    $winPath = getenv('PATH') ?: '';
-                    $env = [
-                        'PATH' => '/usr/bin:/usr/local/bin:/mingw64/bin:' . str_replace('\\', '/', $winPath),
-                        'HOME' => str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME') ?: '/'),
-                        'TERM' => 'xterm-256color',
-                    ];
-                    $process = new \Symfony\Component\Process\Process(
-                        [$bash, '--login', '-c', $command],
-                        $cwd,
-                        $env,
-                        null,
-                        $timeout
-                    );
-                } else {
-                    $process = \Symfony\Component\Process\Process::fromShellCommandline($command, $cwd, null, null, $timeout);
-                }
+                $process = \Symfony\Component\Process\Process::fromShellCommandline(
+                    $command, $cwd, $this->buildWindowsEnv(), null, $timeout
+                );
             } else {
-                $process = \Symfony\Component\Process\Process::fromShellCommandline($command, $cwd, null, null, $timeout);
+                // Linux/cPanel — build comprehensive PATH including nvm/nodevenv
+                $homeDir     = getenv('HOME') ?: '';
+                $currentPath = getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin';
+                $nodeBinDir  = null;
+                $whichNode   = @shell_exec('which node 2>/dev/null');
+                if ($whichNode) $nodeBinDir = dirname(trim($whichNode));
+
+                // nvm scan
+                $nvmBin = null;
+                $homeDirs = array_unique(array_filter(array_merge(
+                    [$homeDir, '/root'],
+                    (array) glob('/home/*', GLOB_ONLYDIR) ?: []
+                )));
+                foreach ($homeDirs as $hd) {
+                    $nvmVersions = $hd . '/.nvm/versions/node';
+                    if (!is_dir($nvmVersions)) continue;
+                    $bins = array_filter((array) glob($nvmVersions . '/*/bin'), 'is_dir');
+                    if ($bins) { rsort($bins); $nvmBin = $bins[0]; break; }
+                }
+
+                $pathParts = array_filter(array_unique(array_merge(
+                    $nodeBinDir ? [$nodeBinDir] : [],
+                    $nvmBin ? [$nvmBin] : [],
+                    ['/usr/local/bin', '/usr/bin', '/bin'],
+                    [$currentPath]
+                )));
+
+                $env = [
+                    'PATH'        => implode(':', $pathParts),
+                    'HOME'        => $homeDir ?: '/root',
+                    'FORCE_COLOR' => '1',
+                    'TERM'        => 'xterm-256color',
+                ];
+                $shell = is_executable('/bin/bash') ? '/bin/bash' : '/bin/sh';
+                $shellArgs = ($shell === '/bin/bash')
+                    ? [$shell, '-l', '-c', $command]
+                    : [$shell, '-c', $command];
+                $process = new \Symfony\Component\Process\Process($shellArgs, $cwd, $env, null, $timeout);
             }
 
-            $process->run();
+            // Use start() + poll loop so the SSE stream stays alive during long
+            // commands (npm install, composer install, etc.).  A plain run() would
+            // block PHP for minutes with zero flushes → browser closes connection.
+            $process->start();
+            while ($process->isRunning()) {
+                if (ob_get_level() > 0) { @ob_flush(); }
+                @flush();
+                usleep(200_000); // 200ms
+            }
+
+            $output = $this->stripAnsi($process->getOutput());
+            $errorOutput = $this->stripAnsi($process->getErrorOutput());
+            // Cap output to prevent context overflow (last 3000 chars = most relevant)
+            if (mb_strlen($output) > 3000) {
+                $output = '...[truncated]...' . mb_substr($output, -3000);
+            }
+            if (mb_strlen($errorOutput) > 1500) {
+                $errorOutput = '...[truncated]...' . mb_substr($errorOutput, -1500);
+            }
 
             return [
                 'success'      => $process->isSuccessful(),
                 'command'      => $command,
-                'output'       => $this->stripAnsi($process->getOutput()),
-                'error_output' => $this->stripAnsi($process->getErrorOutput()),
+                'output'       => $output,
+                'error_output' => $errorOutput,
                 'exit_code'    => $process->getExitCode(),
             ];
         } catch (\Exception $e) {
@@ -568,7 +608,108 @@ class ToolExecutor
      */
     protected function stripAnsi(string $text): string
     {
-        return preg_replace('/\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-Z0-9]|\r/', '', $text) ?? $text;
+        // Strip all ANSI/VT100 escape sequences
+        $clean = preg_replace('/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -\/]*[@-~])/', '', $text) ?? $text;
+        // Strip remaining bracket sequences that slip through (e.g. [32m without ESC)
+        $clean = preg_replace('/\[\d+(?:;\d+)*m/', '', $clean);
+        // Strip carriage returns and other control characters except newline/tab
+        $clean = preg_replace('/\r|\x00-\x08|\x0B|\x0C|\x0E-\x1F|\x7F/', '', $clean);
+        return trim($clean);
+    }
+
+    /**
+     * Build a complete Windows environment array for subprocesses (shared with TerminalController logic).
+     * Ensures C:\Windows\System32 (netstat, findstr, tasklist…) and Node.js are always in PATH,
+     * even when php artisan serve was started from Git Bash or another shell with an incomplete PATH.
+     */
+    protected function buildWindowsEnv(): array
+    {
+        $systemRoot  = getenv('SYSTEMROOT') ?: 'C:\\Windows';
+        $currentPath = getenv('PATH') ?: '';
+        $appData     = getenv('APPDATA') ?: '';
+
+        $mustHave = [
+            $systemRoot . '\\System32',
+            $systemRoot,
+            $systemRoot . '\\System32\\Wbem',
+        ];
+
+        // Node.js via direct detection
+        $nodeDir = $this->detectWindowsNodeDir();
+        if ($nodeDir) $mustHave[] = $nodeDir;
+
+        // nvm-windows symlink folder
+        if ($appData && is_dir($appData . '\\nvm\\nodejs')) $mustHave[] = $appData . '\\nvm\\nodejs';
+        if ($appData && is_dir($appData . '\\npm'))          $mustHave[] = $appData . '\\npm';
+
+        // Merge mustHave (first) with inherited PATH entries
+        $parts = array_filter(explode(';', $currentPath));
+        foreach (array_reverse($mustHave) as $dir) {
+            $key = strtolower(rtrim(str_replace('/', '\\', $dir), '\\'));
+            $found = false;
+            foreach ($parts as $p) {
+                if (strtolower(rtrim(str_replace('/', '\\', $p), '\\')) === $key) { $found = true; break; }
+            }
+            if (!$found) array_unshift($parts, $dir);
+        }
+
+        $env = ['PATH' => implode(';', $parts)];
+        foreach ([
+            'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC',
+            'TEMP', 'TMP',
+            'USERNAME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+            'HOMEDRIVE', 'HOMEPATH',
+            'COMPUTERNAME', 'OS', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+        ] as $var) {
+            $val = getenv($var);
+            if ($val !== false && $val !== '') $env[$var] = $val;
+        }
+
+        // Defaults for vars missing when started from Git Bash / non-Windows shells
+        $env += [
+            'SYSTEMROOT'  => $systemRoot,
+            'SYSTEMDRIVE' => getenv('SYSTEMDRIVE') ?: 'C:',
+            'WINDIR'      => $systemRoot,
+            'COMSPEC'     => $systemRoot . '\\system32\\cmd.exe',
+            'OS'          => 'Windows_NT',
+        ];
+
+        return $env;
+    }
+
+    /**
+     * Detect the Node.js binary directory on Windows for PATH injection.
+     */
+    protected function detectWindowsNodeDir(): string
+    {
+        // 1. Explicit config override
+        $configured = (string) config('workspaces.node_path_windows', '');
+        foreach (explode(';', $configured) as $p) {
+            $p = trim($p);
+            if ($p !== '' && is_dir($p)) return $p;
+        }
+
+        // 2. Ask where node is (fastest)
+        $whereNode = @shell_exec('where node 2>NUL');
+        if ($whereNode) {
+            foreach (explode("\n", trim($whereNode)) as $line) {
+                $line = trim($line);
+                if ($line !== '' && is_file($line)) return dirname($line);
+            }
+        }
+
+        // 3. Known install locations
+        $userProfile = getenv('USERPROFILE') ?: 'C:\\Users\\User';
+        $appData     = getenv('APPDATA')     ?: $userProfile . '\\AppData\\Roaming';
+        foreach ([
+            'C:\\Program Files\\nodejs',
+            'C:\\Program Files (x86)\\nodejs',
+            $appData . '\\nvm\\v20',   // nvm-windows
+        ] as $dir) {
+            if (is_dir($dir)) return $dir;
+        }
+
+        return 'C:\\Program Files\\nodejs'; // last-resort default
     }
 
     protected function validateCommand(string $command): array
@@ -579,18 +720,38 @@ class ToolExecutor
         $blockedPatterns  = $runCommandConfig['blocked_patterns'] ?? [];
 
         // Check blocked patterns first
+        $devServerPatterns = ['npm run dev', 'npm start', 'node server', 'node index', 'nodemon', 'vite dev', 'vite preview'];
         foreach ($blockedPatterns as $pattern) {
             if (str_contains($command, $pattern)) {
+                $isDevServer = in_array($pattern, $devServerPatterns, true);
                 return [
                     'allowed' => false,
-                    'reason'  => "Blocked pattern detected: {$pattern}"
+                    'reason'  => $isDevServer
+                        ? "STOP. Do not retry this command. Dev servers cannot run inside PHP subprocesses on Windows. "
+                          . "Your task is COMPLETE. npm install succeeded. "
+                          . "Give the user a final summary and tell them to run 'npm run dev' manually in their own CMD window."
+                        : "Blocked pattern detected: {$pattern}"
                 ];
             }
         }
 
-        // Extract the first token as the command name (handles chained commands via &&/;)
+        // For chained commands (cmd1 && cmd2 | cmd3), validate EVERY sub-command.
+        $subCommands = preg_split('/\s*(\|\|?|&&?|;)\s*/', $command);
+        foreach ($subCommands as $sub) {
+            $sub = trim($sub);
+            if ($sub === '') continue;
+            $firstToken = preg_split('/\s+/', $sub)[0];
+            $cmd = basename($firstToken);
+            if (!isset($allowedCommands[$cmd])) {
+                return [
+                    'allowed' => false,
+                    'reason'  => "Command not in allowlist: {$cmd}. Allowed: " . implode(', ', array_keys($allowedCommands))
+                ];
+            }
+        }
+
+        // Re-extract first token for subcommand checks below
         $firstToken = preg_split('/\s+/', trim($command))[0];
-        // Strip any path prefix (e.g. /usr/bin/npm -> npm)
         $cmd = basename($firstToken);
 
         // Check if command is whitelisted

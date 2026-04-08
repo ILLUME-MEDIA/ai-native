@@ -61,6 +61,114 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
         });
     }, [onTerminalApi, active]);
 
+    // ── Shared fetch helper ───────────────────────────────────────────────────
+    const apiFetch = useCallback((path, opts = {}) => {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...opts.headers };
+        if (csrfToken) headers['X-CSRF-TOKEN'] = csrfToken;
+        if (window.__SITE_API_KEY__) headers['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
+        return fetch(`/api/workspaces/${workspace.id}${path}`, { credentials: 'same-origin', ...opts, headers });
+    }, [workspace]);
+
+    // ── SSE stream (git only — fast commands, safe to hold PHP briefly) ───────
+    const runViaStream = useCallback(async (cmd, abortSignal) => {
+        const response = await apiFetch('/terminal/execute-stream', {
+            method: 'POST',
+            headers: { Accept: 'text/event-stream' },
+            body: JSON.stringify({ command: cmd, cwd: currentDir === '/' ? undefined : currentDir }),
+            signal: abortSignal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const messages = buffer.split('\n\n');
+            buffer = messages.pop();
+            for (const msg of messages) {
+                if (!msg.trim()) continue;
+                let event = 'message', data = '';
+                for (const line of msg.split('\n')) {
+                    if (line.startsWith('event:')) event = line.substring(6).trim();
+                    else if (line.startsWith('data:')) data = line.substring(5).trim();
+                }
+                if (!data) continue;
+                let parsed = {};
+                try { parsed = JSON.parse(data); } catch { /* */ }
+                handleTerminalEvent(event, parsed);
+            }
+        }
+    }, [apiFetch, currentDir]);
+
+    // ── Background job polling (all non-git commands) ─────────────────────────
+    // PHP is freed immediately; terminal polls every 300 ms for new output.
+    // AI chat-stream can always get through between polls.
+    const runViaJob = useCallback(async (cmd, abortSignal, controller) => {
+        // 1. Start the job (returns in < 100 ms)
+        const startRes = await apiFetch('/terminal/execute-job', {
+            method: 'POST',
+            body: JSON.stringify({ command: cmd, cwd: currentDir === '/' ? undefined : currentDir }),
+            signal: abortSignal,
+        });
+        if (!startRes.ok) throw new Error(`HTTP ${startRes.status}`);
+        const startData = await startRes.json();
+
+        // cd / approval_required / use_stream — handled inline
+        if (startData.done) {
+            handleTerminalEvent('exit', { success: startData.exit_code === 0, exit_code: startData.exit_code, working_directory: startData.working_directory });
+            if (startData.output) handleTerminalEvent('stdout', { text: startData.output });
+            return;
+        }
+        if (startData.requires_approval) {
+            handleTerminalEvent('approval_required', startData);
+            return;
+        }
+        if (startData.use_stream) {
+            await runViaStream(cmd, abortSignal);
+            return;
+        }
+
+        const jobId = startData.job_id;
+        // Ctrl+C: kill server-side process AND stop the poll loop immediately
+        abortRef.current = { abort: () => {
+            apiFetch(`/terminal/job/${jobId}`, { method: 'DELETE' }).catch(() => {});
+            controller?.abort();
+        }};
+
+        // 2. Poll every 300 ms until done
+        let offset = 0;
+        while (true) {
+            if (abortSignal.aborted) break;
+            await new Promise(r => setTimeout(r, 300));
+            if (abortSignal.aborted) break;
+
+            let pollRes;
+            try {
+                pollRes = await apiFetch(`/terminal/job/${jobId}?offset=${offset}`, { signal: abortSignal });
+            } catch {
+                break; // aborted or network error
+            }
+            if (!pollRes.ok) break;
+
+            const poll = await pollRes.json();
+            if (poll.output) handleTerminalEvent('stdout', { text: poll.output });
+            offset = poll.offset ?? offset;
+
+            if (poll.done) {
+                handleTerminalEvent('exit', {
+                    success: poll.exit_code === 0,
+                    exit_code: poll.exit_code,
+                    working_directory: poll.working_directory,
+                });
+                break;
+            }
+        }
+    }, [apiFetch, currentDir, runViaStream]);
+
     const executeCommand = useCallback(async (e) => {
         e?.preventDefault();
         if (!command.trim() || executing || !workspace) return;
@@ -89,80 +197,58 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
             return;
         }
 
+        const controller = new AbortController();
+        abortRef.current = { abort: () => controller.abort() };
+
         try {
-            const url = `/api/workspaces/${workspace.id}/terminal/execute-stream`;
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-            const controller = new AbortController();
-            abortRef.current = controller;
-
-            const fetchHeaders = {
-                'Accept': 'text/event-stream',
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest',
-            };
-            if (csrfToken) fetchHeaders['X-CSRF-TOKEN'] = csrfToken;
-            if (window.__SITE_API_KEY__) fetchHeaders['Authorization'] = `Bearer ${window.__SITE_API_KEY__}`;
-
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: fetchHeaders,
-                body: JSON.stringify({
-                    command: cmd,
-                    cwd: currentDir === '/' ? undefined : currentDir,
-                }),
-                credentials: 'same-origin',
-                signal: controller.signal,
-            });
-
-            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    if (!line) continue;
-                    if (line.startsWith('event:')) {
-                        const event = line.substring(6).trim();
-                        const next = lines[i + 1] || '';
-                        if (next.startsWith('data:')) {
-                            const payload = next.substring(5).trim();
-                            let data = {};
-                            try { data = payload ? JSON.parse(payload) : {}; } catch { data = {}; }
-                            handleTerminalEvent(event, data);
-                            i++;
-                        }
-                    }
-                }
-            }
+            await runViaJob(cmd, controller.signal, controller);
         } catch (error) {
             if (error.name === 'AbortError') {
                 setHistory(prev => [...prev, { type: 'warning', content: 'Command cancelled', timestamp: new Date() }]);
                 return;
             }
-            const msg = error.response?.data?.error || error.message || 'Command failed';
+            const msg = error.message || 'Command failed';
             setHistory(prev => [...prev, { type: 'error', content: msg, timestamp: new Date() }]);
         } finally {
             setExecuting(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [command, executing, workspace, currentDir]);
+    }, [command, executing, workspace, currentDir, runViaJob]);
+
+    function stripAnsi(text) {
+        return text
+            .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')  // ESC[ sequences
+            .replace(/\x1B[@-_]/g, '')                // ESC + single char
+            .replace(/\[\d+(?:;\d+)*m/g, '')          // bare bracket colour codes
+            .replace(/\r/g, '');                       // carriage returns
+    }
 
     function handleTerminalEvent(event, data) {
         switch (event) {
             case 'stdout':
-                if (data.text) setHistory(prev => [...prev, { type: 'output', content: data.text, timestamp: new Date() }]);
+                if (data.text) {
+                    const text = stripAnsi(data.text);
+                    setHistory(prev => {
+                        const last = prev[prev.length - 1];
+                        // Append to last output entry for efficiency (avoids thousands of entries)
+                        if (last && last.type === 'output') {
+                            return [...prev.slice(0, -1), { ...last, content: last.content + text }];
+                        }
+                        return [...prev, { type: 'output', content: text, timestamp: new Date() }];
+                    });
+                }
                 break;
             case 'stderr':
-                if (data.text) setHistory(prev => [...prev, { type: 'stderr', content: data.text, timestamp: new Date() }]);
+                if (data.text) {
+                    const text = stripAnsi(data.text);
+                    setHistory(prev => {
+                        const last = prev[prev.length - 1];
+                        if (last && last.type === 'stderr') {
+                            return [...prev.slice(0, -1), { ...last, content: last.content + text }];
+                        }
+                        return [...prev, { type: 'stderr', content: text, timestamp: new Date() }];
+                    });
+                }
                 break;
             case 'approval_required':
                 setHistory(prev => [...prev, { type: 'warning', content: 'This command requires approval. Use the Approvals panel to approve it.', timestamp: new Date() }]);
@@ -185,7 +271,11 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
         if (e.key === 'c' && e.ctrlKey) {
             e.preventDefault();
             if (executing && abortRef.current) {
+                setHistory(prev => [...prev, { type: 'warning', content: '^C', timestamp: new Date() }]);
                 abortRef.current.abort();
+                abortRef.current = null;
+                setExecuting(false);
+                setCommand('');
                 return;
             }
             if (command) {
@@ -277,7 +367,34 @@ function TerminalInstance({ workspace, active, tabMeta, onTerminalApi, onRegiste
                         autoComplete="off"
                         spellCheck="false"
                     />
-                    {executing && <span className="terminal-spinner" />}
+                    {executing && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setHistory(prev => [...prev, { type: 'warning', content: '^C', timestamp: new Date() }]);
+                                abortRef.current?.abort();
+                                abortRef.current = null;
+                                setExecuting(false);
+                                setCommand('');
+                            }}
+                            style={{
+                                background: 'rgba(255,107,53,0.15)',
+                                border: '1px solid rgba(255,107,53,0.5)',
+                                borderRadius: '3px',
+                                color: '#ff6b35',
+                                cursor: 'pointer',
+                                fontSize: '10px',
+                                fontFamily: 'inherit',
+                                padding: '1px 7px',
+                                marginLeft: '6px',
+                                flexShrink: 0,
+                                whiteSpace: 'nowrap',
+                            }}
+                            title="Stop command (Ctrl+C)"
+                        >
+                            ■ Stop
+                        </button>
+                    )}
                 </form>
             </div>
         </div>

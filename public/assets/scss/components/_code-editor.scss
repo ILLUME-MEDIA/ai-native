@@ -2929,6 +2929,34 @@
         }
     }
 
+    .chat-messages {
+        background: #ffffff;
+    }
+
+    .chat-empty-state {
+        color: #6e7681;
+    }
+
+    .chat-controls-summary {
+        color: #57606a;
+        .badge {
+            background: #eaeef2 !important;
+            color: #57606a !important;
+            border-color: #d0d7de;
+        }
+        .text-muted, small { color: #57606a !important; }
+    }
+
+    .chat-message {
+        color: #24292f;
+        &.assistant {
+            background: #f6f8fa;
+            border-color: #d0d7de;
+            color: #24292f;
+        }
+        &.user { color: #24292f; }
+    }
+
     .chat-bubble--ai {
         background: #f6f8fa;
         border-color: #d0d7de;
@@ -2947,7 +2975,7 @@
 
     .system-line { color: #57606a; }
     .message-time { color: #afb8c1; }
-    .chat-bubble-meta { color: #afb8c1; }
+    .chat-bubble-meta { color: #6e7681; }
 
     // ── Panel tabs (right sidebar) ─────────────────────────────────
     .panel-tabs {

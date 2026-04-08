@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 
 const AVATAR_COLORS = [
@@ -22,43 +22,85 @@ function initials(name) {
 /**
  * B-20: Presence / Collaboration Indicators
  *
- * Sends a heartbeat POST every 12 s to register this user as active.
- * Polls GET every 15 s to fetch other active users.
+ * Sends a heartbeat POST every 55 s to register this user as active.
+ * Polls GET every 90 s to fetch other active users.
+ * Completely pauses (clears intervals) while AI is streaming, restarts after.
  * Renders colored avatar circles in the status bar.
- * Highlights the avatar border when the other user has the same file open.
  */
-export default function PresenceIndicator({ workspaceId, openFile }) {
+export default function PresenceIndicator({ workspaceId, openFile, pauseRef }) {
     const [users, setUsers]     = useState([]);
-    const [tooltip, setTooltip] = useState(null);   // user_id of hovered avatar
+    const [tooltip, setTooltip] = useState(null);
     const openFileRef           = useRef(openFile);
+    const beatIdRef             = useRef(null);
+    const pollIdRef             = useRef(null);
+    const beatAbortRef          = useRef(null);
+    const pollAbortRef          = useRef(null);
+    const workspaceIdRef        = useRef(workspaceId);
 
-    // keep ref current so heartbeat closure always has the latest path
     useEffect(() => { openFileRef.current = openFile; }, [openFile]);
+    useEffect(() => { workspaceIdRef.current = workspaceId; }, [workspaceId]);
+
+    const beat = useCallback(() => {
+        beatAbortRef.current?.abort();
+        beatAbortRef.current = new AbortController();
+        axios.post(`/api/workspaces/${workspaceIdRef.current}/presence/heartbeat`,
+            { open_file: openFileRef.current ?? null },
+            { signal: beatAbortRef.current.signal }
+        ).catch(() => {});
+    }, []);
+
+    const poll = useCallback(() => {
+        pollAbortRef.current?.abort();
+        pollAbortRef.current = new AbortController();
+        axios.get(`/api/workspaces/${workspaceIdRef.current}/presence`,
+            { signal: pollAbortRef.current.signal }
+        ).then(r => setUsers(r.data?.users ?? [])).catch(() => {});
+    }, []);
+
+    const startTimers = useCallback(() => {
+        if (beatIdRef.current || pollIdRef.current) return; // already running
+        beatIdRef.current = setInterval(beat, 55_000);
+        pollIdRef.current = setInterval(poll, 90_000);
+    }, [beat, poll]);
+
+    const stopTimers = useCallback(() => {
+        clearInterval(beatIdRef.current);
+        clearInterval(pollIdRef.current);
+        beatIdRef.current = null;
+        pollIdRef.current = null;
+        // Abort any in-flight requests immediately
+        beatAbortRef.current?.abort();
+        pollAbortRef.current?.abort();
+    }, []);
 
     useEffect(() => {
         if (!workspaceId) return;
 
-        const beat = () =>
-            axios.post(`/api/workspaces/${workspaceId}/presence/heartbeat`, {
-                open_file: openFileRef.current ?? null,
-            }).catch(() => {});
+        // Listen to AI streaming events — stop entirely while AI streams,
+        // restart when done. This prevents presence from blocking php artisan serve.
+        const onAiStreaming = (e) => {
+            if (e.detail?.streaming) {
+                stopTimers();
+            } else {
+                // Small delay before restarting so PHP has time to finish chat-stream
+                setTimeout(() => startTimers(), 3000);
+            }
+        };
+        window.addEventListener('ce-ai-streaming', onAiStreaming);
 
-        const poll = () =>
-            axios.get(`/api/workspaces/${workspaceId}/presence`)
-                .then(r => setUsers(r.data?.users ?? []))
-                .catch(() => {});
-
-        beat();
-        poll();
-
-        const beatId = setInterval(beat, 12_000);
-        const pollId = setInterval(poll, 15_000);
+        // 5s initial delay, then start
+        const initTimer = setTimeout(() => {
+            beat();
+            poll();
+            startTimers();
+        }, 5000);
 
         return () => {
-            clearInterval(beatId);
-            clearInterval(pollId);
+            window.removeEventListener('ce-ai-streaming', onAiStreaming);
+            clearTimeout(initTimer);
+            stopTimers();
         };
-    }, [workspaceId]);
+    }, [workspaceId, beat, poll, startTimers, stopTimers]);
 
     if (!users.length) return null;
 

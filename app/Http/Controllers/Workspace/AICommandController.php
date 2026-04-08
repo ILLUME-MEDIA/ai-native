@@ -190,20 +190,25 @@ EOT;
         $this->authorize('update', $workspace);
 
         $request->validate([
-            'message' => 'required|string',
-            'endpoint_id' => 'nullable|exists:ai_endpoints,id',
-            'model_id' => 'nullable|string',
+            'message'         => 'nullable|string',
+            'endpoint_id'     => 'nullable|exists:ai_endpoints,id',
+            'model_id'        => 'nullable|string',
             'conversation_id' => 'nullable|integer',
-            'ui_target' => 'nullable|in:ask,react,html,blade',
-            'agent_mode' => 'nullable|in:coder,architect,reviewer,debugger,documenter,refactorer,security',
-            'current_file' => 'nullable|array',
-            'open_files' => 'nullable|array',
-            'pinned_context' => 'nullable|array'
+            'ui_target'       => 'nullable|in:ask,react,html,blade',
+            'agent_mode'      => 'nullable|in:coder,architect,reviewer,debugger,documenter,refactorer,security',
+            'current_file'    => 'nullable|array',
+            'open_files'      => 'nullable|array',
+            'pinned_context'  => 'nullable|array',
+            'images'          => 'nullable|array',
+            'images.*.name'   => 'nullable|string|max:255',
+            'images.*.data'   => 'nullable|string|max:20971520', // 20 MB base64
+            'images.*.mime'   => 'nullable|string|max:50',
         ]);
 
         // Prevent PHP timeout for long-running AI requests
         set_time_limit(0);
-        // Important: allow client disconnect to abort work (supports cancel/interrupt)
+        // Allow client disconnect to stop the agent (cancel/new-message scenario).
+        // The should_stop callback checks connection_aborted() so cancellation still works.
         ignore_user_abort(false);
 
         $userId = auth()->id();
@@ -243,7 +248,17 @@ EOT;
                 'ui_target' => $request->input('ui_target', 'ask'),
             ],
         ]);
-        $conversation->update(['last_activity_at' => now()]);
+
+        // Auto-generate title from first user message if not set
+        if (!$conversation->title) {
+            $autoTitle = mb_substr(trim($message), 0, 60);
+            if (mb_strlen($message) > 60) {
+                $autoTitle = mb_substr($autoTitle, 0, mb_strrpos($autoTitle, ' ') ?: 60) . '…';
+            }
+            $conversation->update(['title' => $autoTitle, 'last_activity_at' => now()]);
+        } else {
+            $conversation->update(['last_activity_at' => now()]);
+        }
 
         // Classify message before streaming (orchestration)
         $classification = $this->orchestrator->classify($message);
@@ -270,13 +285,19 @@ EOT;
             }
         }
 
+        // Release session lock BEFORE streaming — otherwise every concurrent
+        // request (file tree, conversation list, etc.) blocks on the session row.
+        $request->session()->save();
+
         // SSE headers
         return response()->stream(function () use ($request, $workspace, $conversation, $orchestratorAddendum) {
-            // Send headers for SSE
-            header('Content-Type: text/event-stream');
-            header('Cache-Control: no-cache');
-            header('Connection: keep-alive');
-            header('X-Accel-Buffering: no'); // Disable nginx buffering
+            // ob_implicit_flush: makes each flush() call go directly to the SAPI output.
+            // On cPanel (output_buffering=4096), sendSSE() already calls ob_flush()+flush()
+            // after every event — so buffering is handled per-event, not here.
+            // Do NOT call ob_end_flush() here: it would send buffered headers to the client
+            // making subsequent header() calls emit "headers already sent" warnings that
+            // corrupt the SSE stream.
+            @ob_implicit_flush(true);
 
             try {
                 // Send initial connection success event
@@ -292,16 +313,18 @@ EOT;
 
                 // Stream AI response
                 $this->aiManager->chatWithCodeStream([
-                    'message' => $request->message,
+                    'message' => (string) ($request->message ?? ''),
                     'endpoint_id' => $request->endpoint_id,
                     'model_id' => $request->model_id ?? 'AUTO',
                     'ui_target' => $request->input('ui_target', 'ask'),
                     'current_file' => $request->current_file,
                     'open_files' => $request->open_files ?? [],
                     'pinned_context' => $request->pinned_context ?? [],
+                    'images' => $request->input('images', []),
                     'workspace' => $workspace,
                     'user' => auth()->user(),
                     'extra_system' => $orchestratorAddendum,
+                    'conversation_obj' => $conversation,
                     'should_stop' => function () use ($conversation) {
                         if (connection_aborted()) {
                             return true;
@@ -462,14 +485,15 @@ EOT;
                 ]);
             }
 
-            // Close connection
-            ob_end_flush();
-            flush();
+            // Final flush — suppress warning if no ob level exists
+            if (ob_get_level() > 0) { @ob_end_flush(); }
+            @flush();
         }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'Connection' => 'keep-alive',
-            'X-Accel-Buffering' => 'no'
+            'Content-Type'               => 'text/event-stream',
+            'Cache-Control'              => 'no-cache',
+            'Connection'                 => 'keep-alive',
+            'X-Accel-Buffering'          => 'no',
+            'X-LiteSpeed-Cache-Control'  => 'no-store',
         ]);
     }
 
@@ -640,15 +664,23 @@ EOT;
 
         $approval->approve(auth()->id());
 
-        // Execute the approved command
+        // Execute the approved command — writes files immediately
         $result = $this->executeApprovedCommand($approval);
 
         $approval->update(['execution_result' => $result]);
 
+        $writtenFiles = collect($result)
+            ->where('success', true)
+            ->pluck('file')
+            ->filter()
+            ->values()
+            ->toArray();
+
         return response()->json([
-            'success' => true,
-            'approval' => $approval,
-            'result' => $result
+            'success'       => true,
+            'approval'      => $approval,
+            'result'        => $result,
+            'written_files' => $writtenFiles,
         ]);
     }
 
